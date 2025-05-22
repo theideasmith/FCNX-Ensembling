@@ -25,7 +25,7 @@ from check_mps import check_mps_available_or_fail
 from layeroutputtracker import *
 from simplenet import *
 from datamanager import *
-from FCN3Network import FCN3Network 
+from FCN3Network import FCN3Network
 
 class TrainingInfo:
     def __init__(self):
@@ -34,7 +34,7 @@ class TrainingInfo:
         self.times = []
         self.losses = []
         self.epochs = []
-      
+
     def reset(self):
         self.trainloss = []
         self.testloss = []
@@ -83,7 +83,7 @@ class TrainingInfo:
             print(f"Total Training Time Steps: {self.times[len(self.times)-1]}")
         else:
             print("No training information recorded yet.")
-            
+
 class NetworkTrainer:
     def __init__(self, model: nn.Module,
                  manager: DataManager,
@@ -122,8 +122,9 @@ class NetworkTrainer:
     def warp_to_epoch(self, nepch):
         self.current_epoch = warp_to_epoch
 
-    def train(self, 
+    def train(self,
               continue_at_epoch: int = 0,
+              current_time_step: int = 0,
               logger: Logger = None, reinitialize : bool = True, interrupt_callback = None,completion_callback = None, epoch_callback = None) -> nn.Module:
         """
         Trains the neural network model using Langevin dynamics.
@@ -136,35 +137,36 @@ class NetworkTrainer:
         self.model.train()  # Set the model to training mode
         # Iterate over the specified number of epochs
         self.current_epoch = continue_at_epoch
+        self.current_time_step = current_time_step
 
-        try: 
+        try:
             while self.current_epoch < self.train_config['num_epochs']:#and self.converged == False:
                 for batch in self.dataloader:
                     data, targets = batch
                     self.param_update(data, targets)
                     self.current_time_step += 1
                 if epoch_callback is not None:
-                    try: 
+                    try:
                         epoch_callback(self)
                     except Exception as e:
                         print(f'An error occurred {e}')
                 self.current_epoch += 1
-            
+
                     # # --- Evaluation Step ---
                     # self.model.eval() # Set model to evaluation mode
                     # self.manager.mode = 'test'
-                    # with torch.no_grad(): # No need to track gradients during evaluation                    
+                    # with torch.no_grad(): # No need to track gradients during evaluation
                     #     data = self.manager.data
                     #     targets = self.manager.targets
                     #     data = data.to(hp.DEVICE)
                     #     targets = targets.to(hp.DEVICE)
-                     
+
                     #     outputs: torch.Tensor = self.model(data)
 
                     #     loss: torch.Tensor = self.loss_function(outputs, targets)
                     #     # Store the current test loss
                     #     self.current_test_loss = loss.item()
-                    #     if self.current_test_loss <= 1e-4: 
+                    #     if self.current_test_loss <= 1e-4:
                     #         print("CONVERGED")
                     #         self.converged = True
 
@@ -174,13 +176,15 @@ class NetworkTrainer:
                 self.training_info.update_loss(self.current_time_step, self.current_train_loss)
                 if logger is not None:
                     logger.epoch_callback(self)
+            print("Training complete")
+            self.converged = True
             print("EXITING")
         except KeyboardInterrupt:
-            if interrupt_callback is not None: 
+            if interrupt_callback is not None:
                 interrupt_callback(self)
-            
+
             raise KeyboardInterrupt("Training Interrupted; Quitting")
-            
+
         # except RuntimeError as e:
         #     print(f"\n!!! TRAINING FAILED due to a runtime error: {e} !!!")
         #     # Callback is handled by 'finally'
@@ -195,7 +199,7 @@ class NetworkTrainer:
         self.training_complete()
         self.converged = True
         return self.model
-    
+
     def training_complete(self):
         """
         Finalizes the training process and displays the training summary.
@@ -205,7 +209,7 @@ class NetworkTrainer:
         self.current_epoch = 0
         self.current_time_step = 0
 
-    def param_update(self, data: torch.Tensor, targets: torch.Tensor) -> None:        
+    def param_update(self, data: torch.Tensor, targets: torch.Tensor) -> None:
         # Clear previous gradients
         self.model.zero_grad()
 

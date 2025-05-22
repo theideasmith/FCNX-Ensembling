@@ -1,3 +1,4 @@
+from standard_hyperparams import HIDDEN_WIDTH_1
 import torch
 from activations import linear_activation
 from check_mps import get_device
@@ -8,8 +9,8 @@ CHI = 1
 
 KAPPA = 1 / CHI
 
-# Large enough that the weight decay will be nonnegligible. 
-TEMPERATURE = 0.2  * KAPPA 
+# Large enough that the weight decay will be nonnegligible.
+TEMPERATURE = 2 * KAPPA
 
 
 
@@ -20,9 +21,9 @@ FCN2_WEIGHT_SIGMA1: float = 1.0/INPUT_DIMENSION
 FCN2_WEIGHT_SIGMA2: float = 1.0/(FCN2_HIDDEN_WIDTH*CHI)
 NUM_DATA_POINTS: int = 200
 BATCH_SIZE: int = 30
-LEARNING_RATE: float = (0.000015)
+LEARNING_RATE: float = (0.0000015) / FCN2_HIDDEN_WIDTH
 NOISE_STD_LANGEVIN: float = (2 * LEARNING_RATE * KAPPA )**0.5
-NUM_EPOCHS: int = 10000000
+NUM_EPOCHS: int = 100000
 
 WEIGHT_DECAY_CONFIG: dict = {
             'fc1.weight': FCN2_LAMBDA_1,
@@ -57,7 +58,7 @@ if torch.backends.mps.is_available():
 elif torch.cuda.is_available():
     DEVICE = torch.device("cuda")
     print("CUDA device found. Using CUDA.")
-else: 
+else:
     DEVICE = 'cpu'
 
 def to_device(data):

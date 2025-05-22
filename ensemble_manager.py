@@ -33,6 +33,8 @@ class EnsembleManager:
             self.num_datasets = self.training_config['num_datsets']
             self.teacher = self.load_teacher()
         else:
+            print("Creating a new goddamn directory")
+            os.makedirs(self.ensemble_dir)
             self.teacher = None  # Store the teacher network                                              
             self.num_ensembles = 20 #set num ensembles to a constant                                      
             self.num_datasets = 3 # We are generating three datasets.                                     
@@ -67,6 +69,7 @@ class EnsembleManager:
                            data_path = '',
                            targets_path = '',
                            current_epoch = None, 
+                           current_time_step = None,
                            converged = False):
         config_path = self.training_config_path
         model_config = {
@@ -82,22 +85,24 @@ class EnsembleManager:
                     "raw_X_path": data_path,
                     "raw_Y_path": targets_path,
                     "epochs_trained": 0 if current_epoch is None else current_epoch,
+                    "current_time_step": 0 if current_time_step is None else current_time_step,
                     "converged": converged
                 }
         self.training_config['manifest'].append(model_config)
         self.json_handler.save_data(self.training_config, config_path)
         return model_config
-    def save_model(self, model, model_identifier, converged = True, epochs_trained = 0):
+    def save_model(self, model, model_identifier, converged = True, current_time_step=0,epochs_trained = 0):
 
         # Save the model and data immediately after training
-        network_dir = os.path.join(self.ensemble_dir, f'network_{model_identifier}.pth')
+        network_dir = os.path.join(self.ensemble_dir, f'network_{model_identifier}')
         if not os.path.exists(network_dir):
             os.makedirs(network_dir)
         
         self.model_update(model_identifier, 'converged', converged)
         self.model_update(model_identifier, 'epochs_trained', epochs_trained)
+        self.model_update(model_identifier, 'current_time_step', current_time_step)
 
-        torch.save(model, os.path.join(network_dir, f'network_{model_identifier}'))
+        torch.save(model, os.path.join(network_dir, f'network_{model_identifier}.pth'))
 
     def teacher_exists(self):
         return os.path.exists(os.path.join(self.ensemble_dir, 'teacher_network.pth'))

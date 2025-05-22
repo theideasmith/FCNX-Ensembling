@@ -6,15 +6,19 @@ from rich.progress import Progress, TaskID
 
 
 class Logger:
-    def __init__(self, num_epochs: int, description: str = "Training"):
+    def __init__(self, num_epochs: int, description: str = "Training", 
+                 completed: int =0):
         self.num_epochs = num_epochs
         self.description = description
         self.progress_bar = None
         self.epoch_task = None
+        self.completed = completed;
 
     def __enter__(self):
         self.progress_bar = Progress()
-        self.epoch_task: TaskID = self.progress_bar.add_task(f"[cyan]{self.description}...", total=self.num_epochs)
+        self.epoch_task: TaskID = self.progress_bar.add_task(f"[cyan]{self.description}...", 
+                                                             completed = self.completed,
+                                                             total=self.num_epochs)
         self.progress_bar.start()
         return self
 

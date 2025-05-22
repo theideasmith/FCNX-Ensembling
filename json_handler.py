@@ -11,6 +11,7 @@ class JsonHandler:
         """
         self.directory = directory
         if not os.path.exists(self.directory):
+            print(f'It appears that the directory {self.directory} is empty. Creating it')
             os.makedirs(self.directory)
 
     def save_data(self, data, filename):
