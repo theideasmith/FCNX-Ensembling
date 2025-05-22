@@ -119,7 +119,12 @@ class NetworkTrainer:
         self.current_time_step : int = 0
         self.converged : bool = False
 
-    def train(self, logger: Logger = None, reinitialize : bool = True, interrupt_callback = None,completion_callback = None, epoch_callback = None) -> nn.Module:
+    def warp_to_epoch(self, nepch):
+        self.current_epoch = warp_to_epoch
+
+    def train(self, 
+              continue_at_epoch: int = 0,
+              logger: Logger = None, reinitialize : bool = True, interrupt_callback = None,completion_callback = None, epoch_callback = None) -> nn.Module:
         """
         Trains the neural network model using Langevin dynamics.
 
@@ -130,7 +135,7 @@ class NetworkTrainer:
         # so that it will access the train data rather than the test data
         self.model.train()  # Set the model to training mode
         # Iterate over the specified number of epochs
-        self.current_epoch = 0
+        self.current_epoch = continue_at_epoch
 
         try: 
             while self.current_epoch < self.train_config['num_epochs']:#and self.converged == False:
@@ -188,6 +193,7 @@ class NetworkTrainer:
         if completion_callback is not None:
             completion_callback(self)
         self.training_complete()
+        self.converged = True
         return self.model
     
     def training_complete(self):

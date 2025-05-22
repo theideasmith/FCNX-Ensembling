@@ -8,7 +8,6 @@ class EnsembleManager:
     Manages the saving and loading of ensemble training results, including models, data, and metadata.
     """
     def __init__(self, run_identifier, 
-                 menagerie_dir='./Menagerie',
                  json_handler=None, 
                  desc = ''): 
         """
@@ -20,40 +19,34 @@ class EnsembleManager:
             run_identifier (str): A unique identifier for this training run.
         """
         self.run_identifier = run_identifier
-        self.menagerie_dir = menagerie_dir
+        self.menagerie_dir = './Menagerie' #define the overall dir
         self.ensemble_dir = os.path.join(self.menagerie_dir, f'ensemble_{run_identifier}') #this is the ensemble specific directory
         self.tensorboard_dir = self.ensemble_dir
         self.json_handler = json_handler if json_handler else JsonHandler(directory=self.ensemble_dir) # pass ensemble dir to json handler
         # self.tensorwriter = SummaryWriter(log_dir=self.tensorboard_dir)
         self.training_config_path = os.path.relpath(os.path.join(self.ensemble_dir,'training_config'))
-        self.training_config = {}
+
         if os.path.exists(self.ensemble_dir):
             self.training_config = self.json_handler.load_data(os.path.join(self.ensemble_dir,'training_config'))
-            self.num_ensembles = self.training_config['num_ensembles']
-            self.num_datasets = self.training_config['num_datsets']
-            self.teacher = self.load_teacher()
-        else:
-            self.teacher = None  # Store the teacher network                                              
-            self.num_ensembles = 20 #set num ensembles to a constant                                      
-            self.num_datasets = 3 # We are generating three datasets.                                     
-            self.training_config = { #store the training config here and update.  REMOVED network configs 
-                'run_identifier': self.run_identifier,                                                    
-                'num_ensembles': self.num_ensembles,                                                      
-                'num_datsets': 3,                                                                         
-                "description": desc,                                                                      
-                "manifest": []                                                                            
-            }                                                                                             
-            self.json_handler.save_data(self.training_config, self.training_config_path)
-
+            return 
+        
         if not os.path.exists(self.ensemble_dir): #make the ensemble dir
             os.makedirs(self.ensemble_dir)
         
         if not os.path.exists(self.tensorboard_dir):
             os.makedirs(self.tensorboard_dir)
+        self.teacher = None  # Store the teacher network
+        self.num_ensembles = 20 #set num ensembles to a constant
+        self.num_datasets = 3 # We are generating three datasets. 
+        self.training_config = { #store the training config here and update.  REMOVED network configs
+            'run_identifier': self.run_identifier,
+            'num_ensembles': self.num_ensembles,
+            'num_datsets': 3,
+            "description": desc, 
+            "manifest": []
+        }
 
-    def load_teacher(self):
-        self.teacher = torch.load(os.path.join(self.ensemble_dir, 'teacher_network.pth'), weights_only=False).to(hp.DEVICE)
-        return self.teacher
+        self.json_handler.save_data(self.training_config, self.training_config_path)
 
     def save_teacher(self):
         # Save the teacher network in the ensemble dir.
@@ -77,8 +70,8 @@ class EnsembleManager:
                     "num_data_points": hp.NUM_DATA_POINTS,
                     "target_noise": hp.TARGET_NOISE,
                     "weight_decay_config": hp.WEIGHT_DECAY_CONFIG,
-                    "network_dir": os.path.join(self.ensemble_dir, f'network_{model_identifier}'),
-                    "model_path": os.path.join(self.ensemble_dir, f'network_{model_identifier}', f"network_{model_identifier}.pth"),
+                    "network_dir": os.path.join(self.ensemble_dir, f'model_{model_identifier}'),
+                    "model_path": os.path.join(self.ensemble_dir, f'model_{model_identifier}', f"model_{model_identifier}.pth"),
                     "raw_X_path": data_path,
                     "raw_Y_path": targets_path,
                     "epochs_trained": 0 if current_epoch is None else current_epoch,
@@ -90,7 +83,7 @@ class EnsembleManager:
     def save_model(self, model, model_identifier, converged = True, epochs_trained = 0):
 
         # Save the model and data immediately after training
-        network_dir = os.path.join(self.ensemble_dir, f'network_{model_identifier}.pth')
+        network_dir = os.path.join(self.ensemble_dir, f'network_{model_identifier}')
         if not os.path.exists(network_dir):
             os.makedirs(network_dir)
         
@@ -98,31 +91,6 @@ class EnsembleManager:
         self.model_update(model_identifier, 'epochs_trained', epochs_trained)
 
         torch.save(model, os.path.join(network_dir, f'network_{model_identifier}'))
-
-    def teacher_exists(self):
-        return os.path.exists(os.path.join(self.ensemble_dir, 'teacher_network.pth'))
-
-    def load_cached_teacher(self):
-        self.teacher = torch.load(os.path.join(self.ensemble_dir, 'teacher_network.pth'),
-                                  weights_only=False)
-        return self.teacher
-
-    def most_recent_model(self):
-        # Obtains the model most recently trained but not completed
-        for item in self.training_config['manifest']:
-            print(item)
-            ntr = int(item.get('epochs_trained'))
-            nep = int(item.get('num_epochs'))
-            cmp = bool(item.get('converged'))
-            print("------------------------")
-    
-            if (not cmp):
-                print("AHA! so there is a most recent model!")
-                return item
-        
-        
-
-        return None
 
     def model_update(self, model_name, key, updated_value):
         index = next((i for i, m in enumerate(self.training_config['manifest']) if m.get('model_name') == model_name), -1)
@@ -151,18 +119,16 @@ class EnsembleManager:
         torch.save(Y, ypath)
         return ypath
 
-#   def load_cached_model(self, model_identifier):
+    def load_training_config(self):
+        self.training_config = self.json_handler.load_data(os.path.join(self.ensemble_dir,'training_config'))
+        if not os.path.exists(training_config_path):                                           
+           raise FileNotFoundError(f"Training config file not found: {training_config_path}") 
 
     def load_ensemble_data(self):
         """
         Loads the trained models, training data, and teacher network.
         """
-        # Load the training config to get the structure of the paths
-        training_config_path = os.path.join(self.ensemble_dir, 'training_config.json')
-        if not os.path.exists(training_config_path):
-            raise FileNotFoundError(f"Training config file not found: {training_config_path}")
-        
-        self.training_config = self.json_handler.load_data(os.path.join(self.ensemble_dir,'training_config'))
+        self.load_training_config(); 
         training_config = self.training_config
         # Load the teacher network
         teacher_path = os.path.join(self.ensemble_dir, 'teacher_network.pth')
@@ -170,12 +136,11 @@ class EnsembleManager:
             self.teacher = torch.load(teacher_path, weights_only=False).to(hp.DEVICE)  # Load to the correct device
         else:
             raise FileNotFoundError(f"Teacher network file not found: {teacher_path}")
-      
+        
         # Load the raw data and models for each ensemble member
         models = []
         data_files = {}
         target_files = {}
-
         for i in range(training_config['num_datsets']): #use num_ensembles from config
             raw_x_path = os.path.join(self.ensemble_dir, f'raw_X_{i}.pth')
             raw_y_path = os.path.join(self.ensemble_dir, f'raw_Y_{i}.pth')
