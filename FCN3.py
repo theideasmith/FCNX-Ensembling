@@ -138,6 +138,9 @@ class NetworkTrainer:
         # Iterate over the specified number of epochs
         self.current_epoch = continue_at_epoch
         self.current_time_step = current_time_step
+        self.current_train_loss = self.get_current_train_loss()
+        if epoch_callback is not None:
+            epoch_callback(self)
 
         try:
             while self.current_epoch < self.train_config['num_epochs']:#and self.converged == False:
@@ -208,6 +211,29 @@ class NetworkTrainer:
         self.model.eval()  # Set the model to evaluation mode
         self.current_epoch = 0
         self.current_time_step = 0
+
+    def get_current_train_loss(self):
+        with torch.no_grad():
+            data = self.manager.data
+            targets = self.manager.targets
+            data = data.to(hp.DEVICE)
+            targets = targets.to(hp.DEVICE)
+
+            # Clear previous gradients
+            self.model.zero_grad()
+
+            # Ensure data and targets are on the correct device
+            data = data.to(hp.DEVICE)
+            targets = targets.to(hp.DEVICE)
+
+            # Forward pass
+            outputs: torch.Tensor = self.model(data)
+
+            # Calculate the Mean Squared Error loss
+            loss: torch.Tensor = self.loss_function(outputs, targets)
+
+            # Store the current loss
+            return loss.item()
 
     def param_update(self, data: torch.Tensor, targets: torch.Tensor) -> None:
         # Clear previous gradients

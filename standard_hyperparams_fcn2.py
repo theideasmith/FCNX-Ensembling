@@ -3,11 +3,11 @@ import torch
 from activations import linear_activation
 from check_mps import get_device
 # --- Hyperparameters ---
-INPUT_DIMENSION: int = 50
+INPUT_DIMENSION: int = 12
 FCN2_HIDDEN_WIDTH: int = 1000
-CHI = 1
+CHI = FCN2_HIDDEN_WIDTH
 
-KAPPA = 1 / CHI
+KAPPA = 1/CHI
 
 # Large enough that the weight decay will be nonnegligible.
 TEMPERATURE = 2 * KAPPA
@@ -21,7 +21,7 @@ FCN2_WEIGHT_SIGMA1: float = 1.0/INPUT_DIMENSION
 FCN2_WEIGHT_SIGMA2: float = 1.0/(FCN2_HIDDEN_WIDTH*CHI)
 NUM_DATA_POINTS: int = 200
 BATCH_SIZE: int = 30
-LEARNING_RATE: float = (0.0000015) / FCN2_HIDDEN_WIDTH
+LEARNING_RATE: float = (0.015)/FCN2_HIDDEN_WIDTH
 NOISE_STD_LANGEVIN: float = (2 * LEARNING_RATE * KAPPA )**0.5
 NUM_EPOCHS: int = 100000
 

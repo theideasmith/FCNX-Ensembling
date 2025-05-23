@@ -123,8 +123,12 @@ def main(desc = '',
     start_model_num = 0
     model_identifier = None
     if most_recent_model_manifest is None:
-        start_dataset_num = 0
-        start_model_num = 0
+        mid = len(ensemble_manager.training_config['manifest'])
+        model_identifier = mid
+        nens = int(ensemble_manager.training_config['num_ensembles'])
+        start_dataset_num = int((mid - mid%nens)/nens)
+        start_model_num =  int(mid%nens)
+        print(f'Running model: {mid} dnum: {start_dataset_num}, mnum:{start_model_num}')
     else:
         mid = int(most_recent_model_manifest.get('model_identifier'))
         model_identifier = mid
@@ -271,7 +275,8 @@ if __name__ == "__main__":
 
     # Parse command-line arguments
     args = parser.parse_args()
-
+    print(args)
+    print(args.file)
     # Apply logic based on parsed arguments
     if args.file:
         ensemble_dir = args.file
@@ -285,10 +290,10 @@ if __name__ == "__main__":
     # Print current state of variables for demonstration
     print(f"Current state: CONTINUE_FROM_LAST = {CONTINUE_FROM_LAST}")
     print(f"Current state: ensemble_dir = {ensemble_dir}")
-
     # Example of how you might use these variables later in your script
     if ensemble_dir:
         print(f"Proceeding with ensemble directory: {ensemble_dir}")
+        print("ENSING")
         main(ensemble_dir=ensemble_dir)
     elif not CONTINUE_FROM_LAST:
         main()

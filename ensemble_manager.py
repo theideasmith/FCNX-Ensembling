@@ -7,10 +7,10 @@ class EnsembleManager:
     """
     Manages the saving and loading of ensemble training results, including models, data, and metadata.
     """
-    def __init__(self, run_identifier, 
+    def __init__(self, run_identifier,
                  menagerie_dir='./Menagerie',
-                 json_handler=None, 
-                 desc = ''): 
+                 json_handler=None,
+                 desc = ''):
         """
         Initializes the EnsembleManager.
 
@@ -35,21 +35,21 @@ class EnsembleManager:
         else:
             print("Creating a new goddamn directory")
             os.makedirs(self.ensemble_dir)
-            self.teacher = None  # Store the teacher network                                              
-            self.num_ensembles = 20 #set num ensembles to a constant                                      
-            self.num_datasets = 3 # We are generating three datasets.                                     
-            self.training_config = { #store the training config here and update.  REMOVED network configs 
-                'run_identifier': self.run_identifier,                                                    
-                'num_ensembles': self.num_ensembles,                                                      
-                'num_datsets': 3,                                                                         
-                "description": desc,                                                                      
-                "manifest": []                                                                            
-            }                                                                                             
+            self.teacher = None  # Store the teacher network
+            self.num_ensembles = 20 #set num ensembles to a constant
+            self.num_datasets = 3 # We are generating three datasets.
+            self.training_config = { #store the training config here and update.  REMOVED network configs
+                'run_identifier': self.run_identifier,
+                'num_ensembles': self.num_ensembles,
+                'num_datsets': 3,
+                "description": desc,
+                "manifest": []
+            }
             self.json_handler.save_data(self.training_config, self.training_config_path)
 
         if not os.path.exists(self.ensemble_dir): #make the ensemble dir
             os.makedirs(self.ensemble_dir)
-        
+
         if not os.path.exists(self.tensorboard_dir):
             os.makedirs(self.tensorboard_dir)
 
@@ -63,12 +63,12 @@ class EnsembleManager:
         if self.teacher is not None:
             torch.save(self.teacher, os.path.join(self.ensemble_dir, 'teacher_network.pth'))
 
-    def add_model_to_manifest(self, 
-                           model_identifier, 
+    def add_model_to_manifest(self,
+                           model_identifier,
                            model_architecture,
                            data_path = '',
                            targets_path = '',
-                           current_epoch = None, 
+                           current_epoch = None,
                            current_time_step = None,
                            converged = False):
         config_path = self.training_config_path
@@ -97,7 +97,7 @@ class EnsembleManager:
         network_dir = os.path.join(self.ensemble_dir, f'network_{model_identifier}')
         if not os.path.exists(network_dir):
             os.makedirs(network_dir)
-        
+
         self.model_update(model_identifier, 'converged', converged)
         self.model_update(model_identifier, 'epochs_trained', epochs_trained)
         self.model_update(model_identifier, 'current_time_step', current_time_step)
@@ -119,13 +119,13 @@ class EnsembleManager:
             ntr = int(item.get('epochs_trained'))
             nep = int(item.get('num_epochs'))
             cmp = bool(item.get('converged'))
-            print("------------------------")
-    
+
+
             if (not cmp):
                 print("AHA! so there is a most recent model!")
                 return item
-        
-        
+
+        print("No recent untrained model exists")
 
         return None
 
@@ -135,7 +135,7 @@ class EnsembleManager:
         try:
             with open(f'{self.training_config_path}.json', 'w') as f:
 
-                model_dict = self.training_config['manifest'][index] 
+                model_dict = self.training_config['manifest'][index]
                 model_dict[key] = updated_value
             # Now 'data' holds the content of the JSON file as a Python dictionary or list
                 self.json_handler.save_data(self.training_config, self.training_config_path)
@@ -150,8 +150,8 @@ class EnsembleManager:
         xpath = os.path.join(self.ensemble_dir, f"raw_X_{x_identifer}.pth")
         torch.save(X, xpath)
         return xpath
-    
-    def save_targets(self, Y, y_identifer): 
+
+    def save_targets(self, Y, y_identifer):
         ypath = os.path.join(self.ensemble_dir, f"raw_Y_{y_identifer}.pth")
         torch.save(Y, ypath)
         return ypath
@@ -166,7 +166,7 @@ class EnsembleManager:
         training_config_path = os.path.join(self.ensemble_dir, 'training_config.json')
         if not os.path.exists(training_config_path):
             raise FileNotFoundError(f"Training config file not found: {training_config_path}")
-        
+
         self.training_config = self.json_handler.load_data(os.path.join(self.ensemble_dir,'training_config'))
         training_config = self.training_config
         # Load the teacher network
@@ -175,7 +175,7 @@ class EnsembleManager:
             self.teacher = torch.load(teacher_path, weights_only=False).to(hp.DEVICE)  # Load to the correct device
         else:
             raise FileNotFoundError(f"Teacher network file not found: {teacher_path}")
-      
+
         # Load the raw data and models for each ensemble member
         models = []
         data_files = {}
