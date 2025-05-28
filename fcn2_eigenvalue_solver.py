@@ -20,8 +20,8 @@ def eigenvalue_solver(params):
             -chi/lHp + chi**2 * (lKp/(lHp**2))   - lKhp,
             1/(lKhp * sigma2 / (chi * N) + d/sigma2)                       - lHp
         ]
-
-        return np.array(equations)
+        return equations
+    
     def eqsT(vals):
         lKT, lKhT, lHT = vals
 
@@ -31,8 +31,7 @@ def eigenvalue_solver(params):
             #  chi**2 * ( - (lHT + k/P)**-2)    - lKhT,
             1/(lKhT*(sigma2**2)/(chi*N) + d/sigma2)                      - lHT, 
         ]
-
-        return np.array(equations)
+        return equations
 
     solutionT = root(eqsT, initial_guess,  method='lm').x
     solutionp = root(eqsp, initial_guess, method='lm').x
@@ -61,7 +60,7 @@ if __name__ == '__main__':
     N = 1000
     T = 1.0
 
-    kappa = T 
+    kappa = 1.0 
     P: int = 200
 
     chi = N
