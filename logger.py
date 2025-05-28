@@ -41,6 +41,7 @@ class Logger:
             )
 
     def training_complete_callback(self, trainer):
+        return
         if self.progress_bar and self.epoch_task is not None:
             self.progress_bar.remove_task(self.epoch_task)
             print(f"\nTraining complete for {self.description}.")

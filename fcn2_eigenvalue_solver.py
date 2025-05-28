@@ -61,7 +61,7 @@ if __name__ == '__main__':
     N = 1000
     T = 1.0
 
-    kappa = T
+    kappa = T 
     P: int = 200
 
     chi = N

@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from activations import *
 import standard_hyperparams as hp
 from typing import Tuple, Optional, Callable, Dict
 
@@ -41,10 +40,10 @@ class FCN2Network(nn.Module):
     def model_from_hyperparameters(hyperparameters) -> 'FCN2Network':
         sigma_1 = hyperparameters.get('weight_sigma1', 1.0)
         sigma_2 = hyperparameters.get('weight_sigma2', 1.0)
-        activation: Callable[[torch.Tensor], torch.Tensor] = hyperparameters.get('activation', linear_activation),
+
         input_dim :int  = hyperparameters.get('input_dimension', 1)
         hidden_width:int= hyperparameters.get('hidden_width', 10)
-        model = FCN2Network(input_dim,hidden_width,activation, (sigma_1,sigma_2))
+        model = FCN2Network(input_dim,hidden_width,hyperparameters['activation'], (sigma_1,sigma_2))
         model._reset_with_weight_sigma()
         return model
     
@@ -58,10 +57,9 @@ class FCN2Network(nn.Module):
             sigma1 (float): Standard deviation for the first layer's weights.
             sigma2 (float): Standard deviation for the second layer's weights.
         """
-        print(weight_sigma)
         with torch.no_grad():
-            self.fc1.weight.data.normal_(0, self.weight_sigma[0])
-            self.fc2.weight.data.normal_(0, self.weight_sigma[1])
+            self.fc1.weight.data.normal_(0, (self.weight_sigma[0])**0.5)
+            self.fc2.weight.data.normal_(0, (self.weight_sigma[1])**0.5)
             self.fc1.bias.data.zero_()
             self.fc2.bias.data.zero_()
         return self
@@ -76,8 +74,8 @@ class FCN2Network(nn.Module):
         weight_sigma = self.weight_sigma
         print(f"INITIALIZING FCN2 WITH WEIGHTS: {weight_sigma}")
         with torch.no_grad():
-            self.fc1.weight.data.normal_(0, weight_sigma[0])
-            self.fc2.weight.data.normal_(0, weight_sigma[1])
+            self.fc1.weight.data.normal_(mean=0, std=weight_sigma[0]**0.5)
+            self.fc2.weight.data.normal_(mean=0, std=weight_sigma[1]**0.5)
             self.fc1.bias.data.zero_()
             self.fc2.bias.data.zero_()
 

@@ -3,13 +3,17 @@ import os
 from json_handler import JsonHandler
 import torch
 import json
+import shutil
+
 class EnsembleManager:
     """
     Manages the saving and loading of ensemble training results, including models, data, and metadata.
     """
     def __init__(self, run_identifier,
-                 menagerie_dir='./Menagerie',
+                deletedir=False,
+                 menagerie_dir=os.path.abspath('./Menagerie'),
                  json_handler=None,
+                 config = {'num_ensembles' : 3, 'num_datasets': 20},
                  desc = ''):
         """
         Initializes the EnsembleManager.
@@ -22,29 +26,35 @@ class EnsembleManager:
         self.run_identifier = run_identifier
         self.menagerie_dir = menagerie_dir
         self.ensemble_dir = os.path.join(self.menagerie_dir, f'ensemble_{run_identifier}') #this is the ensemble specific directory
+        
+        
+        if os.path.exists(self.ensemble_dir) and deletedir is True:
+            shutil.rmtree(self.ensemble_dir)
+        if not os.path.exists(self.ensemble_dir): os.makedirs(self.ensemble_dir)
+        print(f'Enseble_Dir: {self.ensemble_dir}')
         self.tensorboard_dir = self.ensemble_dir
         self.json_handler = json_handler if json_handler else JsonHandler(directory=self.ensemble_dir) # pass ensemble dir to json handler
         # self.tensorwriter = SummaryWriter(log_dir=self.tensorboard_dir)
         self.training_config_path = os.path.relpath(os.path.join(self.ensemble_dir,'training_config'))
         self.training_config = {}
-        if os.path.exists(self.ensemble_dir):
+        if os.path.exists(self.ensemble_dir) and (not deletedir):
+            print("Ensemble_dir exists")
             self.training_config = self.json_handler.load_data(os.path.join(self.ensemble_dir,'training_config'))
             self.num_ensembles = self.training_config['num_ensembles']
             self.num_datasets = self.training_config['num_datsets']
             self.teacher = self.load_teacher()
         else:
-            print("Creating a new goddamn directory")
-            os.makedirs(self.ensemble_dir)
             self.teacher = None  # Store the teacher network
-            self.num_ensembles = 20 #set num ensembles to a constant
-            self.num_datasets = 3 # We are generating three datasets.
+            self.num_ensembles = config['num_ensembles'] #set num ensembles to a constant
+            self.num_datasets = config['num_datasets']# We are generating three datasets.
             self.training_config = { #store the training config here and update.  REMOVED network configs
                 'run_identifier': self.run_identifier,
                 'num_ensembles': self.num_ensembles,
-                'num_datsets': 3,
+                'num_datsets': self.num_datasets,
                 "description": desc,
                 "manifest": []
             }
+
             self.json_handler.save_data(self.training_config, self.training_config_path)
 
         if not os.path.exists(self.ensemble_dir): #make the ensemble dir
@@ -70,9 +80,11 @@ class EnsembleManager:
                            targets_path = '',
                            current_epoch = None,
                            current_time_step = None,
-                           converged = False):
+                           converged = False,
+                           **kwargs):
         config_path = self.training_config_path
         model_config = {
+                    "batch_size": hp.BATCH_SIZE,
                     "model_identifier": model_identifier,
                     "network_architecture": model_architecture,
                     "input_dimension": hp.INPUT_DIMENSION,
@@ -86,11 +98,20 @@ class EnsembleManager:
                     "raw_Y_path": targets_path,
                     "epochs_trained": 0 if current_epoch is None else current_epoch,
                     "current_time_step": 0 if current_time_step is None else current_time_step,
-                    "converged": converged
+                    "converged": converged,
+                    "learning_rate": hp.LEARNING_RATE,
+                    "temperature": hp.TEMPERATURE,
+                    "chi": hp.CHI,
+                    "kappa": hp.KAPPA,
+
                 }
+        if kwargs is not None:
+            for k in kwargs:
+                model_config[k] = kwargs[k]
         self.training_config['manifest'].append(model_config)
         self.json_handler.save_data(self.training_config, config_path)
         return model_config
+
     def save_model(self, model, model_identifier, converged = True, current_time_step=0,epochs_trained = 0):
 
         # Save the model and data immediately after training
@@ -115,7 +136,6 @@ class EnsembleManager:
     def most_recent_model(self):
         # Obtains the model most recently trained but not completed
         for item in self.training_config['manifest']:
-            print(item)
             ntr = int(item.get('epochs_trained'))
             nep = int(item.get('num_epochs'))
             cmp = bool(item.get('converged'))
@@ -213,3 +233,82 @@ class EnsembleManager:
                 'target': target_files[model_manifest['raw_Y_path']]
             })
         return models
+
+
+class NetworksLoader:
+    def __init__(self, ensemble_manager_instance):
+        """
+        An iterable for cycling through trained networks so that they
+        don't need to all be loaded into memory at once.
+
+        Args:
+            ensemble_manager_instance: An instance of the EnsembleManager class.
+                                       This instance is expected to have a
+                                       'training_config' attribute which contains
+                                       a 'manifest' list, and an 'ensemble_dir'
+                                       attribute for resolving file paths.
+        """
+        self.ensemble_manager = ensemble_manager_instance
+        self._current_index = 0
+
+        # Access the manifest from the provided EnsembleManager instance.
+        # It's assumed that the EnsembleManager has already loaded or initialized
+        # its training_config and manifest.
+        self.manifest = self.ensemble_manager.training_config.get('manifest', [])
+        if not self.manifest:
+            print("Warning: NetworksLoader initialized with an empty manifest from EnsembleManager. No networks to load.")
+
+    def __iter__(self):
+        """
+        Returns the iterator object itself.
+        Resets the current index to allow for multiple iterations over the networks.
+        """
+        self._current_index = 0
+        return self
+
+    def __next__(self):
+        """
+        Loads and returns the next network, its associated data, and target from the manifest.
+        Raises StopIteration when all networks have been yielded.
+        """
+        if self._current_index < len(self.manifest):
+            model_manifest = self.manifest[self._current_index]
+            self._current_index += 1
+
+            # Retrieve paths from the manifest entry
+            model_path = model_manifest.get('model_path')
+            raw_x_path = model_manifest.get('raw_X_path')
+            raw_y_path = model_manifest.get('raw_Y_path')
+
+            # Validate paths before attempting to load
+            if not model_path or not os.path.exists(model_path):
+                print(f"Warning: Model file not found or path missing for manifest entry {self._current_index - 1} (path: {model_path}). Skipping this entry.")
+                # Recursively call next to skip the current invalid entry
+                return self.__next__()
+
+            if not raw_x_path or not os.path.exists(raw_x_path):
+                print(f"Warning: Raw X data file not found or path missing for manifest entry {self._current_index - 1} (path: {raw_x_path}). Skipping this entry.")
+                return self.__next__()
+
+            if not raw_y_path or not os.path.exists(raw_y_path):
+                print(f"Warning: Raw Y data file not found or path missing for manifest entry {self._current_index - 1} (path: {raw_y_path}). Skipping this entry.")
+                return self.__next__()
+
+            try:
+                # Load model, data, and target, moving them to the specified device (e.g., 'cpu' or 'cuda')
+                model = torch.load(model_path, weights_only=False).to(hp.DEVICE)
+                data = torch.load(raw_x_path).to(hp.DEVICE)
+                target = torch.load(raw_y_path).to(hp.DEVICE)
+            except Exception as e:
+                print(f"Error loading network or data for manifest entry {self._current_index - 1} (model: {model_path}): {e}. Skipping this entry.")
+                # If an error occurs during loading, skip this item and try the next
+                return self.__next__()
+
+            return {
+                'model': model,
+                'data': data,
+                'target': target,
+                'model_manifest': model_manifest # Include the original manifest entry for full context
+            }
+        else:
+            raise StopIteration # Signal the end of iteration

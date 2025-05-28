@@ -5,25 +5,28 @@ from check_mps import get_device
 INPUT_DIMENSION: int = 50
 
 # Large enough that the weight decay will be nonnegligible. 
-TEMPERATURE = 2 
+
 
 HIDDEN_WIDTH_1: int = 1000
 HIDDEN_WIDTH_2: int = 1000
+CHI = HIDDEN_WIDTH_2
+KAPPA = 1.0 / CHI 
+TEMPERATURE = KAPPA
+
 
 FCN3_LAMBDA_1 = TEMPERATURE * INPUT_DIMENSION #weight decay factor
 FCN3_LAMBDA_2 = TEMPERATURE * HIDDEN_WIDTH_2
-FCN3_LAMBDA_3 = TEMPERATURE * HIDDEN_WIDTH_2
-KAPPA = 2 * TEMPERATURE
+FCN3_LAMBDA_3 = TEMPERATURE * HIDDEN_WIDTH_2 * CHI
 
-CHI = 1# HIDDEN_WIDTH_2
+TEMPERATURE = KAPPA
 FCN3_WEIGHT_SIGMA1: float = 1.0/INPUT_DIMENSION
 FCN3_WEIGHT_SIGMA2: float = 1.0/HIDDEN_WIDTH_1
 FCN3_WEIGHT_SIGMA3: float = 1.0/(HIDDEN_WIDTH_2*CHI)
-NUM_DATA_POINTS: int = 500
-BATCH_SIZE: int = 50
-LEARNING_RATE: float = (0.00015) / HIDDEN_WIDTH_1
+NUM_DATA_POINTS: int = 200
+BATCH_SIZE: int = NUM_DATA_POINTS
+LEARNING_RATE: float = (0.0001) 
 NOISE_STD_LANGEVIN: float = (2 * LEARNING_RATE * TEMPERATURE )**0.5
-NUM_EPOCHS: int = 100000
+NUM_EPOCHS: int = 500
 
 WEIGHT_DECAY_CONFIG: dict = {
             'fc1.weight': FCN3_LAMBDA_1,
@@ -40,7 +43,7 @@ FCN3_WEIGHT_SIGMA = (
     FCN3_WEIGHT_SIGMA3
 )
 
-TEST_TRAIN_SPLIT :int  = 0.8
+TEST_TRAIN_SPLIT :int  = 1.0
 TARGET_NOISE : int = 0.001
 
 # --- Initialize Network ---
@@ -66,6 +69,7 @@ elif torch.cuda.is_available():
 else: 
     DEVICE = 'cpu'
 
+
 def to_device(data):
     """
     Moves data (tensors or models) to the global device.
@@ -79,5 +83,3 @@ def to_device(data):
     return data.to(DEVICE)
 
 # Define a global device variable
-
-print(get_device())

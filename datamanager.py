@@ -75,11 +75,18 @@ class DataManager(TensorDataset):
         self._mode : TrainingMode = TrainingMode(initial_value='init')
         self.X = X
         self.Y = Y
+        split = 1.0
         self.split : float = split
-        split_data : Tuple[Subset, Subset] = DataManager.partition(self)
+        if split < 1.0:
+            split_data : Tuple[Subset, Subset] = DataManager.partition(self)
         
-        self.train_dataset : Subset = split_data[0]
-        self.test_dataset : Subset = split_data[1]
+            self.train_dataset : Subset = split_data[0]
+            self.test_dataset : Subset = split_data[1]
+        else:
+            all_indices = list(range(len(self)))
+            full_dataset_as_subset = Subset(self, all_indices)
+            self.train_dataset = full_dataset_as_subset
+            self.test_dataset = full_dataset_as_subset
 
 
     @property
@@ -141,7 +148,7 @@ class DataManager(TensorDataset):
         """
 
         # Define the sizes of the training and testing sets
-        train_size = int(0.8 * len(manager))  # 80% for training
+        train_size = int(manager.split * len(manager))  # 80% for training
         test_size = len(manager) - train_size  # Remaining for testing
 
         # Perform the random split

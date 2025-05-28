@@ -94,16 +94,16 @@ if __name__ == '__main__':
     # if this were part of a larger project.
     # For this standalone file, we'll define the parameters directly.
 
-    d: int = 400
-    N0 = 40000
-    N1 = 50000
-    T = 1
+    d: int = 50
+    N0 = 1000
+    N1 = 1000
+    T = 1.0
 
-    kappa = T
-    P: int = 300
+    kappa = 1.0
+    P: int = 200
     sigma2 = 1.0
 
-    chi = N0
+    chi = N1
     print("kappa/p = ") 
     print(kappa/P)
     solver_params = [P, kappa, d, sigma2, N0, N1, chi]

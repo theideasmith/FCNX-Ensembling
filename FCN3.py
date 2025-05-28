@@ -139,16 +139,13 @@ class NetworkTrainer:
         self.current_epoch = continue_at_epoch
         self.current_time_step = current_time_step
         self.current_train_loss = self.get_current_train_loss()
-        if epoch_callback is not None:
-            epoch_callback(self)
-
         try:
             while self.current_epoch < self.train_config['num_epochs']:#and self.converged == False:
                 for batch in self.dataloader:
                     data, targets = batch
                     self.param_update(data, targets)
                     self.current_time_step += 1
-                if epoch_callback is not None:
+                if (epoch_callback is not None):
                     try:
                         epoch_callback(self)
                     except Exception as e:
@@ -181,11 +178,10 @@ class NetworkTrainer:
                     logger.epoch_callback(self)
             print("Training complete")
             self.converged = True
-            print("EXITING")
         except KeyboardInterrupt:
             if interrupt_callback is not None:
                 interrupt_callback(self)
-
+            print("Some weirdo interrupt happened")
             raise KeyboardInterrupt("Training Interrupted; Quitting")
 
         # except RuntimeError as e:
@@ -196,11 +192,15 @@ class NetworkTrainer:
         #     print(f"\n!!! AN UNEXPECTED ERROR OCCURRED: {e} !!!")
         #     exit()
         if logger is not None:
-            logger.training_complete_callback(self)
+            print("Some logging happening completed")
+           #logger.training_complete_callback(self)
         if completion_callback is not None:
+            print("Completion Callbackking")
             completion_callback(self)
         self.training_complete()
+        print("Reset training state")
         self.converged = True
+        print("Asserting converged")
         return self.model
 
     def training_complete(self):
@@ -213,6 +213,8 @@ class NetworkTrainer:
         self.current_time_step = 0
 
     def get_current_train_loss(self):
+        self.model.eval() # Set model to evaluation mode
+        self.manager.mode = 'test'
         with torch.no_grad():
             data = self.manager.data
             targets = self.manager.targets
@@ -230,8 +232,11 @@ class NetworkTrainer:
             outputs: torch.Tensor = self.model(data)
 
             # Calculate the Mean Squared Error loss
-            loss: torch.Tensor = self.loss_function(outputs, targets)
-
+            loss: torch.Tensor = self.loss_function(outputs, targets)    
+            for name, param in self.model.named_parameters():
+                loss = loss + (0.5 * torch.einsum('...k,...k->', param, param) * self.weight_decay_config[name] )
+            self.model.train()
+            self.manager.mode = 'train'
             # Store the current loss
             return loss.item()
 
@@ -275,7 +280,7 @@ class NetworkTrainer:
         Returns:
             torch.Tensor: The computed MSE loss.
         """
-        return nn.functional.mse_loss(outputs, targets, reduction='mean')
+        return nn.functional.mse_loss(outputs, targets, reduction='sum')
 
     def weight_update_function(self,param: torch.Tensor, param_name: str):
         """
@@ -328,4 +333,4 @@ class LangevinTrainer(NetworkTrainer):
         # θ_{t+1} = θ_t - η ∇L(θ_t) - 2*η*λ*θ_t  - sqrt(2η) ξ_t
         noise : float = torch.randn_like(param) * self.train_config['noise_std']
         η = self.train_config['learning_rate']
-        return param.data.add_(-η * param.grad - η * 2 * self.weight_decay_config[param_name] * param) +  noise
+        return param.data.add_(-η * param.grad - η * self.weight_decay_config[param_name] * param + noise) 

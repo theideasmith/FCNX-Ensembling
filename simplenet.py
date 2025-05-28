@@ -39,8 +39,10 @@ class SimpleNet(nn.Module):
         """
         weight_sigma = self.weight_sigma
         with torch.no_grad():
-            self.fc1.weight.data.normal_(0, weight_sigma)
             self.fc1.bias.data.zero_()
+            self.fc1.weight.data.zero_() # First, set all elements to zero
+            self.fc1.weight.data[0, 0] = 1.0
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Defines the forward pass of the network.
