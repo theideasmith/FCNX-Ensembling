@@ -521,7 +521,7 @@ class EnsembleManager:
             int(most_recent_model_manifest['current_time_step'])
         )
 
-    def create_new_model(self, j, i, teacher, raw_X=None, raw_Y=None):
+    def create_new_model(self, j, teacher, raw_X=None, raw_Y=None):
         """Create and configure a new model for training using the configured model_builder."""
         if raw_X is None or raw_Y is None:
             std_dev = 1 / (self.input_dimension**0.5)
@@ -533,7 +533,7 @@ class EnsembleManager:
         xpath = self.save_data(raw_X, f"{j}")
         ypath = self.save_targets(raw_Y, f"{j}")
 
-        model_identifier = f"{j * self.num_ensembles + i}"
+        model_identifier = f"{j}"
 
         # Pass all relevant config parameters to the model_builder
         model_config_for_builder = {
@@ -592,44 +592,40 @@ class EnsembleManager:
             epoch_callback=callbacks.epoch
         )
 
-    def train_dataset(self, j, start_model_num, teacher, writer, model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep):
+    def train_dataset(self, j, teacher, writer, model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep):
         """Trains models for a single dataset."""
         is_running_new_model = model is None
         if is_running_new_model:
-            model, manifest, raw_X, raw_Y, model_identifier = self.create_new_model(j, start_model_num, teacher)
+            model, manifest, raw_X, raw_Y, model_identifier = self.create_new_model(j, teacher)
         else:
             manifest = self.most_recent_model()
-            model_identifier = f"{j * self.num_ensembles + start_model_num}"
+            model_identifier = f"{j}"
 
-        for i in range(start_model_num if is_running_new_model else 0, self.num_ensembles):
-            if is_running_new_model and i != start_model_num:
-                model, manifest, raw_X, raw_Y, model_identifier = self.create_new_model(j, i, teacher, raw_X, raw_Y)
+        trainer = LangevinTrainer( # This trainer is still FCN3 specific. Generalize or allow as config input.
+            model=model,
+            batch_size=self.batch_size,
+            learning_rate=self.learning_rate,
+            noise_std=self.noise_std_ld,
+            manager=DataManager(raw_X, raw_Y.to(hp.DEVICE), split=0.95), # DataManager also expects raw_X, raw_Y on device
+            weight_decay_config={
+                'W0': self.lambda_1,
+                'W1': self.lambda_2,
+                'A': self.lambda_3,
+            },
+            num_epochs=manifest.get('num_epochs', self.num_epochs)
+        )
 
-            trainer = LangevinTrainer( # This trainer is still FCN3 specific. Generalize or allow as config input.
-                model=model,
-                batch_size=self.batch_size,
-                learning_rate=self.learning_rate,
-                noise_std=self.noise_std_ld,
-                manager=DataManager(raw_X, raw_Y.to(hp.DEVICE), split=0.95), # DataManager also expects raw_X, raw_Y on device
-                weight_decay_config={
-                    'W0': self.lambda_1,
-                    'W1': self.lambda_2,
-                    'A': self.lambda_3,
-                },
-                num_epochs=manifest.get('num_epochs', self.num_epochs)
-            )
+        if not is_running_new_model:
+            print(f"Training cached model: {model_identifier} starting at epoch: {most_recent_epoch}")
+            trainer.current_epoch = most_recent_epoch
+            trainer.current_time_step = most_recent_timestep
+            if i > start_model_num:
+                is_running_new_model = True
 
-            if not is_running_new_model:
-                print(f"Training cached model: {model_identifier} starting at epoch: {most_recent_epoch}")
-                trainer.current_epoch = most_recent_epoch
-                trainer.current_time_step = most_recent_timestep
-                if i > start_model_num:
-                    is_running_new_model = True
-
-            logger = Logger(num_epochs=trainer.train_config['num_epochs'], completed=trainer.current_epoch, description=f"Training YURI {model_identifier}")
-            with logger:
-                print(f"Training network {i} on dataset {j} for {self.num_epochs} epochs")
-                self.train_model(trainer, logger, model_identifier, writer)
+        logger = Logger(num_epochs=trainer.train_config['num_epochs'], completed=trainer.current_epoch, description=f"Training YURI {model_identifier}")
+        with logger:
+            print(f"Training parallelized network on dataset {j} for {self.num_epochs} epochs")
+            self.train_model(trainer, logger, model_identifier, writer)
 
     def run_ensemble_training(self, desc='', ensemble_dir=None, config_file=None):
         """Run the ensemble training and saving process."""
@@ -649,7 +645,7 @@ class EnsembleManager:
 
                 for j in range(start_dataset_num, self.num_datasets):
                     self.train_dataset(
-                        j, start_model_num, teacher, writer,
+                        j, teacher, writer,
                         model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep
                     )
                     model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep = None, None, None, 0, 0
