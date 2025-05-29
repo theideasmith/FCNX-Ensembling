@@ -1,502 +1,400 @@
 """
-This file contains code for training an ensemble of neural networks using a single teacher network
-to generate the training data. It includes a JsonHandler class for saving/loading data
-and an EnsembleManager class for managing the training process and data persistence.
+Training script for an ensemble of neural networks using a single teacher network.
+Includes JsonHandler for data persistence and EnsembleManager for training orchestration.
 """
-from utils import unix_basename
+from json_handler import JsonHandler
+import os
+import shutil
+import argparse
+import yaml
+from datetime import datetime
 import torch
 import numpy as np
-import json
-import os
-from ensemble_manager import EnsembleManager
-from Covariance import *
-
-from FCN2Network import FCN2Network
-from FCN3 import *
-import standard_hyperparams as hp
-from datetime import datetime
-import shutil
 from torch.utils.tensorboard import SummaryWriter
-import sys
-from json_handler import JsonHandler
-import matplotlib.pyplot as plt
-import io
 from PIL import Image
-import argparse
-SELF_DESTRUCT=True
+import io
+import matplotlib.pyplot as plt
+from utils import unix_basename
+from ensemble_manager import EnsembleManager
+from Covariance import compute_avg_channel_covariance, project_onto_target_functions, transform_eigenvalues
+from FCN2Network import FCN2Network
+from FCN3 import SimpleNet, FCN3Network, LangevinTrainer, DataManager, Logger
+import standard_hyperparams as hp
+from datamanager import DataManager, HypersphereData
+# Default configuration
+DEFAULT_CONFIG = {
+    'self_destruct': False,
+    'cash_freak': 1000,
+    'init_seed': 222,
+    'input_dimension': 50,
+    'hidden_width1': 200,
+    'hidden_width2': 200,
+    'num_data_points': 400,
+    'batch_size': 400,
+    'num_epochs': 500000,
+    'num_ensembles': 20,
+    'num_datasets': 3
+}
+
+def load_config(config_file):
+    """Load configuration from a YAML file or return default config."""
+    config = DEFAULT_CONFIG.copy()
+    if config_file and os.path.exists(config_file):
+        try:
+            with open(config_file, 'r') as f:
+                yaml_config = yaml.safe_load(f)
+            config.update(yaml_config)
+            print(f"Loaded configuration from {config_file}")
+        except Exception as e:
+            print(f"Error loading YAML config: {e}. Using default configuration.")
+    return config
+
+def initialize_globals(config):
+    """Set global hyperparameters from config."""
+    global SELF_DESTRUCT, CASH_FREAK, INIT_SEED, input_dimension, hidden_width1, hidden_width2
+    global chi, kappa, temperature, lambda_1, lambda_2, lambda_3
+    global weight_sigma1, weight_sigma2, weight_sigma3, num_data_points
+    global batch_size, learning_rate, noise_std_ld, num_epochs, weight_sigma
+
+    SELF_DESTRUCT = config['self_destruct']
+    CASH_FREAK = config['cash_freak']
+    INIT_SEED = config['init_seed']
+    torch.manual_seed(INIT_SEED)
+
+    input_dimension = config['input_dimension']
+    hidden_width1 = config['hidden_width1']
+    hidden_width2 = config['hidden_width2']
+    chi = hidden_width2
+    kappa = 1.0 / chi
+    temperature = 2 * kappa
+    lambda_1 = temperature * input_dimension
+    lambda_2 = temperature * hidden_width1
+    lambda_3 = temperature * hidden_width2 * chi
+    weight_sigma1 = 1.0 / input_dimension
+    weight_sigma2 = 1.0 / hidden_width1
+    weight_sigma3 = 1.0 / (hidden_width2 * chi)
+    num_data_points = config['num_data_points']
+    batch_size = config['batch_size']
+    learning_rate = 1e-3 / hidden_width2
+    noise_std_ld = (2 * learning_rate * temperature) ** 0.5
+    num_epochs = config['num_epochs']
+    weight_sigma = (weight_sigma1, weight_sigma2, weight_sigma3)
+
 def destruct(deldir):
+    """Clean up ensemble directory and raise interrupt if enabled."""
     if SELF_DESTRUCT:
-        # print(f"SIMULATING DELETING: {ensemble_manager.ensemble_dir}")
         shutil.rmtree(deldir)
         raise KeyboardInterrupt
 
-def do(fs):
-    for f in fs:
-        f()
-    return
-
-
-CASH_FREAK = 2000
-INIT_SEED = 222
-input_dimension: int =50
-hidden_width1: int = 200
-hidden_width2: int = 200
-chi = hidden_width2
-kappa = 1.0  / chi
-temperature = 2 * kappa
-torch.manual_seed(INIT_SEED)
-
-λ1 = temperature * input_dimension #weight decay factor
-λ2 = temperature * hidden_width1
-λ3 = temperature * hidden_width2 * chi
-weight_sigma1: float = 1.0/input_dimension
-weight_sigma2: float = 1.0/hidden_width1
-weight_sigma3: float = 1.0/(hidden_width2*chi)
-# Full batch
-num_data_points: int = 400
-
-batch_size : int =400
-learning_rate: float =  1e-3 / hidden_width2
-noise_std_ld: float = (2 * learning_rate * temperature )**0.5
-num_epochs: int = 6000
-
-weight_sigma = (weight_sigma1,
-    weight_sigma2,
-    weight_sigma3)
-N = hidden_width1
-def log_matrix_to_tensorboard(
-    writer: SummaryWriter,
-    tag: str,
-    matrix: np.ndarray,
-    global_step: int,
-):
-    """
-    Logs a NumPy matrix to TensorBoard as an image and/or a histogram.
-
-    Args:
-        writer (SummaryWriter): The TensorBoard SummaryWriter instance.
-        tag (str): The tag for the TensorBoard entry (e.g., 'layer_weights/conv1').
-        matrix (np.ndarray): The matrix (2D NumPy array) to log.
-        global_step (int): The global step for the TensorBoard event.
-        as_image (bool): If True, logs the matrix as a grayscale image (heatmap).
-                         Assumes the matrix is 2D. Values will be normalized to [0, 1].
-        as_histogram (bool): If True, logs the distribution of matrix elements as a histogram.
-    """
-    if not isinstance(matrix, np.ndarray):
-        print(f"Warning: Input for tag '{tag}' is not a NumPy array. Skipping logging.")
+def log_matrix_to_tensorboard(writer, tag, matrix, global_step):
+    """Log a 2D NumPy matrix to TensorBoard as an image."""
+    if not isinstance(matrix, np.ndarray) or matrix.ndim != 2:
+        print(f"Warning: Invalid matrix for tag '{tag}'. Skipping.")
         return
 
-    if matrix.ndim != 2:
-        print(f"Warning: Matrix for tag '{tag}' has {matrix.ndim} dimensions, "
-              f"but 'as_image' expects a 2D matrix. Skipping image logging.")
-    else:
-        # Normalize matrix to [0, 1] for image display
-        min_val = matrix.min()
-        max_val = matrix.max()
-        
-        # Avoid division by zero for constant matrices
-        if max_val - min_val > 1e-8: 
-            normalized_matrix = (matrix - min_val) / (max_val - min_val)
-        else:
-            # If matrix is constant, set it to zeros for visualization
-            normalized_matrix = np.zeros_like(matrix, dtype=np.float32) 
+    min_val, max_val = matrix.min(), matrix.max()
+    normalized_matrix = np.zeros_like(matrix, dtype=np.float32)
+    if max_val - min_val > 1e-8:
+        normalized_matrix = (matrix - min_val) / (max_val - min_val)
 
-        # Add a channel dimension for grayscale image (1, Height, Width)
-        # TensorBoard's add_image expects (C, H, W) or (H, W, C) for 2D images.
-        # (1, H, W) is a common way to represent grayscale.
-        image_tensor = np.expand_dims(normalized_matrix, axis=0) 
+    image_tensor = np.expand_dims(normalized_matrix, axis=0)
+    writer.add_image(f"{tag}/image", image_tensor, global_step=global_step, dataformats='CHW')
 
-        writer.add_image(tag + '/image', image_tensor, global_step=global_step, dataformats='CHW')
+def log_covariance_plot(writer, tag, cov_matrix, step):
+    """Log covariance matrix and its diagonal as a plot to TensorBoard."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 20))
+    abs_max = np.max(np.abs(cov_matrix))
+
+    im = ax1.imshow(cov_matrix, cmap='viridis', vmin=-abs_max, vmax=abs_max)
+    ax1.set_title(f'Covariance of Output Features (Step {step})')
+    ax1.set_xlabel('Output Feature Index')
+    ax1.set_ylabel('Output Feature Index')
+    fig.colorbar(im, ax=ax1, orientation='vertical', fraction=0.046, pad=0.04)
+
+    diagonal_values = np.diag(cov_matrix)
+    ax2.plot(np.arange(len(diagonal_values)), diagonal_values, marker='o', linestyle='-', color='red')
+    ax2.set_title('Main Diagonal of the fc2 Cov Matrix')
+    ax2.set_xlabel('Diagonal Element Index')
+    ax2.set_ylabel('Value')
+    ax2.grid(True)
+    ax2.set_xticks(np.arange(len(diagonal_values)))
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1)
+    plt.close(fig)
+    buf.seek(0)
+    image_np = np.array(Image.open(buf))
+    image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
+    writer.add_image(f"{tag}/fc2.Weights_Cov", image_tensor, global_step=step)
 
 def epoch_callback_fcn3(trainer, writer, ensemble_manager, model_identifier):
-    if trainer.current_epoch % CASH_FREAK != 0: return
+    """Log training metrics and visualizations at specified intervals."""
+    if trainer.current_epoch % CASH_FREAK != 0:
+        return
+
+    run_id = ensemble_manager.run_identifier
+    tag = f'FCN3_Run_{run_id}_Modelnum_{model_identifier}'
+
     with torch.no_grad():
-        writer.add_scalar(f'FCN3_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/Train_Step', 
-                                trainer.current_train_loss, trainer.current_time_step)
+        writer.add_scalar(f'{tag}/Train_Step', trainer.current_train_loss, trainer.current_time_step)
         H = compute_avg_channel_covariance(trainer.model, trainer.manager.data, layer_name='fc2')
-        log_matrix_to_tensorboard(writer,f'FCN3_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/H', H.cpu().numpy(),trainer.current_epoch)  
+        log_matrix_to_tensorboard(writer, f'{tag}/H', H.cpu().numpy(), trainer.current_epoch)
+
         X = trainer.manager.data
-        d = X.shape[-1] # Get d from X's last dimension
-        
-        w = torch.eye(d).to(hp.DEVICE) # This is your d*d identity matrix
-
-        y = X @ w # Matrix multiplication
-
-        lH = project_onto_target_functions(H,y )
+        d = X.shape[-1]
+        w = torch.eye(d).to(hp.DEVICE)
+        y = X @ w
+        lH = project_onto_target_functions(H, y)
         lK = transform_eigenvalues(lH, 1.0, chi, num_data_points)
-#
-#     
-        scalarsH= {}
-        scalarsK={}
-        for i, value_li in enumerate(lH):
-        # The tag will group all series under 'List_Evolution' in TensorBoard's UI.
-        # The specific series will be 'Item_0', 'Item_1', etc.
-            scalarsH[str(i)] = value_li.cpu().numpy().item()
-        for i, value_li in enumerate(lK):
-            scalarsK[str(i)] = value_li.cpu().numpy().item()
 
-        firstpairs = {k: scalarsH[k] for k in list(scalarsH)}
+        scalarsH = {str(i): float(f"{value_li.cpu().numpy().item():.6g}") for i, value_li in enumerate(lH)}
+        scalarsK = {str(i): float(f"{value_li.cpu().numpy().item():.6g}") for i, value_li in enumerate(lK)}
+        writer.add_scalars(f'{tag}/eig_lH', scalarsH, trainer.current_epoch)
+        writer.add_scalars(f'{tag}/eig_lK', scalarsK, trainer.current_epoch)
 
-        writer.add_scalars(f'FCN3_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/eig_lH',scalarsH,trainer.current_epoch)
-        writer.add_scalars(f'FCN3_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/eig_lK',scalarsK,trainer.current_epoch)
+        W = trainer.model.fc2.weight.detach().T
+        cov_W = torch.einsum('aj,bj->ab', W, W) / hidden_width1
+        log_covariance_plot(writer, tag, cov_W.cpu().numpy(), trainer.current_epoch)
 
-    if trainer.current_epoch % CASH_FREAK != 0: return
-    with torch.no_grad():
-        W = trainer.model.fc1.weight.detach().T
-        cov_W = torch.einsum('aj,bj->ab', W, W) /      N
-        cov_W = cov_W.cpu().numpy()
-
-        # Create a Matplotlib figure
-        fig,( ax1,ax2)= plt.subplots(2,1, figsize=(10, 20)) # Adjust size as needed
-
-        # Determine title and axis labels based on rowvar
-        title = f'Covariance of Output Features (Step {trainer.current_epoch})'
-        xlabel = 'Output Feature Index'
-        ylabel = 'Output Feature Index'
-
-        # Use imshow to visualize the matrix. 'coolwarm' is excellent for diverging data (positive/negative).
-        # Setting vmin/vmax consistently is crucial for comparing evolution across steps.
-        # You might need to adjust these based on the expected range of your covariance values.
-        # Dynamically setting them based on current matrix's min/max:
-        abs_max = np.max(np.abs(cov_W ))
-        im = ax1.imshow(cov_W, cmap='viridis', vmin=-abs_max, vmax=abs_max)
-        # Or, if you know your expected range:
-        # im = ax.imshow(cov_matrix_np, cmap='coolwarm', vmin=-1.0, vmax=1.0) # Example fixed range for correlation-like values
-
-        ax1.set_title(title)
-        ax1.set_xlabel(xlabel)
-        ax1.set_ylabel(ylabel)
-        fig.colorbar(im, ax=ax1, orientation='vertical', fraction=0.046, pad=0.04) # Add color bar
-
-
-        diagonal_values = np.diag(cov_W)
-        x_indices = np.arange(len(diagonal_values))
-
-        ax2.plot(x_indices, diagonal_values, marker='o', linestyle='-', color='red')
-        ax2.set_title('Main Diagonal of the fc1 Cov Matrix')
-        ax2.set_xlabel('Diagonal Element Index')
-        ax2.set_ylabel('Value')
-        ax2.grid(True) # Add a grid for better readability
-        ax2.set_xticks(x_indices) # Ensure ticks are at each index
-
-        # Convert the matplotlib figure to an image (PNG) in memory
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1) # save without extra padding
-        plt.close(fig) # Close the figure to free memory and prevent display
-        buf.seek(0)
-        
-        # Open with PIL and convert to NumPy array (HWC)
-        pil_image = Image.open(buf)
-        image_np_hwc = np.array(pil_image)
-
-        # TensorBoard add_image for numpy expects (H, W, C) or (C, H, W)
-        # If it's RGB from Matplotlib, it will be (H, W, 3).
-        # PyTorch's add_image can handle HWC if dataformats='HWC' is specified.
-        # Or convert to (C, H, W) for default behavior:
-        image_tensor_chw = torch.from_numpy(image_np_hwc).permute(2, 0, 1).float() / 255.0 # Normalize to 0-1 if RGB
-
-        # Log the image to TensorBoard
-        writer.add_image(  f'FCN3_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/fc2.Weights_Cov', image_tensor_chw, global_step=trainer.current_epoch)
-
-    writer.flush()    
+    writer.flush()
 
 def activation(x):
     return x
 
-def main(desc = '',
-         ensemble_dir=None):
-    """
-    Main function to run the ensemble training and saving process.
-    """
+class TrainingCallbacks:
+    """Handle training callbacks for interrupt, completion, and epoch events."""
+    def __init__(self, ensemble_manager, writer, model_identifier):
+        self.ensemble_manager = ensemble_manager
+        self.writer = writer
+        self.model_identifier = model_identifier
 
-    run_identifier = ''
-    ensemble_manager = None
-    json_handler = JsonHandler() #dont pass dir here
-    print(f'Ensembling in directory {ensemble_dir}')
-    if ensemble_dir is None:
-        print(f'Ens dir thought to be None')
-        print(f'Creating a new ensemble directory under the name')
-        # Generate a unique identifier for this training run
-        dt = datetime.now()
-        formatted_datetime = dt.strftime("%a, %b %d %Y, %I:%M%p")
-        run_identifier = f"FCN2_D_{input_dimension}_N_{hidden_width1}_chi_{chi}_T_{temperature}_{formatted_datetime}"
-        print(f'./Menagerie/{run_identifier}/')
+    def interrupt(self, trainer):
+        """Handle training interruption."""
+        self.ensemble_manager.save_model(
+            trainer.model,
+            self.model_identifier,
+            current_time_step=trainer.current_time_step,
+            converged=False,
+            epochs_trained=trainer.current_epoch
+        )
+        self.writer.close()
+        self.writer.flush()
+        destruct(self.ensemble_manager.ensemble_dir)
 
-        # Initialize JsonHandler and EnsembleManager
+    def completion(self, trainer):
+        """Handle training completion."""
+        self.ensemble_manager.save_model(
+            trainer.model,
+            self.model_identifier,
+            converged=trainer.converged,
+            current_time_step=trainer.current_time_step,
+            epochs_trained=trainer.current_epoch
+        )
 
-        ensemble_manager = EnsembleManager(
-                deletedir=True,
-                run_identifier=run_identifier,
-                json_handler=json_handler, desc = desc) #pass run identifier
+    def epoch(self, trainer):
+        """Handle epoch logging."""
+        epoch_callback_fcn3(trainer, self.writer, self.ensemble_manager, self.model_identifier)
 
-    else:
+def initialize_ensemble_manager(ensemble_dir, json_handler, desc, config):
+    """Initialize EnsembleManager with a unique run identifier."""
+    if ensemble_dir:
         basename = unix_basename(ensemble_dir)
-        print(f'Basename are {basename}')
         run_identifier = basename.split('ensemble_', 1)[1] if basename.startswith('ensemble_') else basename
-        print(run_identifier)
-        ensemble_manager = EnsembleManager(
-                run_identifier=run_identifier,
-                json_handler=json_handler)
-    """
-    The logic I want to implement here is follows.
-    If the ensemblemanager exists AND all models have _NOT_ been trained
-    then we will RESUME TRAINING at the model given.
-
-    Otherwise, we will continue with the existing training loop
-
-    How this works:
-    1. Search through the model manifest and find the nth model.
-    2. Determine the dataset number and model number
-    3. Start the training loop by initializing with
-        (1) Dataset number
-        (2) Model number
-        (3) Configure the NetworkTrainer with the current epoch of the model
-    4. Continue training loop
-    """
-
-
-
-    """
-    If the teacher network exists, then load it
-    If the teacher network does _not_ exist, then create it.
-
-    Search through the models in the manifest and train the most
-    recent one that has not completed training.
-
-    We do that first by searching through the manifest, finding
-    the first model whose converged == False
-
-    """
-
-    # Via command line arguments, check whether there has been
-    # passed a training directory.
-    teacher = None
-    if ensemble_manager.teacher_exists():
-        teacher = ensemble_manager.load_cached_teacher()
+        print(f"Using existing ensemble directory: {ensemble_dir}")
     else:
+        dt = datetime.now().strftime("%a, %b %d %Y, %I:%M%p")
+        run_identifier = f"FCN3_D_{input_dimension}_N_{hidden_width1}_chi_{chi}_T_{temperature}_{dt}"
+        print(f"Creating new ensemble directory: ./Menagerie/{run_identifier}/")
 
-    # 1. Generate a single teacher network
-        teacher = SimpleNet(
-            input_dimension,
-            activation,
-            1.0 / input_dimension, # No need to divide here.
-        ).to(hp.DEVICE)
-        torch.save(teacher, os.path.join(ensemble_manager.ensemble_dir, 'teacher_network.pth')) #save the teacher to the ensemble dir
-        ensemble_manager.teacher = teacher #store the teacher
-
-    writer = SummaryWriter(
-                log_dir=ensemble_manager.tensorboard_dir
+    return EnsembleManager(
+        run_identifier=run_identifier,
+        json_handler=json_handler,
+        deletedir=ensemble_dir is None,
+        desc=desc,
+        config={'num_ensembles': config['num_ensembles'], 'num_datasets': config['num_datasets']}
     )
 
+def initialize_teacher(ensemble_manager):
+    """Load or create and save a teacher network."""
+    if ensemble_manager.teacher_exists():
+        return ensemble_manager.load_cached_teacher()
 
-    most_recent_model_manifest = ensemble_manager.most_recent_model()
-    start_dataset_num = 0
-    start_model_num = 0
-    model_identifier = None
-    if most_recent_model_manifest is None:
-        mid = len(ensemble_manager.training_config['manifest'])
-        model_identifier = mid
-        nens = int(ensemble_manager.training_config['num_ensembles'])
-        start_dataset_num = int((mid - mid%nens)/nens)
-        start_model_num =  int(mid%nens)
-        print(f'Running model: {mid} dnum: {start_dataset_num}, mnum:{start_model_num}')
+    teacher = SimpleNet(input_dimension, activation, 1.0).to(hp.DEVICE)
+    torch.save(teacher, os.path.join(ensemble_manager.ensemble_dir, 'teacher_network.pth'))
+    ensemble_manager.teacher = teacher
+    return teacher
+
+def get_model_indices(ensemble_manager, most_recent_model_manifest, num_ensembles):
+    """Determine starting dataset and model indices for training."""
+    mid = len(ensemble_manager.training_config['manifest']) if most_recent_model_manifest is None else int(most_recent_model_manifest.get('model_identifier'))
+    return int((mid - mid % num_ensembles) / num_ensembles), int(mid % num_ensembles), mid
+
+def load_existing_model(most_recent_model_manifest):
+    """Load an existing model and its data if available."""
+    if not most_recent_model_manifest or not os.path.exists(most_recent_model_manifest['model_path']):
+        return None, None, None, 0, 0
+
+    model_data = {
+        'model': torch.load(most_recent_model_manifest['model_path'], weights_only=False).to(hp.DEVICE),
+        'data': torch.load(most_recent_model_manifest['raw_X_path']).to(hp.DEVICE),
+        'target': torch.load(most_recent_model_manifest['raw_Y_path']).to(hp.DEVICE)
+    }
+    return (
+        model_data['model'],
+        model_data['data'],
+        model_data['target'],
+        int(most_recent_model_manifest['epochs_trained']),
+        int(most_recent_model_manifest['current_time_step'])
+    )
+
+def create_new_model(j, i, ensemble_manager, teacher, raw_X=None, raw_Y=None):
+    """Create and configure a new model for training."""
+    if raw_X is None or raw_Y is None:
+        raw_X = HypersphereData.sample_hypersphere(num_data_points, input_dimension, normalized=False).to(hp.DEVICE)
+        raw_Y = teacher(raw_X)
+    xpath = ensemble_manager.save_data(raw_X, f"{j}")
+    ypath = ensemble_manager.save_targets(raw_Y, f"{j}")
+
+    weight_decay_config = {
+        'fc1.weight': lambda_1,
+        'fc2.weight': lambda_2,
+        'fc3.weight': lambda_3,
+        'fc1.bias': 0.0,
+        'fc2.bias': 0.0,
+        'fc3.bias': 0.0
+    }
+    hyperparameters = {
+        'input_dimension': input_dimension,
+        'hidden_width_1': hidden_width1,
+        'hidden_width_2': hidden_width2,
+        'activation': activation,
+        'output_activation': activation,
+        'weight_sigma1': weight_sigma1,
+        'weight_sigma2': weight_sigma2,
+        'weight_sigma3': weight_sigma3
+    }
+    model = FCN3Network.model_from_hyperparameters(hyperparameters).to(hp.DEVICE)
+    model_identifier = f"{j * ensemble_manager.num_ensembles + i}"
+
+    model_architecture_spec = {
+        'kind': 'FCN3',
+        'input_dim': input_dimension,
+        'hidden_width_1': hidden_width1,
+        'hidden_width_2': hidden_width2,
+        'weight_sigma': (weight_sigma1, weight_sigma2, weight_sigma3),
+        'weight_decay': (lambda_1, lambda_2, lambda_3)
+    }
+    manifest = ensemble_manager.add_model_to_manifest(
+        model_identifier,
+        model_architecture_spec,
+        data_path=xpath,
+        targets_path=ypath,
+        langevin_noise=noise_std_ld,
+        chi=chi,
+        temperature=temperature,
+        kappa=kappa,
+        learning_rate=learning_rate,
+        num_epochs=num_epochs
+    )
+    return model, manifest, raw_X, raw_Y, model_identifier
+
+def train_model(trainer, logger, model_identifier, ensemble_manager, writer):
+    """Train a model with specified callbacks."""
+    callbacks = TrainingCallbacks(ensemble_manager, writer, model_identifier)
+    model = trainer.model
+    model._reset_with_weight_sigma(weight_sigma)
+    trainer.train(
+        logger=logger,
+        continue_at_epoch=trainer.current_epoch,
+        current_time_step=trainer.current_time_step,
+        interrupt_callback=callbacks.interrupt,
+        completion_callback=callbacks.completion,
+        epoch_callback=callbacks.epoch
+    )
+
+def train_dataset(j, start_model_num, ensemble_manager, teacher, writer, model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep, num_ensembles):
+    """Train models for a single dataset."""
+    is_running_new_model = model is None
+    if is_running_new_model:
+        model, manifest, raw_X, raw_Y, model_identifier = create_new_model(j, start_model_num, ensemble_manager, teacher)
     else:
-        mid = int(most_recent_model_manifest.get('model_identifier'))
-        model_identifier = mid
-        nens = int(ensemble_manager.training_config['num_ensembles'])
-        start_dataset_num = int((mid - mid%nens)/nens)
-        start_model_num =int((mid%nens))
-        print(f'Running model: {mid} dnum: {start_dataset_num}, mnum:{start_model_num}')
-        # return
-    try:
-        # 2. Generate datasets and train ensembles
+        manifest = ensemble_manager.most_recent_model()
+        model_identifier = f"{j * num_ensembles + start_model_num}"
 
-        is_model = most_recent_model_manifest is not None
-        raw_X = None
-        raw_Y = None
-        xpath = None
-        ypath = None
-        model = None
-        most_recent_epoch = 0
-        most_recent_timestep = 0
-        if  is_model:
-            print("MODEL FOUND")
-            model_path = most_recent_model_manifest['model_path']
+    for i in range(start_model_num if is_running_new_model else 0, num_ensembles):
+        if is_running_new_model and i != start_model_num:
+            model, manifest, raw_X, raw_Y, model_identifier = create_new_model(j, i, ensemble_manager, teacher, raw_X, raw_Y)
 
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+        trainer = LangevinTrainer(
+            model=model,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            noise_std=noise_std_ld,
+            manager=DataManager(raw_X.detach().to(hp.DEVICE), raw_Y.detach().to(hp.DEVICE), split=0.95),
+            weight_decay_config={
+                'fc1.weight': lambda_1,
+                'fc2.weight': lambda_2,
+                'fc3.weight': lambda_3,
+                'fc1.bias': 0.0,
+                'fc2.bias': 0.0,
+                'fc3.bias': 0.0
+            },
+            num_epochs=manifest.get('num_epochs', num_epochs)
+        )
 
-            most_recent_model_data = {
-                'model': torch.load(model_path, weights_only=False).to(hp.DEVICE),
-                'data': torch.load(most_recent_model_manifest['raw_X_path']).to(hp.DEVICE),
-                'target': torch.load(most_recent_model_manifest['raw_Y_path']).to(hp.DEVICE)
-            }
+        if not is_running_new_model:
+            print(f"Training cached model: {model_identifier} starting at epoch: {most_recent_epoch}")
+            trainer.current_epoch = most_recent_epoch
+            trainer.current_time_step = most_recent_timestep
 
-            model = most_recent_model_data['model']
-            raw_X = most_recent_model_data['data']
-            raw_Y = most_recent_model_data['target']
-            xpath = most_recent_model_manifest['raw_X_path']
-            ypath = most_recent_model_manifest['raw_Y_path']
-            most_recent_epoch = int(most_recent_model_manifest['epochs_trained'])
-            most_recent_timestep = int(most_recent_model_manifest['current_time_step'])
+        logger = Logger(num_epochs=trainer.train_config['num_epochs'], completed=trainer.current_epoch, description=f"Training YURI {model_identifier}")
+        with logger:
+            print(f"Training network {i} on dataset {j}")
+            train_model(trainer, logger, model_identifier, ensemble_manager, writer)
 
-        for j in range(start_dataset_num,3): #loop 3 times for the datasets
-            is_running_new_model =  not (is_model and j==start_dataset_num) or not is_model
-            if is_running_new_model is True:
-                raw_X = HypersphereData.sample_hypersphere(num_data_points, input_dimension, normalized=False).to(hp.DEVICE)
-                # I spoke with Zohar – no need to add gaussian noise. It compllicates too much
-                raw_Y = teacher(raw_X) #+ (torch.randn(hp.NUM_DATA_POINTS, 1) * hp.TARGET_NOISE).to(hp.DEVICE)
-                xpath = ensemble_manager.save_data(raw_X, f"{j}")
-                ypath = ensemble_manager.save_targets(raw_Y, f"{j}")
+def main(desc='', ensemble_dir=None, config_file=None):
+    """Run the ensemble training and saving process."""
+    config = load_config(config_file)
+    initialize_globals(config)
+    json_handler = JsonHandler()
+    ensemble_manager = initialize_ensemble_manager(ensemble_dir, json_handler, desc, config)
+    teacher = initialize_teacher(ensemble_manager)
 
-            for i in range(start_model_num, ensemble_manager.training_config['num_ensembles']):
+    with SummaryWriter(log_dir=ensemble_manager.tensorboard_dir) as writer:
+        try:
+            most_recent_model_manifest = ensemble_manager.most_recent_model()
+            start_dataset_num, start_model_num, model_identifier = get_model_indices(
+                ensemble_manager, most_recent_model_manifest, config['num_ensembles']
+            )
+            print(f"Running model: {model_identifier} dnum: {start_dataset_num}, mnum: {start_model_num}")
 
-                manifest = most_recent_model_manifest
-                if is_running_new_model is True:
-                        # Create and train the model
-                    weight_decay_config = {
-                                'fc1.weight': λ1,
-                                'fc2.weight': λ2,
-                                'fc3.weight': λ3,
-                                'fc1.bias': 0.0,
-                                'fc2.bias': 0.0,
-                                'fc3.bias': 0.0
-                    }
-                    hyperparameters = {
-                        'input_dimension': input_dimension,
-                        'hidden_width_1': hidden_width1,
-                        'hidden_width_2': hidden_width2,
-                        'activation': activation,
-                        'output_activation': activation,
-                        'weight_sigma1': weight_sigma1,
-                        'weight_sigma2': weight_sigma2,
-                        'weight_sigma3': weight_sigma3
-                    }
-                    model: FCN3Network = FCN3Network.model_from_hyperparameters(hyperparameters).to(hp.DEVICE)
+            model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep = load_existing_model(most_recent_model_manifest)
 
-                    model_identifier = f"{j * ensemble_manager.num_ensembles + i}"
-                    # Store the configuration of the network
-                    model_architecture_spec = {
-                        'kind': 'FCN3',
-                        'input_dim': input_dimension,
-                       'hidden_width_1': hidden_width1,
-                        'hidde_width_2': hidden_width2,
-                        'weight_sigma':(weight_sigma1,weight_sigma2,weight_sigma3),
-                        'weight_decay':(λ1,λ2,λ3)
-                    }
-                    manifest = ensemble_manager.add_model_to_manifest(
-                        model_identifier,
-                        model_architecture_spec,
-                        data_path = xpath,
-                        targets_path = ypath,
-                        langevin_noise = noise_std_ld,
-                        chi = chi,
-                        temperature = temperature,
-                        kappa = kappa,
-                        learning_rate = learning_rate,
-                        num_epochs=num_epochs
-                    )
-
-                max_epochs  = manifest.get('num_epochs', num_epochs)
-                bsize =  batch_size
-
-                lrate = learning_rate
-
-
-                trainer = LangevinTrainer(
-                    model=model,
-                    batch_size = bsize,
-                    learning_rate = lrate,
-                    noise_std = noise_std_ld,
-                    manager= DataManager(raw_X.detach().to(hp.DEVICE), raw_Y.detach().to(hp.DEVICE), split=0.95),
-                    weight_decay_config=weight_decay_config,
-                    num_epochs=max_epochs
+            for j in range(start_dataset_num, config['num_datasets']):
+                train_dataset(
+                    j, start_model_num, ensemble_manager, teacher, writer,
+                    model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep,
+                    config['num_ensembles']
                 )
 
-                if not is_running_new_model:
-                    print(f'Training cached_model:{model_identifier}')
-                    print(f'Starting at epoch: {most_recent_epoch}')
-                    trainer.current_epoch = most_recent_epoch
-                    trainer.current_time_step = most_recent_timestep
-                print(f'Initializing training for model: {model_identifier} @ {max_epochs} epochs')
-                logger = Logger(num_epochs=max_epochs,
-                                completed=trainer.current_epoch,
-                                description=f"Training YURI {model_identifier}")
-                with logger:
-                    print(f"Training network {i} on dataset {j}")
-                    model._reset_with_weight_sigma(weight_sigma)
-
-                    # I know this is some of the most unreadable python code imaginable
-                    # but I thought it was cool to introduce some functional
-                    # programming style.
-                    trainer.train(
-                        logger = logger,
-                        continue_at_epoch = trainer.current_epoch,
-                        current_time_step = trainer.current_time_step,
-                        interrupt_callback = lambda trainer: do([
-                            lambda: ensemble_manager.save_model(
-                                trainer.model, model_identifier,
-                                current_time_step = trainer.current_time_step,
-                                converged = False,
-                                epochs_trained = trainer.current_epoch),
-                            lambda: writer.close(),
-                            lambda: writer.flush,
-                            lambda: destruct(ensemble_manager.ensemble_dir)
-                        ])
-                        ,
-                        completion_callback =
-                            lambda trainer: ensemble_manager.save_model(model,
-                                    model_identifier,
-                                    converged = trainer.converged,
-                                    current_time_step = trainer.current_time_step,
-                                    epochs_trained = trainer.current_epoch),
-                        epoch_callback =lambda trainer: do([
-                                lambda: epoch_callback_fcn3(trainer, writer, ensemble_manager, model_identifier),
-                        ])
-                    )
-    except KeyboardInterrupt:
-        print("The training loop ended with a keyboard interrupt")
-        destruct(ensemble_manager.ensemble_dir)
-        writer.close()
-
+        except KeyboardInterrupt:
+            print("Training interrupted")
+            destruct(ensemble_manager.ensemble_dir)
+            writer.close()
 
 if __name__ == "__main__":
-
-    # Initialize default values
-    CONTINUE_FROM_LAST = False
-    ensemble_dir = None
-
-    # Set up argument parser
-    parser = argparse.ArgumentParser(
-        description="Process a file or set an ensemble directory."
-    )
-    parser.add_argument(
-        '-f', '--file',
-        type=str,
-        help="Specify an ensemble directory (filename) to process."
-    )
-
-    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Process a file or set an ensemble directory.")
+    parser.add_argument('-f', '--file', type=str, help="Specify an ensemble directory to process.")
+    parser.add_argument('-c', '--config', type=str, help="Specify a YAML configuration file.")
     args = parser.parse_args()
-    print(args)
-    print(args.file)
-    # Apply logic based on parsed arguments
-    if args.file:
-        ensemble_dir = args.file
-        print(f"Running with -f option: ensemble_dir set to '{ensemble_dir}'")
-        # You can call process_file here if the -f argument implies file processing
-        # For now, based on your request, it just sets the variable.
-        # process_file(ensemble_dir) # Uncomment if you want to process the file when -f is used
-    else:
-        print("Running vanilla: CONTINUE_FROM_LAST is False, ensemble_dir is None.")
 
-    # Print current state of variables for demonstration
-    print(f"Current state: CONTINUE_FROM_LAST = {CONTINUE_FROM_LAST}")
-    print(f"Current state: ensemble_dir = {ensemble_dir}")
-    # Example of how you might use these variables later in your script
-    if ensemble_dir:
-        print(f"Proceeding with ensemble directory: {ensemble_dir}")
-        print("ENSING")
-        main(ensemble_dir=ensemble_dir, desc='FCN3 with the correct hyperparams and plotting the weights covariances as well to compare with GP')
-    elif not CONTINUE_FROM_LAST:
-        main()
+    ensemble_dir = args.file
+    config_file = args.config
+    desc = 'FCN3 with correct hyperparameters and weight covariance plotting for GP comparison'
+
+    if ensemble_dir or config_file:
+        print(f"Proceeding with ensemble directory: {ensemble_dir}, config file: {config_file}")
+        main(ensemble_dir=ensemble_dir, desc=desc, config_file=config_file)
+    else:
+        print("Running with default settings: no ensemble directory or config file specified.")
+        main(desc=desc)

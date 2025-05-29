@@ -16,7 +16,7 @@ def compute_avg_channel_covariance(f, X, layer_name='fc2'):
     fc2_output = activations[layer_name]
     P, N = fc2_output.shape
     fc2_centered = fc2_output - fc2_output.mean(dim=1, keepdim=True)
-    cov_matrices = torch.einsum('pn,qn->npq', fc2_centered, fc2_centered) / P
+    cov_matrices = torch.einsum('pn,qn->npq', fc2_centered, fc2_centered) / (P)
     return torch.mean(cov_matrices, dim=0)
 
 def project_onto_target_functions(K, y):
