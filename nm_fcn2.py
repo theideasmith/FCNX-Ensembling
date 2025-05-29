@@ -278,8 +278,6 @@ def main(desc = '',
     # 1. Generate a single teacher network
         teacher = SimpleNet(
             input_dimension,
-            activation,
-            1.0 / input_dimension, # No need to divide here.
         ).to(hp.DEVICE)
         torch.save(teacher, os.path.join(ensemble_manager.ensemble_dir, 'teacher_network.pth')) #save the teacher to the ensemble dir
         ensemble_manager.teacher = teacher #store the teacher

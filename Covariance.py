@@ -1,8 +1,6 @@
 import torch
 from opt_einsum import contract
 
-
-
 def compute_avg_channel_covariance(f, X, layer_name='fc2'):
     f.eval()
     activations = {}
@@ -31,6 +29,7 @@ def compute_avg_channel_covariance_fcn3(f, X):
     P, b, N1 = h1_out.shape
     fc2_centered = h1_out - h1_out.mean(dim=2, keepdim=True)
     avged_cov = contract('pin,qin->pq', fc2_centered, fc2_centered, backend='torch') / (N1*b)
+    print(avged_cov.shape)
     return avged_cov
 
 

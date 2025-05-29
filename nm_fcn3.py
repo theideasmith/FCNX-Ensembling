@@ -529,7 +529,8 @@ class EnsembleManager:
             raw_X = raw_X.to(hp.DEVICE)
             raw_Y = teacher(raw_X).detach() # Teacher generates the targets
             # Store the full teacher output for covariance calculation
-            self.full_teacher_y = teacher(raw_X).detach()
+            W = torch.eye(self.input_dimension).to(hp.DEVICE) # This is your d*d identity matrix
+            self.full_teacher_y = raw_X @ W
         xpath = self.save_data(raw_X, f"{j}")
         ypath = self.save_targets(raw_Y, f"{j}")
 
@@ -585,11 +586,12 @@ class EnsembleManager:
             model._reset_with_weight_sigma(self.weight_sigma)
         trainer.train(
             logger=logger,
+            log_freq=100,
             continue_at_epoch=trainer.current_epoch,
             current_time_step=trainer.current_time_step,
             interrupt_callback=callbacks.interrupt,
             completion_callback=callbacks.completion,
-            epoch_callback=callbacks.epoch
+            epoch_callback=callbacks.epoch,
         )
 
     def train_dataset(self, j, teacher, writer, model, raw_X, raw_Y, most_recent_epoch, most_recent_timestep):
@@ -736,13 +738,13 @@ def main():
     parser = argparse.ArgumentParser(description="Process a file or set an ensemble directory.")
     parser.add_argument('-f', '--file', type=str, help="Specify an ensemble directory to process.")
     parser.add_argument('-c', '--config', type=str, help="Specify a YAML configuration file.")
-    parser.add_argument('-d', '--dec', type=str, help="Add a note to describe this ensemble training run")
+    parser.add_argument('-d', '--desc', type=str, help="Add a note to describe this ensemble training run")
 
     args = parser.parse_args()
 
     ensemble_dir = args.file
     config_file = args.config
-    desc = 'Modular ensemble training run'
+
 
     # Load initial config from file to pass to EnsembleManager constructor
     initial_config_from_file = {}
@@ -833,13 +835,13 @@ def main():
     ensemble_manager = EnsembleManager(
         run_identifier=run_identifier,
         deletedir=ensemble_dir is None,
-        desc=desc,
+        desc=initial_config_from_file.get('description', 'Training an ensemble of FCN3'),
         config=initial_config_from_file # Pass the loaded/augmented config here
     )
 
     if ensemble_dir or config_file:
         print(f"Proceeding with ensemble directory: {ensemble_dir}, config file: {config_file}")
-    ensemble_manager.run_ensemble_training(desc=desc, ensemble_dir=ensemble_dir, config_file=config_file)
+    ensemble_manager.run_ensemble_training(desc=initial_config_from_file.get('description', 'Trainining ens of FCN3s'), ensemble_dir=ensemble_dir, config_file=config_file)
 
 
 if __name__ == "__main__":

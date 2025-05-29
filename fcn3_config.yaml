@@ -4,16 +4,16 @@ cash_freak: 2000
 init_seed: 222
 
 # Data and Model Dimensions
-input_dimension: 2
-hidden_width1: 10
-hidden_width2: 10 # Specific to FCN3 or models with two hidden layers
-num_data_points: 20
+input_dimension: 50
+hidden_width1: 200
+hidden_width2: 200 # Specific to FCN3 or models with two hidden layers
+num_data_points: 400
 batch_size: 5
 
 # Training Parameters
 num_epochs: 100
-num_ensembles: 20 # Number of models per dataset
-num_datasets: 1
+num_ensembles: 25 # Number of models per dataset
+num_datasets: 4
 
 # Model Builder and Callbacks
 # Set to 'default' to use the EnsembleManager's internal defaults.
@@ -22,4 +22,5 @@ num_datasets: 1
 # you might use `teacher_builder: 'my_custom_teacher_builder'`.
 # In this specific Python script, 'default' triggers the internal _default_fcn3_model_builder, etc.
 model_type: 'fcn3'
-covariance_layer_name: fc2 # Layer name for covariance calculation, specific to FCN3
+description: 'Training a bunch of FCN3s'
+
