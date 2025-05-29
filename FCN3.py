@@ -139,22 +139,25 @@ class NetworkTrainer:
         # Iterate over the specified number of epochs
         self.current_epoch = continue_at_epoch
         self.current_time_step = current_time_step
-        # self.current_train_loss = self.get_current_train_loss()
-        self.current_train_loss= 10000
+        self.current_train_loss = self.get_current_train_loss()
+
         try:
             while self.current_epoch < self.train_config['num_epochs']:
                 for batch in self.dataloader:
                     data, targets = batch
-                    breakpoint()
                     self.param_update(data, targets)
                     self.current_time_step += 1
-                # if (epoch_callback is not None):
-                #     try:
-                #         epoch_callback(self)
-                #     except Exception as e:
-                #         print(f'An error occurred {e}')
+                if (epoch_callback is not None):
+                    try:
+                        epoch_callback(self)
+                    except Exception as e:
+                        print(f'An error occurred {e}')
+
                 self.current_epoch += 1
-                # self.training_info.update_loss(self.current_time_step, self.current_train_loss)
+                self.training_info.update_loss(self.current_time_step, self.current_train_loss)
+                if logger is not None:
+
+                    logger.epoch_callback(self)
             self.converged = True
         except KeyboardInterrupt:
             if interrupt_callback is not None:
@@ -203,35 +206,32 @@ class NetworkTrainer:
                 loss = loss + (0.5 * torch.einsum('...k,...k->', param, param) * self.weight_decay_config[name] )
             self.model.train()
             self.manager.mode = 'train'
-            # Store the current loss
+
         return loss
 
     def param_update(self, data: torch.Tensor, targets: torch.Tensor) -> None:
         outputs: torch.Tensor = self.model(data)
-        breakpoint()
+
+        self.model.zero_grad()
+
         try:
 
             # Calculate the Mean Squared Error loss
             loss: torch.Tensor = self.loss_function(outputs, targets)
-            breakpoint()
-        # Store the current loss
-            self.current_train_loss = loss
-
+            self.current_train_loss = loss.detach().cpu().numpy()
+            loss.backward()
         except Exception as e:
             print(e)
             exit()
-        
-        breakpoint()
-        # Backward pass
-        loss.backward()
+
         # Update parameters with no gradient tracking
         with torch.no_grad():
             for name, param in self.model.named_parameters():
                 self.weight_update_function(
                     param=param,
                     param_name=name)
+        
         self.model.zero_grad()
-
 
 
     def loss_function(self, outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:

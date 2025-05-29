@@ -14,7 +14,6 @@ class SimpleNet(nn.Module):
     """
     def __init__(self, 
                  input_dim: int,
-                 weight_sigma: float
                  ) -> None:
                  
         """
@@ -25,7 +24,6 @@ class SimpleNet(nn.Module):
         """
         super().__init__()
         self.fc1 = nn.Linear(input_dim, 1)
-        self.weight_sigma : float = weight_sigma
         self._initialize_weights()
     
     def _initialize_weights(self) -> None:
@@ -35,7 +33,6 @@ class SimpleNet(nn.Module):
         Args:
             sigma (float): Standard deviation for the layer's weights.
         """
-        weight_sigma = self.weight_sigma
         with torch.no_grad():
             self.fc1.bias.data.zero_()
             self.fc1.weight.data.zero_() # First, set all elements to zero

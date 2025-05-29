@@ -19,10 +19,14 @@ from torch.utils.tensorboard import SummaryWriter
 # Import standard_hyperparams for default device, but minimize other direct uses
 import standard_hyperparams as hp
 from Covariance import *
-from FCN3 import DataManager, LangevinTrainer, Logger, SimpleNet # Kept for default teacher and trainer
+from logger import Logger
+from FCN3 import DataManager, LangevinTrainer, SimpleNet # Kept for default teacher and trainer
 from FCN3Network import FCN3NetworkEnsembleLinear # Kept for default model builder example
 from json_handler import JsonHandler
 from utils import unix_basename
+import torch.autograd as autograd
+
+autograd.set_detect_anomaly(True)
 
 
 class EnsembleManager:
@@ -63,7 +67,7 @@ class EnsembleManager:
 
         # Set core parameters from config
         self.SELF_DESTRUCT = self.config.get('self_destruct', False)
-        self.CASH_FREAK = self.config.get('cash_freak', 1000)
+        self.CASH_FREAK = self.config.get('cash_freak', 3000)
         self.INIT_SEED = self.config.get('init_seed', 222)
         torch.manual_seed(self.INIT_SEED)
 
@@ -110,8 +114,6 @@ class EnsembleManager:
             self.epoch_callback_func = self._default_epoch_callback
         else:
             self.epoch_callback_func = self.config['epoch_callback_func']
-
-        self.covariance_layer_name = self.config.get('covariance_layer_name', 'fc2') 
 
         if os.path.exists(self.ensemble_dir) and deletedir:
             shutil.rmtree(self.ensemble_dir)
@@ -162,10 +164,9 @@ class EnsembleManager:
             'num_epochs': 500000,
             'num_ensembles': 20, # Renamed to 'num_models_per_dataset' conceptually
             'num_datasets': 3,
-            'teacher_builder': 'default',
-            'model_builder': 'default', # Default FCN3 builder for example
-            'epoch_callback_func': 'default', # Default epoch callback
-            'covariance_layer_name': 'fc2', # Default for FCN3
+            'teacher_builder': 'fcn3',
+            'model_builder': 'fcn3', # Default FCN3 builder for example
+            'epoch_callback_func': 'fcn3', # Default epoch callback
             # Add general hyperparameters here if not dynamically calculated
             # 'learning_rate': None, # Will be calculated by FCN3 specific default if None
             # 'chi': None, # Will be calculated by FCN3 specific default if None
@@ -185,7 +186,7 @@ class EnsembleManager:
     def _default_teacher_builder(self, input_dim):
 
         """Default teacher network builder (e.g., SimpleNet)."""
-        return SimpleNet(input_dim, self._activation, 1.0)
+        return SimpleNet(input_dim).to(hp.DEVICE)
 
     def _default_fcn3_model_builder(self, model_config):
         """Default FCN3 model builder."""
@@ -211,7 +212,7 @@ class EnsembleManager:
         with torch.no_grad():
             writer.add_scalar(f'{tag}/Train_Step', trainer.current_train_loss, trainer.current_time_step)
             # Use the configurable layer name
-            H = compute_avg_channel_covariance(trainer.model, trainer.manager.data, layer_name=ensemble_manager_instance.covariance_layer_name)
+            H = compute_avg_channel_covariance(trainer.model, trainer.manager.data)
             ensemble_manager_instance._log_matrix_to_tensorboard(writer, f'{tag}/H', H.cpu().numpy(), trainer.current_epoch)
 
             lH = project_onto_target_functions(H, ensemble_manager_instance.full_teacher_y)
@@ -222,20 +223,20 @@ class EnsembleManager:
             writer.add_scalars(f'{tag}/eig_lH', scalarsH, trainer.current_epoch)
             writer.add_scalars(f'{tag}/eig_lK', scalarsK, trainer.current_epoch)
 
-            # This part is still specific to FCN3's 'fc2' layer.
-            # For a truly modular solution, this would need to be abstracted
-            # (e.g., by checking for `fc2` attribute or making the layer dynamic).
-            # For now, it remains FCN3-specific in the default callback.
-            if hasattr(trainer.model, ensemble_manager_instance.covariance_layer_name):
-                fc2_layer = getattr(trainer.model, ensemble_manager_instance.covariance_layer_name)
-                if hasattr(fc2_layer, 'weight'):
-                    W = fc2_layer.weight.detach().T
-                    cov_W = torch.einsum('aj,bj->ab', W, W) / ensemble_manager_instance.hidden_width1
-                    ensemble_manager_instance._log_covariance_plot(writer, tag, cov_W.cpu().numpy(), trainer.current_epoch)
-                else:
-                    print(f"Warning: Layer '{ensemble_manager_instance.covariance_layer_name}' has no 'weight' attribute for covariance plot.")
-            else:
-                print(f"Warning: Model has no layer named '{ensemble_manager_instance.covariance_layer_name}'. Skipping covariance plot.")
+            # # This part is still specific to FCN3's 'fc2' layer.
+            # # For a truly modular solution, this would need to be abstracted
+            # # (e.g., by checking for `fc2` attribute or making the layer dynamic).
+            # # For now, it remains FCN3-specific in the default callback.
+            # if hasattr(trainer.model, ensemble_manager_instance.covariance_layer_name):
+            #     fc2_layer = getattr(trainer.model, ensemble_manager_instance.covariance_layer_name)
+            #     if hasattr(fc2_layer, 'weight'):
+            #         W = fc2_layer.weight.detach().T
+            #         cov_W = torch.einsum('aj,bj->ab', W, W) / ensemble_manager_instance.hidden_width1
+            #         ensemble_manager_instance._log_covariance_plot(writer, tag, cov_W.cpu().numpy(), trainer.current_epoch)
+            #     else:
+            #         print(f"Warning: Layer '{ensemble_manager_instance.covariance_layer_name}' has no 'weight' attribute for covariance plot.")
+            # else:
+            #     print(f"Warning: Model has no layer named '{ensemble_manager_instance.covariance_layer_name}'. Skipping covariance plot.")
 
 
         writer.flush()
@@ -287,7 +288,6 @@ class EnsembleManager:
         self.model_builder = self.config['model_builder'] # Must be present after load
         self.teacher_builder = self.config.get('teacher_builder', self._default_teacher_builder)
         self.epoch_callback_func = self.config.get('epoch_callback_func', self._default_epoch_callback)
-        self.covariance_layer_name = self.config.get('covariance_layer_name', 'fc2')
 
 
     def load_teacher(self):
@@ -527,9 +527,9 @@ class EnsembleManager:
             std_dev = 1 / (self.input_dimension**0.5)
             raw_X = torch.randn(self.num_data_points, self.input_dimension) * std_dev
             raw_X = raw_X.to(hp.DEVICE)
-            raw_Y = teacher(raw_X) # Teacher generates the targets
+            raw_Y = teacher(raw_X).detach() # Teacher generates the targets
             # Store the full teacher output for covariance calculation
-            self.full_teacher_y = teacher(raw_X).to(hp.DEVICE)
+            self.full_teacher_y = teacher(raw_X).detach()
         xpath = self.save_data(raw_X, f"{j}")
         ypath = self.save_targets(raw_Y, f"{j}")
 
@@ -576,6 +576,7 @@ class EnsembleManager:
         return model, manifest, raw_X, raw_Y, model_identifier
 
     def train_model(self, trainer, logger, model_identifier, writer):
+
         """Trains a model with specified callbacks."""
         callbacks = self._TrainingCallbacks(self, writer, model_identifier)
         model = trainer.model
@@ -583,7 +584,7 @@ class EnsembleManager:
         if hasattr(model, '_reset_with_weight_sigma'): # For FCN3 and similar models
             model._reset_with_weight_sigma(self.weight_sigma)
         trainer.train(
-            # logger=logger,
+            logger=logger,
             continue_at_epoch=trainer.current_epoch,
             current_time_step=trainer.current_time_step,
             interrupt_callback=callbacks.interrupt,
@@ -625,10 +626,10 @@ class EnsembleManager:
                 if i > start_model_num:
                     is_running_new_model = True
 
-            # logger = Logger(num_epochs=trainer.train_config['num_epochs'], completed=trainer.current_epoch, description=f"Training YURI {model_identifier}")
-            # with logger:
-            print(f"Training network {i} on dataset {j}")
-            self.train_model(trainer, None, model_identifier, writer)
+            logger = Logger(num_epochs=trainer.train_config['num_epochs'], completed=trainer.current_epoch, description=f"Training YURI {model_identifier}")
+            with logger:
+                print(f"Training network {i} on dataset {j} for {self.num_epochs} epochs")
+                self.train_model(trainer, logger, model_identifier, writer)
 
     def run_ensemble_training(self, desc='', ensemble_dir=None, config_file=None):
         """Run the ensemble training and saving process."""
@@ -767,13 +768,10 @@ def main():
         )
 
     def teacher_builder(input_dim):
-            return SimpleNet(input_dim_id, 1.0) # Default to SimpleNet
+            return SimpleNet(input_dim_id).to(hp.DEVICE) # Default to SimpleNet
     
-
     # Define a default epoch callback for FCN3 if not provided in config
     def fcn3_epoch_callback(trainer, writer, model_identifier, ensemble_manager_instance):
-        print("callback")
-        return
         if trainer.current_epoch % ensemble_manager_instance.CASH_FREAK != 0:
             return
 

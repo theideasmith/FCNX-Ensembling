@@ -23,7 +23,6 @@ class FCN3NetworkEnsembleLinear(nn.Module):
         self.A = nn.Parameter(torch.normal(mean=0.0, 
                                            std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(hp.DEVICE),
                                            requires_grad=True) # requires_grad moved here
-        self.output = nn.Parameter(torch.zeros(P,1), requires_grad=True).to(hp.DEVICE)
 
 
     def h1_activation(self, X):
