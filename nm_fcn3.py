@@ -145,7 +145,7 @@ def epoch_callback_fcn3(trainer, writer, ensemble_manager, model_identifier):
         w = torch.eye(d).to(hp.DEVICE)
         y = X @ w
         lH = project_onto_target_functions(H, y)
-        lK = transform_eigenvalues(lH, 1.0, chi, num_data_points, sig_figs=6)
+        lK = transform_eigenvalues(lH, 1.0, chi, num_data_points)
 
         scalarsH = {str(i): float(f"{value_li.cpu().numpy().item():.6g}") for i, value_li in enumerate(lH)}
         scalarsK = {str(i): float(f"{value_li.cpu().numpy().item():.6g}") for i, value_li in enumerate(lK)}
