@@ -125,7 +125,8 @@ class NetworkTrainer:
     def train(self,
               continue_at_epoch: int = 0,
               current_time_step: int = 0,
-              logger: Logger = None, reinitialize : bool = True, interrupt_callback = None,completion_callback = None, epoch_callback = None) -> nn.Module:
+              logger: Logger = None, 
+              reinitialize : bool = True, interrupt_callback = None,completion_callback = None, epoch_callback = None) -> nn.Module:
         """
         Trains the neural network model using Langevin dynamics.
 
@@ -138,64 +139,29 @@ class NetworkTrainer:
         # Iterate over the specified number of epochs
         self.current_epoch = continue_at_epoch
         self.current_time_step = current_time_step
-        self.current_train_loss = self.get_current_train_loss()
+        # self.current_train_loss = self.get_current_train_loss()
+        self.current_train_loss= 10000
         try:
-            while self.current_epoch < self.train_config['num_epochs']:#and self.converged == False:
+            while self.current_epoch < self.train_config['num_epochs']:
                 for batch in self.dataloader:
                     data, targets = batch
+                    breakpoint()
                     self.param_update(data, targets)
                     self.current_time_step += 1
-                if (epoch_callback is not None):
-                    try:
-                        epoch_callback(self)
-                    except Exception as e:
-                        print(f'An error occurred {e}')
+                # if (epoch_callback is not None):
+                #     try:
+                #         epoch_callback(self)
+                #     except Exception as e:
+                #         print(f'An error occurred {e}')
                 self.current_epoch += 1
-
-                    # # --- Evaluation Step ---
-                    # self.model.eval() # Set model to evaluation mode
-                    # self.manager.mode = 'test'
-                    # with torch.no_grad(): # No need to track gradients during evaluation
-                    #     data = self.manager.data
-                    #     targets = self.manager.targets
-                    #     data = data.to(hp.DEVICE)
-                    #     targets = targets.to(hp.DEVICE)
-
-                    #     outputs: torch.Tensor = self.model(data)
-
-                    #     loss: torch.Tensor = self.loss_function(outputs, targets)
-                    #     # Store the current test loss
-                    #     self.current_test_loss = loss.item()
-                    #     if self.current_test_loss <= 1e-4:
-                    #         print("CONVERGED")
-                    #         self.converged = True
-
-                    # self.model.train()
-                    # self.manager.mode = 'train'
-
-                self.training_info.update_loss(self.current_time_step, self.current_train_loss)
-                if logger is not None:
-                    logger.epoch_callback(self)
-            print("Training complete")
+                # self.training_info.update_loss(self.current_time_step, self.current_train_loss)
             self.converged = True
         except KeyboardInterrupt:
             if interrupt_callback is not None:
                 interrupt_callback(self)
-            print("Some weirdo interrupt happened")
             raise KeyboardInterrupt("Training Interrupted; Quitting")
 
-        # except RuntimeError as e:
-        #     print(f"\n!!! TRAINING FAILED due to a runtime error: {e} !!!")
-        #     # Callback is handled by 'finally'
-        #     exit()
-        # except Exception as e:
-        #     print(f"\n!!! AN UNEXPECTED ERROR OCCURRED: {e} !!!")
-        #     exit()
-        if logger is not None:
-            print("Some logging happening completed")
-           #logger.training_complete_callback(self)
         if completion_callback is not None:
-            print("Completion Callbackking")
             completion_callback(self)
         self.training_complete()
         print("Reset training state")
@@ -238,34 +204,33 @@ class NetworkTrainer:
             self.model.train()
             self.manager.mode = 'train'
             # Store the current loss
-            return loss.item()
+        return loss
 
     def param_update(self, data: torch.Tensor, targets: torch.Tensor) -> None:
-        # Clear previous gradients
-        self.model.zero_grad()
-
-        # Ensure data and targets are on the correct device
-        data = data.to(hp.DEVICE)
-        targets = targets.to(hp.DEVICE)
-
-        # Forward pass
         outputs: torch.Tensor = self.model(data)
+        breakpoint()
+        try:
 
-        # Calculate the Mean Squared Error loss
-        loss: torch.Tensor = self.loss_function(outputs, targets)
-
+            # Calculate the Mean Squared Error loss
+            loss: torch.Tensor = self.loss_function(outputs, targets)
+            breakpoint()
         # Store the current loss
-        self.current_train_loss = loss.item()
+            self.current_train_loss = loss
 
+        except Exception as e:
+            print(e)
+            exit()
+        
+        breakpoint()
         # Backward pass
         loss.backward()
-
         # Update parameters with no gradient tracking
         with torch.no_grad():
             for name, param in self.model.named_parameters():
                 self.weight_update_function(
                     param=param,
                     param_name=name)
+        self.model.zero_grad()
 
 
 
@@ -280,7 +245,8 @@ class NetworkTrainer:
         Returns:
             torch.Tensor: The computed MSE loss.
         """
-        return nn.functional.mse_loss(outputs, targets, reduction='sum')
+        loss = torch.mean(torch.square((outputs - targets)))
+        return loss
 
     def weight_update_function(self,param: torch.Tensor, param_name: str):
         """
