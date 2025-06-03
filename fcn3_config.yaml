@@ -6,13 +6,13 @@ init_seed: 222
 # Data and Model Dimensions
 input_dimension: 50
 hidden_width1: 200
-hidden_width2: 200 # Specific to FCN3 or models with two hidden layers
+hidden_width2: 200
 num_data_points: 400
-batch_size: 5
+batch_size: 400
 
 # Training Parameters
-num_epochs: 100
-num_ensembles: 25 # Number of models per dataset
+num_epochs: 10000
+num_ensembles: 10 # Number of models per dataset
 num_datasets: 4
 
 # Model Builder and Callbacks

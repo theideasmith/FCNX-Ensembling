@@ -584,7 +584,6 @@ class EnsembleManager:
 
         trainer.train(
             logger=logger,
-            log_freq=100,
             continue_at_epoch=trainer.current_epoch,
             current_time_step=trainer.current_time_step,
             interrupt_callback=callbacks.interrupt,
