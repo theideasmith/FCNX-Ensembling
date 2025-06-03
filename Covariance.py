@@ -27,7 +27,7 @@ def compute_avg_channel_covariance_fcn3(f, X):
 
     # P: samples, b: ensembles, N1: layer width
     P, b, N1 = h1_out.shape
-    fc2_centered = h1_out - h1_out.mean(dim=2, keepdim=True)
+    fc2_centered = h1_out - h1_out.mean(dim=1, keepdim=True)
     avged_cov = contract('pin,qin->pq', fc2_centered, fc2_centered, backend='torch') / (N1*b)
     print(avged_cov.shape)
     return avged_cov

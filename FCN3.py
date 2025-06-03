@@ -156,7 +156,7 @@ class NetworkTrainer:
 
                 self.current_epoch += 1
                 self.training_info.update_loss(self.current_time_step, self.current_train_loss)
-                if (logger is not None) and (self.current_epoch%log_freq)==0:
+                if (logger is not None):
                     logger.epoch_callback(self)
             self.converged = True
         except KeyboardInterrupt:
