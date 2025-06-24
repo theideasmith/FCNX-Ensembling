@@ -25,7 +25,7 @@ class EnsembleManager:
         """
         self.run_identifier = run_identifier
         self.menagerie_dir = menagerie_dir
-        self.ensemble_dir = os.path.join(self.menagerie_dir, f'ensemble_{run_identifier}') #this is the ensemble specific directory
+        self.ensemble_dir = os.path.join(self.menagerie_dir, run_identifier) #this is the ensemble specific directory
         
         
         if os.path.exists(self.ensemble_dir) and deletedir is True:
@@ -159,6 +159,7 @@ class EnsembleManager:
                 model_dict[key] = updated_value
             # Now 'data' holds the content of the JSON file as a Python dictionary or list
                 self.json_handler.save_data(self.training_config, self.training_config_path)
+                f.close()
         except FileNotFoundError:
             print(f"Error: The file '{self.training_config_path}' was not found.")
             data = {} # Initialize with an empty dictionary if file not found, or handle as needed

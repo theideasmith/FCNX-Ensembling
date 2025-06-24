@@ -11,9 +11,9 @@ num_data_points: 400
 batch_size: 400
 
 # Training Parameters
-num_epochs: 10000
-num_ensembles: 10 # Number of models per dataset
-num_datasets: 4
+num_epochs: 100000
+num_ensembles: 20 # Number of models per dataset
+num_datasets: 3
 
 # Model Builder and Callbacks
 # Set to 'default' to use the EnsembleManager's internal defaults.

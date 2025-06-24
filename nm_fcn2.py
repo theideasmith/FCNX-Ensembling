@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import io
 from PIL import Image
 import argparse
-SELF_DESTRUCT=True
+SELF_DESTRUCT=False
 def destruct(deldir):
     if SELF_DESTRUCT:
         # print(f"SIMULATING DELETING: {ensemble_manager.ensemble_dir}")
@@ -82,31 +82,32 @@ def log_matrix_to_tensorboard(
         writer.add_image(tag + '/image', image_tensor, global_step=global_step, dataformats='CHW')
 
 INIT_SEED = 222
-input_dimension: int =50
-hidden_width: int = 200
-chi = hidden_width
+input_dimension: int = 50
+hidden_width: int = 100
+chi = 1 #hidden_width
 kappa = 1.0  / chi
 temperature = 2 * kappa
 torch.manual_seed(INIT_SEED)
 
 N = hidden_width
 lambda_1 = temperature * input_dimension #weight decay factor
-lambda_2 = temperature * hidden_width * chi
+lambda_2 = temperature * hidden_width
 weight_sigma1: float = 1.0/input_dimension
-weight_sigma2: float = 1.0/(hidden_width * chi)
+weight_sigma2: float = 1.0/(hidden_width )
 # Full batch in langevin dynamics
-num_data_points: int = 400
-batch_size : int =400
-learning_rate: float =  1e-3/hidden_width  
+num_data_points: int = 300
+batch_size : int =num_data_points
+# Learning rate has to be normalized to the number of data points
+learning_rate: float =  1e-3/num_data_points  
 noise_std_ld: float = (2 * learning_rate * temperature )**0.5
-num_epochs: int = 100000
+num_epochs: int = 50000
 
 weight_sigma = (weight_sigma1,
     weight_sigma2)
 
 def epoch_callback_fcn2(trainer, writer, ensemble_manager, model_identifier):
     if trainer.current_epoch % CASH_FREAK !=0: return
-    with torch.no_grad():
+    if False:
         writer.add_scalar(f'FCN2_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/Train_Step', 
                                 trainer.current_train_loss, trainer.current_time_step)
         H = compute_avg_channel_covariance(trainer.model, trainer.manager.data, layer_name='fc1')
@@ -141,15 +142,19 @@ def epoch_callback_fcn2(trainer, writer, ensemble_manager, model_identifier):
         W = trainer.model.fc1.weight.detach().T
         cov_W = torch.einsum('aj,bj->ab', W, W) /      N
         cov_W = cov_W.cpu().numpy()
-
+        diag = np.diag(cov_W)
+        w0 = diag[0]
+        wn = np.mean(diag[1:])
+#       writer.add_scalars(f'FCN2_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/weights',{'w0': w0, '<wp>': wn}, trainer.current_epoch)
+        
         # Create a Matplotlib figure
         fig,( ax1,ax2)= plt.subplots(2,1, figsize=(10, 20)) # Adjust size as needed
-
+        
         # Determine title and axis labels based on rowvar
         title = f'Covariance of Output Features (Step {trainer.current_epoch})'
         xlabel = 'Output Feature Index'
         ylabel = 'Output Feature Index'
-
+        
         # Use imshow to visualize the matrix. 'coolwarm' is excellent for diverging data (positive/negative).
         # Setting vmin/vmax consistently is crucial for comparing evolution across steps.
         # You might need to adjust these based on the expected range of your covariance values.
@@ -158,23 +163,23 @@ def epoch_callback_fcn2(trainer, writer, ensemble_manager, model_identifier):
         im = ax1.imshow(cov_W, cmap='viridis', vmin=-abs_max, vmax=abs_max)
         # Or, if you know your expected range:
         # im = ax.imshow(cov_matrix_np, cmap='coolwarm', vmin=-1.0, vmax=1.0) # Example fixed range for correlation-like values
-
+        
         ax1.set_title(title)
         ax1.set_xlabel(xlabel)
         ax1.set_ylabel(ylabel)
         fig.colorbar(im, ax=ax1, orientation='vertical', fraction=0.046, pad=0.04) # Add color bar
-
-
+        
+        
         diagonal_values = np.diag(cov_W)
         x_indices = np.arange(len(diagonal_values))
-
+        
         ax2.plot(x_indices, diagonal_values, marker='o', linestyle='-', color='red')
         ax2.set_title('Main Diagonal of the fc1 Cov Matrix')
         ax2.set_xlabel('Diagonal Element Index')
         ax2.set_ylabel('Value')
         ax2.grid(True) # Add a grid for better readability
         ax2.set_xticks(x_indices) # Ensure ticks are at each index
-
+        
         # Convert the matplotlib figure to an image (PNG) in memory
         buf = io.BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1) # save without extra padding
@@ -184,13 +189,13 @@ def epoch_callback_fcn2(trainer, writer, ensemble_manager, model_identifier):
         # Open with PIL and convert to NumPy array (HWC)
         pil_image = Image.open(buf)
         image_np_hwc = np.array(pil_image)
-
+        
         # TensorBoard add_image for numpy expects (H, W, C) or (C, H, W)
         # If it's RGB from Matplotlib, it will be (H, W, 3).
         # PyTorch's add_image can handle HWC if dataformats='HWC' is specified.
         # Or convert to (C, H, W) for default behavior:
         image_tensor_chw = torch.from_numpy(image_np_hwc).permute(2, 0, 1).float() / 255.0 # Normalize to 0-1 if RGB
-
+        
         # Log the image to TensorBoard
         writer.add_image(  f'FCN2_Run_{ensemble_manager.run_identifier}_Modelnum_{model_identifier}/fc2.Weights_Cov', image_tensor_chw, global_step=trainer.current_epoch)
 
@@ -198,9 +203,6 @@ def epoch_callback_fcn2(trainer, writer, ensemble_manager, model_identifier):
 
 def activation(x):
     return x
-
-
-
 
 def main(desc = '',
          ensemble_dir=None):
@@ -224,7 +226,7 @@ def main(desc = '',
         # Initialize JsonHandler and EnsembleManager
 
         ensemble_manager = EnsembleManager(
-                config={'num_ensembles': 20, 'num_datasets': 3},
+                config={'num_ensembles': 1, 'num_datasets': 1},
                 deletedir=True,
                 run_identifier=run_identifier,
                 json_handler=json_handler, desc = desc) #pass run identifier
@@ -399,6 +401,7 @@ def main(desc = '',
                         noise_std = noise_std_ld,
                         manager= DataManager(raw_X.detach().to(hp.DEVICE), raw_Y.detach().to(hp.DEVICE), split=0.95),
                         weight_decay_config=weight_decay_config,
+                        on_data=False,
                         num_epochs=max_epochs
                     )
 
@@ -488,6 +491,6 @@ if __name__ == "__main__":
     if ensemble_dir:
         print(f"Proceeding with ensemble directory: {ensemble_dir}")
         print("ENSING")
-        main(ensemble_dir=ensemble_dir, desc='FCN2 with the correct hyperparams and plotting the weights covariances as well to compare with GP')
+        main(ensemble_dir=ensemble_dir, desc='Jun 12; I am testing the GP limit for d=50, P=300, N=100, one dataset, one model')
     elif not CONTINUE_FROM_LAST:
         main()

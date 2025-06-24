@@ -8,13 +8,13 @@ from itertools import product
 
 # Configuration
 BOUNDS = {
-    'n': (50, 5000),
-    'dim': (10, 1000),
-    'P': (100, 10000),
+    'n': (2, 500),
+    'dim': (w, 100),
+    'P': (1, 1000),
     'k': (0.1, 10.0)
 }
 GRID_STEPS = {
-    'n': 100,      # Steps of 50
+    'n': 50,      # Steps of 50
     'dim': 50,    # Steps of 10
     'P': 500,     # Steps of 100
     'k': [0.1, 0.316, 1.0, 3.162, 10.0]  # Logarithmic steps

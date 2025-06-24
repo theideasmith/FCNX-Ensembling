@@ -58,13 +58,13 @@ HPS : dict = {
     'weight_sigma2': FCN3_WEIGHT_SIGMA2,
     'weight_sigma3': FCN3_WEIGHT_SIGMA3,
 }
-
+from least_utilized_device import get_least_utilized_gpu_device
 DEVICE = None
 if torch.backends.mps.is_available():
     DEVICE = torch.device("mps")
     print("MPS device found. Using MPS.")
 elif torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
+    DEVICE = get_least_utilized_gpu_device()
     print("CUDA device found. Using CUDA.")
 else: 
     DEVICE = 'cpu'

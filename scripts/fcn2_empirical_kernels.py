@@ -5,12 +5,15 @@ import matplotlib.pyplot as plt
 def activation(x):
     return x
 
+import json
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 from ensemble_manager import NetworksLoader, EnsembleManager
 from json_handler import JsonHandler
 import standard_hyperparams_fcn2 as hp2
+
+from Covariance import *
 ABS_MENAGERIE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'Menagerie'))
 
 def update_dict_paths(config_dict):
@@ -35,19 +38,22 @@ def update_dict_paths(config_dict):
 
 if __name__ == '__main__':
     Menagerie_dir = os.path.join(parent_dir, 'Menagerie')
-    print(Menagerie_dir)
 
     # Define the specific ensemble directory you want to load
-    ensemble_dir_name = 'ensemble_FCN2_TRAIN_20250523_114716'
-#   ensemble_dir_name = 'ensemble_FCN3_TRAIN_20250525_173242'
+    ensemble_dir_name = 'fcn2_E_100K_COPY'
+    ensemble_dir_name= 'FCN2_D_50_N_200_chi_200_T_0.01_Tue, Jun 03 2025, 11:24PM'
     ensemble_full_path = os.path.join(Menagerie_dir, ensemble_dir_name)
 
     # Extract the run_identifier from the ensemble directory name
-    run_identifier = ensemble_dir_name.replace('ensemble_', '')
+    run_identifier = ensemble_dir_name
 
     print(f"Attempting to load ensemble with run_identifier: {run_identifier}")
     print(f"From Menagerie directory: {Menagerie_dir}")
     print(f"Full ensemble path: {ensemble_full_path}")
+
+
+
+
 
     # Initialize EnsembleManager.
     # It will load the training_config and manifest if the directory exists.
@@ -57,6 +63,7 @@ if __name__ == '__main__':
         menagerie_dir=Menagerie_dir,
         json_handler=JsonHandler() # Pass an instance of JsonHandler
     )
+    
     updated_manifest = []
 
     for item_dict in ensemble_manager.training_config['manifest']:
@@ -71,6 +78,61 @@ if __name__ == '__main__':
 
 
     config = ensemble_manager.training_config
+    # Initialize NetworksLoader with the ensemble_manager instance                      
+    networks_loader = NetworksLoader(ensemble_manager)                                  
+                                                                                        
+    print(f"\nStarting to iterate through {len(networks_loader.manifest)} networks...") 
+                                                                                        
+
+    ms = [m for (i,m) in enumerate(networks_loader)]                                                          
+
+    Ps = [400]
+    for P in Ps:
+        model = ms[0]['model']
+        netinfo = ms[0]
+        W = torch.eye(netinfo['model_manifest']['network_architecture']['input_dim']).to(hp2.DEVICE) 
+        W1 = model.fc1.weight.detach()
+
+        cov_W = (W1.T @ W1) / (199)
+
+        X = (torch.randn(P,50) / torch.sqrt(torch.tensor(50, dtype=torch.float32))).to(hp2.DEVICE)
+
+        layer_name = 'fc1'
+        f = model
+        activations = {}
+        def get_activation(name):
+            def hook(module, input, output):
+                activations[name] = output
+            return hook
+        layer = dict(f.named_modules())[layer_name]
+        handle = layer.register_forward_hook(get_activation(layer_name))
+        with torch.no_grad():
+            f(X)
+        handle.remove()
+        full_y = X 
+        f = (X @ W1.T)
+        fc2_output = activations[layer_name]
+        print(fc2_output[:10])
+        print(f[:10])
+        breakpoint()
+        H = torch.einsum('ui,vi->uv',((f - f.mean(dim=1,keepdims = True)), (f - f.mean(dim=1,keepdims=True))) ) / 199
+        projection = torch.einsum('uj, uv, vj->j', X @ W, H, X @ W)
+        norm = torch.einsum('ui, ui->i',X @ W,X @ W)
+        breakpoint()
+        print((projection/norm)[:10])
+
+    breakpoint()
+    lH = project_onto_target_functions(H,full_y)
+    print(lH)
+    lHp = lH[1:].mean()
+    print((1/(P*200)) * lH[0]/(lH[0] + P/1))
+    print((1/(P*200)) * lHp/(lHp + P/1))
+
+    exit()
+
+
+
+
     # Dimensions for the new tensor
     num_batches_dim1 = config['num_datsets']
     num_batches_dim2 = config['num_ensembles']
@@ -81,10 +143,16 @@ if __name__ == '__main__':
     # It's (3, 20, 5, 1) as requested.
     output_tensor = torch.empty(num_batches_dim1, num_batches_dim2, num_samples_per_network, output_feature_dim).to(hp2.DEVICE)
 
-    # Initialize NetworksLoader with the ensemble_manager instance
-    networks_loader = NetworksLoader(ensemble_manager)
+   
+   
 
-    print(f"\nStarting to iterate through {len(networks_loader.manifest)} networks...")
+   
+
+   
+
+    
+
+
 
     # Iterate through the networks using the NetworksLoader
     loaded_count = 0

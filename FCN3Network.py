@@ -60,9 +60,6 @@ class FCN3NetworkEnsembleLinear(nn.Module):
           backend='torch'
         )
 
-
-
-
 class FCN3Network(nn.Module):
     """
     A base class for a three-layer fully connected neural network.

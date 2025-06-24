@@ -18,7 +18,7 @@ def eigenvalue_solver(params):
         equations = [
             (k/(P*chi))*(lHp/(lHp + kappa/P)) - (lHp/(lHp + kappa/P))**2 - lKp,
             -chi/lHp + chi**2 * (lKp/(lHp**2))   - lKhp,
-            1/(lKhp * sigma2 / (chi * N) + d/sigma2)                       - lHp
+            1/(lKhp / (chi * N) + d)                       - lHp
         ]
         return equations
     
@@ -29,7 +29,7 @@ def eigenvalue_solver(params):
             (k/(P*chi))*(lHT/(lHT + kappa/P)) - (lHT/(lHT + kappa/P))**2 - lKT,
             -chi/lHT + chi**2 * (lKT/(lHT**2) - (lHT + k/P)**-2)    - lKhT,
             #  chi**2 * ( - (lHT + k/P)**-2)    - lKhT,
-            1/(lKhT*(sigma2**2)/(chi*N) + d/sigma2)                      - lHT, 
+            1/(lKhT/(chi*N) + d)                      - lHT, 
         ]
         return equations
 
@@ -57,11 +57,11 @@ if __name__ == '__main__':
     # For this standalone file, we'll define the parameters directly.
 
     d: int = 50
-    N = 1000
+    N = 200
     T = 1.0
 
     kappa = 1.0 
-    P: int = 200
+    P: int = 400
 
     chi = N
     print("kappa/p = ") 

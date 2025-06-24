@@ -1,0 +1,13 @@
+Ps: [30]
+Ns: [50, 200, 600, 2000]
+Ds: [3]
+ens: 5
+
+chi: 1 # or a specific integer
+nepochs:
+  if_chi_eq_1: 100000
+  otherwise: 30000000
+
+ondata: true         # if false, pass --off_data
+save_prefix: fcn2_GP_run
+

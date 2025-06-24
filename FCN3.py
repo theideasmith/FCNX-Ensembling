@@ -244,7 +244,7 @@ class NetworkTrainer:
         Returns:
             torch.Tensor: The computed MSE loss.
         """
-        loss = torch.mean(torch.square((outputs - targets)))
+        loss = 0.5 * torch.sum(torch.square((outputs - targets)))
         return loss
 
     def weight_update_function(self,param: torch.Tensor, param_name: str):
@@ -272,12 +272,14 @@ class LangevinTrainer(NetworkTrainer):
                  learning_rate: float = hp.LEARNING_RATE,
                  noise_std: float = hp.NOISE_STD_LANGEVIN,
                  weight_decay_config: dict = {},
-                 num_epochs: int = hp.NUM_EPOCHS
+                 num_epochs: int = hp.NUM_EPOCHS,
+                 on_data: bool = True
                  ):
 
 
         super().__init__(model, manager, batch_size, learning_rate, weight_decay_config, num_epochs)
         self.train_config['noise_std'] = noise_std
+        self.train_config['on_data'] = on_data
 
     def weight_update_function(self, param: torch.Tensor, param_name: str) -> torch.Tensor:
         """
@@ -298,4 +300,5 @@ class LangevinTrainer(NetworkTrainer):
         # θ_{t+1} = θ_t - η ∇L(θ_t) - 2*η*λ*θ_t  - sqrt(2η) ξ_t
         noise : float = torch.randn_like(param) * self.train_config['noise_std']
         η = self.train_config['learning_rate']
-        return param.data.add_(-η * param.grad - η * self.weight_decay_config[param_name] * param + noise) 
+        gd = param.grad if self.train_config['on_data'] is True else 0.0
+        return param.data.add_(-η * gd - η * self.weight_decay_config[param_name] * param + noise) 

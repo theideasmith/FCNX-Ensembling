@@ -26,6 +26,7 @@ class JsonHandler:
         try:
             with open(filepath, 'w') as f:
                 json.dump(data, f, indent=4)  # Pretty printing
+                f.close()
         except Exception as e:
             print(f"Error saving to {filepath}: {e}")
             raise  # Re-raise the exception to be handled by caller

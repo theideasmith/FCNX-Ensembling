@@ -227,12 +227,12 @@ class EnsembleManager:
              # For a truly modular solution, this would need to be abstracted
              # (e.g., by checking for `fc2` attribute or making the layer dynamic).
              # For now, it remains FCN3-specific in the default callback.
-             if hasattr(trainer.model, ensemble_manager_instance.covariance_layer_name):
-                 W = trainer.model.W1.detach().T
-                 cov_W = torch.einsum('naj,nbj->ab', W, W) / (ensemble_manager_instance.hidden_width1 * ensemble_manager.num_ensembles)
-                 ensemble_manager_instance._log_covariance_plot(writer, tag, cov_W.cpu().numpy(), trainer.current_epoch)
-             else:
-                 print(f"Warning: Model has no layer named '{ensemble_manager_instance.covariance_layer_name}'. Skipping covariance plot.")
+            if hasattr(trainer.model, ensemble_manager_instance.covariance_layer_name):
+               W = trainer.model.W1.detach().T
+               cov_W = torch.einsum('naj,nbj->ab', W, W) / (ensemble_manager_instance.hidden_width1 * ensemble_manager.num_ensembles)
+               ensemble_manager_instance._log_covariance_plot(writer, tag, cov_W.cpu().numpy(), trainer.current_epoch)
+            else:
+                print(f"Warning: Model has no layer named '{ensemble_manager_instance.covariance_layer_name}'. Skipping covariance plot.")
 
 
         writer.flush()
