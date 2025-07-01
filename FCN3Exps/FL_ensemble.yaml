@@ -1,0 +1,14 @@
+Ps: [150]
+Ns: [400]
+Ds: [10]
+ens: 5`
+
+chi: 'use_N_as_chi' # or a specific integer
+nepochs:
+  if_chi_eq_1: 100000
+  otherwise: 50000000
+
+ondata: true         # if false, pass --off_data
+save_prefix: fcn3_FEATURE_LEARNING_LR_SCHEDULED
+script: 'net_einsum_parallel.py'
+lr0: 1e-4

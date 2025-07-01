@@ -1,8 +1,16 @@
 import torch
 import torch.nn as nn
+from opt_einsum import contract
 
 import standard_hyperparams as hp
 from typing import Tuple, Optional, Callable, Dict
+
+# Add these after imports
+INIT_SEED = 222
+try:
+    DEVICE = hp.DEVICE
+except AttributeError:
+    DEVICE = 'cpu'
 
 class FCN2Network(nn.Module):
     """
@@ -27,8 +35,8 @@ class FCN2Network(nn.Module):
             activation (Callable[[torch.Tensor], torch.Tensor]): The activation function for the layer.
         """
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_activation_width)
-        self.fc2 = nn.Linear(hidden_activation_width, 1)
+        self.fc1 = nn.Linear(input_dim, hidden_activation_width, bias=False)
+        self.fc2 = nn.Linear(hidden_activation_width, 1, bias=False)
         self.activation = activation
         self.weight_sigma : Tuple[float,float] = weight_sigma
         self._initialize_weights()
@@ -44,7 +52,7 @@ class FCN2Network(nn.Module):
         input_dim :int  = hyperparameters.get('input_dimension', 1)
         hidden_width:int= hyperparameters.get('hidden_width', 10)
         model = FCN2Network(input_dim,hidden_width,hyperparameters['activation'], (sigma_1,sigma_2))
-        model._reset_with_weight_sigma()
+
         return model
     
     
@@ -60,8 +68,6 @@ class FCN2Network(nn.Module):
         with torch.no_grad():
             self.fc1.weight.data.normal_(0, (self.weight_sigma[0])**0.5)
             self.fc2.weight.data.normal_(0, (self.weight_sigma[1])**0.5)
-            self.fc1.bias.data.zero_()
-            self.fc2.bias.data.zero_()
         return self
     
     def _initialize_weights(self) -> None:
@@ -76,8 +82,6 @@ class FCN2Network(nn.Module):
         with torch.no_grad():
             self.fc1.weight.data.normal_(mean=0, std=weight_sigma[0]**0.5)
             self.fc2.weight.data.normal_(mean=0, std=weight_sigma[1]**0.5)
-            self.fc1.bias.data.zero_()
-            self.fc2.bias.data.zero_()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -94,3 +98,35 @@ class FCN2Network(nn.Module):
         # Activation of the layer
         a1: torch.Tensor = self.activation(h2)
         return a1
+
+class FCN_2_Ensemble(nn.Module):
+    def __init__(self, d, n1, s2W, s2A, ensembles=1, init_seed=None):
+        super().__init__()
+        if init_seed is None:
+            torch.manual_seed(INIT_SEED)
+
+        self.arch = [d, n1]
+        self.d = d
+        self.n1 = n1
+        self.W0 = nn.Parameter(torch.normal(mean=0.0,
+            std=torch.full((ensembles, n1, d), s2W ** 0.5)).to(DEVICE),
+            requires_grad=True)
+        self.A = nn.Parameter(torch.normal(
+            mean=0.0,
+            std=torch.full((ensembles, n1), s2A ** 0.5)).to(DEVICE),
+            requires_grad=True)
+
+    def forward(self, X):
+        Xp = X.squeeze()
+        return contract(
+            'ik,ikl,ul->ui',
+            self.A, self.W0, Xp,
+            backend='torch'
+        )
+
+    def h_activation(self, X):
+        return contract(
+            'ikl,ul->uik',
+            self.W0, X,
+            backend='torch'
+        )

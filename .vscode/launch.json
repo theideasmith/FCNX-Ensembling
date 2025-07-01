@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch empirical kernels",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/FCN2Exps/gp_ondata_empirical_kernels.py",
+            "console": "integratedTerminal",
+            // Add your arguments here
+            "args": [
+                "fcn2_GP_run_20250623_153104"
+            ]
+        }
+    ]
+}

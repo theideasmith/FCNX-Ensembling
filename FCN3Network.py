@@ -1,9 +1,65 @@
-
+from opt_einsum import contract
 import torch.nn as nn
 import torch
 from activations import *
 import standard_hyperparams as hp
 from typing import Tuple, Optional, Callable, Dict
+
+class FCN3NetworkEnsembleLinear(nn.Module):
+
+    def __init__(self, d, n1, n2,P,ensembles=1, weight_initialization_variance=(1.0, 1.0, 1.0)):
+        super().__init__()
+
+        self.arch = [d, n1, n2]
+        self.d = d
+        self.n1 = n1
+        self.n2 = n2
+        self.W0 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ensembles, n1, d), weight_initialization_variance[0]**0.5)).to(hp.DEVICE),
+                                            requires_grad=True) # requires_grad moved here
+        self.W1 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ensembles, n2, n1), weight_initialization_variance[1]**0.5)).to(hp.DEVICE),
+                                            requires_grad=True) # requires_grad moved here
+        self.A = nn.Parameter(torch.normal(mean=0.0, 
+                                           std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(hp.DEVICE),
+                                           requires_grad=True) # requires_grad moved here
+
+
+    def h1_activation(self, X):
+        return contract(
+            'ijk,ikl,ul->uij',
+            self.W1, self.W0, X,
+            backend='torch'
+        )
+
+    def h0_activation(self, X):
+        return contract(
+            'ikl,ul->uik',
+            self.W0, X,
+            backend='torch'
+        )
+
+
+    def forward(self, X):
+        """
+
+        Efficiently computes the outputs of a three layer network
+        using opt_einsum
+
+        f : P*d -> P*e*1
+        C1_ui = W1_ijk*x_uk
+        C2_uij = W2_ijk*C1_uik
+        C3_ui = A_ij*C2_uij
+        """
+        print(X.shape)
+        A = self.A.clone()
+        W1 = self.W1.clone()
+        W0 = self.W0.clone()
+        return contract(
+            'ij,ijk,ikl,unl->ui',
+            A, W1, W0, X,
+          backend='torch'
+        )
 
 class FCN3Network(nn.Module):
     """
@@ -18,6 +74,7 @@ class FCN3Network(nn.Module):
         activation1 (Callable): The activation function for the first hidden layer.
         activation2 (Callable): The activation function for the second hidden layer.
     """
+
     @staticmethod
     def load_from_state_dict(state_dict: Dict[str, torch.Tensor]) -> 'FCN3Network':
         """
@@ -38,8 +95,8 @@ class FCN3Network(nn.Module):
         )
         model.load_state_dict(state_dict)
         return model
-    
-    
+
+
 
     def __init__(
         self,
@@ -58,7 +115,7 @@ class FCN3Network(nn.Module):
             hidden_width_2 (int): The number of neurons in the second hidden layer (N^(1)).
             activation1 (Callable[[torch.Tensor], torch.Tensor]): The activation function for the first hidden layer.
             activation2 (Callable[[torch.Tensor], torch.Tensor]): The activation function for the second hidden layer.
-        
+
         """
         super().__init__()
 
@@ -70,7 +127,7 @@ class FCN3Network(nn.Module):
 
     def _save_to_state_dict(self, destination, prefix, keep_vars):
         return super()._save_to_state_dict(destination, prefix, keep_vars)
-    
+
     @staticmethod
     def model_from_hyperparameters(hyperparameters: Dict[str, float]) -> 'FCN3Network':
         sigma_1 = hyperparameters.get('weight_sigma1', 1.0)
@@ -84,8 +141,8 @@ class FCN3Network(nn.Module):
         model = FCN3Network(input_dim,hidden_width_1=hidden_width_1,hidden_width_2=hidden_width_2,activation1=activation1, activation2=activation2)
         model._reset_with_weight_sigma((sigma_1, sigma_2, sigma_3))
         return model
-    
-    
+
+
     def _reset_with_weight_sigma(self, weight_sigma : tuple = (1.0,1.0,1.0)) -> None:
         """
         Initializes the weights of the network from centered Gaussian distributions
@@ -116,16 +173,19 @@ class FCN3Network(nn.Module):
             torch.Tensor: The output tensor of shape (batch_size, 1).
         """
         # Preactivation of the first layer
-        h1: torch.Tensor = self.fc1(x)
+        self.h1: torch.Tensor = self.fc1(x)
         # Activation of the first layer
-        a1: torch.Tensor = self.activation1(h1)
+        self.a1: torch.Tensor = self.activation1(h1)
         # Preactivation of the second layer
-        h2: torch.Tensor = self.fc2(a1)
+        self.h2: torch.Tensor = self.fc2(a1)
         # Activation of the second layer
-        a2: torch.Tensor = self.activation2(h2)
+        self.a2: torch.Tensor = self.activation2(h2)
         # Preactivation of the output layer
-        output: torch.Tensor = self.fc3(a2)
+        self.output: torch.Tensor = self.fc3(a2)
         # The output layer has a linear activation by default in this architecture.
-        return output
-    
+        return self.output
 
+if __name__ == '__main__':
+    f = FCN3NetworkEnsembleLinear(5,10,10,100,ensembles=5)
+    for name, p in f.named_parameters():
+        print(name)

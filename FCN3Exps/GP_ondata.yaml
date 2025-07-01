@@ -1,0 +1,15 @@
+Ps: [200]
+Ns: [400]
+Ds: [10]
+ens: 5
+
+chi: 1 # or a specific integer
+nepochs: 30000000
+
+ondata: true         # if false, pass --off_data
+save_prefix: fcn3_GP_ondata_LR_SCHEDULED
+script: net_einsum_parallel.py
+
+lr0: 1e-3
+lr_schedule: true
+rate_decay: 434294.0

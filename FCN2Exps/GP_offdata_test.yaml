@@ -1,0 +1,13 @@
+Ps: [10]
+Ns: [50]
+Ds: [3]
+ens: 5
+
+chi: 1
+nepochs:
+  if_chi_eq_1: 100000
+  otherwise: 30000000
+
+ondata: false         # will trigger --off_data
+save_prefix: fcn2_GP_offdata_parallel
+

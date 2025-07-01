@@ -1,0 +1,14 @@
+Checking 2 GPU(s) for utilization...
+  Device 0 (NVIDIA GeForce RTX 4090): 0.00 MB allocated
+  Device 1 (NVIDIA GeForce RTX 4080): 0.00 MB allocated
+
+Selected device: cuda:0 (Least allocated memory: 0.00 MB)
+CUDA device found. Using CUDA.
+Checking 2 GPU(s) for utilization...
+  Device 0 (NVIDIA GeForce RTX 4090): 0.00 MB allocated
+  Device 1 (NVIDIA GeForce RTX 4080): 0.00 MB allocated
+
+Selected device: cuda:0 (Least allocated memory: 0.00 MB)
+CUDA device found. Using CUDA.
+CUDA device found. Using CUDA.
+cuda

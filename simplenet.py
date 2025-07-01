@@ -14,8 +14,6 @@ class SimpleNet(nn.Module):
     """
     def __init__(self, 
                  input_dim: int,
-                 activation: Callable[[torch.Tensor], torch.Tensor],
-                 weight_sigma: float
                  ) -> None:
                  
         """
@@ -26,8 +24,6 @@ class SimpleNet(nn.Module):
         """
         super().__init__()
         self.fc1 = nn.Linear(input_dim, 1)
-        self.activation = activation
-        self.weight_sigma : float = weight_sigma
         self._initialize_weights()
     
     def _initialize_weights(self) -> None:
@@ -37,7 +33,6 @@ class SimpleNet(nn.Module):
         Args:
             sigma (float): Standard deviation for the layer's weights.
         """
-        weight_sigma = self.weight_sigma
         with torch.no_grad():
             self.fc1.bias.data.zero_()
             self.fc1.weight.data.zero_() # First, set all elements to zero
@@ -51,9 +46,7 @@ class SimpleNet(nn.Module):
         Returns:
             torch.Tensor: The output tensor of shape (batch_size, 1).
         """
-        x = x.to(hp.DEVICE)
         # Preactivation of the layer
         h1: torch.Tensor = self.fc1(x)
-        # Activation of the layer
-        a1: torch.Tensor = self.activation(h1)
-        return a1
+
+        return h1
