@@ -1,14 +1,14 @@
-Ps: [30]
-Ns: [50, 200, 600, 2000]
-Ds: [3]
+Ps: [400]
+Ns: [200]
+Ds: [50]
 ens: 5
 
-chi: 1 # or a specific integer
+chi: 'use_N_as_chi' # or a specific integer
 nepochs:
   if_chi_eq_1: 10000000
-  otherwise: 30000000
+  otherwise: 100000000
 
 ondata: true         # if false, pass --off_data
-save_prefix: fcn2_GP
+save_prefix: fcn2_FL_known
 script: net_einsum_parallel.py
 

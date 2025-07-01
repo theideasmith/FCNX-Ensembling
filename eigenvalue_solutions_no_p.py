@@ -65,19 +65,19 @@ if __name__ == '__main__':
     # if this were part of a larger project.
     # For this standalone file, we'll define the parameters directly.
 
-    d: int = 10
+    d: int = 3
 
     import math
-    N0 = 50
-    N1 = 50
+    N0 = 200
+    N1 = 200
 
-    T = 0.03
-    P = 100
+    T = 2.0
+    P = 30
 
 
-    kappa = T 
+    kappa = 1.0 
     sigma2 = 1.0 
-    chi = 1.0 
+    chi = N0 
     print("kappa/p = ") 
     print(kappa/P)
     solver_params = [P, kappa, d, sigma2, N0, N1, chi]

@@ -8,6 +8,7 @@ PARAM_FILE=""
 for arg in "$@"; do
   if [[ "$arg" == "--parallel" ]]; then
     PARALLEL=true
+    echo "Running in parallel mode"
   else
     PARAM_FILE="$arg"
   fi

@@ -85,14 +85,14 @@ class EnsembleManager:
         # These now rely on values *passed into* the config, not hardcoded derivations
         self.chi = self.config.get('chi', self.hidden_width2) # Default to hidden_width2 for FCN3
         self.kappa = self.config.get('kappa', 1.0 / self.chi)
-        self.temperature = self.config.get('temperature', 2 * self.kappa)
-        self.learning_rate = self.config.get('learning_rate', 1e-3 / self.hidden_width2) # Default to FCN3 calc
+        self.temperature = self.config.get('temperature', 2.0 * self.kappa)
+        self.learning_rate = self.config.get('learning_rate', 1e-3 / self.hidden_width2) # Default to FCN3 calc, normalized by hidden_width2 because the loss doesn't.
         self.noise_std_ld = self.config.get('noise_std_ld', (2 * self.learning_rate * self.temperature) ** 0.5)
 
         # Weight decay and sigma parameters should come directly from config if not general
         self.lambda_1 = self.config.get('lambda_1', self.temperature * self.input_dimension)
         self.lambda_2 = self.config.get('lambda_2', self.temperature * self.hidden_width1)
-        self.lambda_3 = self.config.get('lambda_3', self.temperature * self.hidden_width2 * self.chi) # Default to FCN3 calc
+        self.lambda_3 = self.config.get('lambda_3', self.temperature * self.hidden_width2) # Default to FCN3 calc
         self.weight_sigma1 = self.config.get('weight_sigma1', 1.0 / self.input_dimension)
         self.weight_sigma2 = self.config.get('weight_sigma2', 1.0 / self.hidden_width1)
         self.weight_sigma3 = self.config.get('weight_sigma3', 1.0 / (self.hidden_width2 * self.chi))
@@ -275,7 +275,7 @@ class EnsembleManager:
 
         self.lambda_1 = self.config.get('lambda_1', self.temperature * self.input_dimension)
         self.lambda_2 = self.config.get('lambda_2', self.temperature * self.hidden_width1)
-        self.lambda_3 = self.config.get('lambda_3', self.temperature * self.hidden_width2 * self.chi)
+        self.lambda_3 = self.config.get('lambda_3', self.temperature * self.hidden_width2)
         self.weight_sigma1 = self.config.get('weight_sigma1', 1.0 / self.input_dimension)
         self.weight_sigma2 = self.config.get('weight_sigma2', 1.0 / self.hidden_width1)
         self.weight_sigma3 = self.config.get('weight_sigma3', 1.0 / (self.hidden_width2 * self.chi))

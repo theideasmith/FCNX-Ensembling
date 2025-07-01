@@ -1,5 +1,5 @@
 """
-This file implements the FCN2 directly in weight space
+This file implements the FCN3 directly in weight space
 using einsums, enabling parallelized training of ensembles. 
 
 This is significantly, by an order of magnitude, faster
@@ -82,8 +82,9 @@ import csv
 from tqdm import tqdm # Import tqdm
 
 # Add argparse for command-line arguments
-parser = argparse.ArgumentParser(description='Train a neural network with specified hyperparameters.')
+parser = argparse.ArgumentParser(description='Train a fcn3 neural network with specified hyperparameters.')
 parser.add_argument('--chi', type=int, required=True, help='Set scaling regime (Chi)')
+parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate for training')
 parser.add_argument('--N', type=int, required=True, help='Hidden layer width (N)')
 parser.add_argument('--D', type=int, required=True, help='Input dimension (d)')
 parser.add_argument('--P', type=int, required=True, help='Number of training samples (n_train)')
@@ -91,31 +92,37 @@ parser.add_argument('--epochs', type=int, required=True, help='Number of epochs 
 parser.add_argument('--to', type=str, required=True, help='Location where to store the results of the training') 
 parser.add_argument('--ens', type=int, default=1, help='The number in the network of which network in an ensemble this is')
 parser.add_argument('--off_data',action='store_true', help='Whether the network should be trained on data')
+parser.add_argument('--ethereal', default=False,action='store_true', help='Dont save the model; debug mode')
+parser.add_argument('--rate_decay', type=float, default=1.302e7, help='Decay constant for learning rate schedule')
+parser.add_argument('--lr0', type=float, default=1e-3, help='Initial learning rate for schedule')
+parser.add_argument('--lr_schedule', action='store_true', help='Whether to use a learning rate schedule')
+
 args = parser.parse_args()
 
 
 #---------------------------------------------------------------------------------------------------
 # General Settings
-
+dev_mode = args.ethereal
 INIT_SEED = 222
 DTYPE=torch.float32
-criterion = nn.MSELoss(reduction="sum")
+
+
 train_seed, test_seed = 563,10
 # Base path for saving
 SAVE_PATH = args.to 
 max_epochs = args.epochs
-lr0 = 1e-3
 n_train = args.P # Use P from arguments
 N = args.N     # Use N from arguments
 chi = args.chi
 d = args.D     # Use D from arguments
 n_test = 200
-s2, sa2, sw2 = 1.0, 1.0, 1.0 # These are k, sa2, sw2
+s2, sa2, sh2, sw2 = 1.0, 1.0, 1.0, 1.0 # These are k, sa2, sw2
 FL_scale = 1.0 # float(128)
 activation = "lin"
 eps = 0.
 on_data = True if args.off_data is False else False
-
+lr0 = args.lr0
+lr_schedule = args.lr_schedule
 
 ens = args.ens
 # Update SAVE_PATH to include N, D, P
@@ -128,8 +135,9 @@ SAVE_PATH = os.path.join(SAVE_PATH, TRAINID)
 
 import shutil
 
-if not os.path.exists(SAVE_PATH):
-    os.makedirs(SAVE_PATH)
+if dev_mode is False:
+    if not os.path.exists(SAVE_PATH):
+        os.makedirs(SAVE_PATH)
 # else:
 #   shutil.rmtree(SAVE_PATH)
     # os.makedirs(SAVE_PATH)
@@ -140,6 +148,48 @@ if not os.path.exists(SAVE_PATH):
 from Covariance import *
 
 
+class VectorizedSumSquaredDifferenceLoss(nn.Module):
+    """
+    A custom PyTorch loss class that calculates half the sum of the squared differences
+    between ensemble output and labels.
+
+    This class internally handles the broadcasting of labels to match the
+    ensemble output dimensions before computing the squared difference and sum.
+
+    Equivalent to: 0.5 * torch.sum((ensemble_output - labels)**2)
+    """
+    def __init__(self):
+        super().__init__()
+        # No specific parameters needed for this simple loss,
+        # but you could add them here if you wanted configurable reductions, etc.
+
+    def forward(self, ensemble_output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates the loss.
+
+        Args:
+            ensemble_output (torch.Tensor): The output from the ensemble,
+                                            e.g., shape [batch_size, 1, num_ensemble_members].
+            labels (torch.Tensor): The ground truth labels,
+                                   e.g., shape [batch_size, 1, 1].
+
+        Returns:
+            torch.Tensor: A scalar tensor representing half the total sum of squared differences.
+        """
+        # Step 1: Calculate the vectorized difference using broadcasting
+        # labels (e.g., [30, 1, 1]) will be broadcast to match ensemble_output (e.g., [30, 1, 3])
+        difference = ensemble_output - labels
+
+        # Step 2: Square the differences
+        squared_difference = difference ** 2
+
+        # Step 3: Sum all the squared differences and multiply by 1/2
+        # This will result in a single scalar value.
+        loss = 0.5 * torch.sum(squared_difference) # Added multiplication by 0.5
+
+        return loss
+
+criterion = VectorizedSumSquaredDifferenceLoss()
 
 def log_matrix_to_tensorboard(
     writer: SummaryWriter,
@@ -196,19 +246,24 @@ DEVICE = "cuda:1"
 
 
 CASH_FREAK = 1000
-def epoch_callback_fcn2(epoch, loss, writer, model, data, model_identifier):
+def epoch_callback_fcn3(epoch, loss, writer, model, data, model_identifier):
     if epoch % CASH_FREAK !=0: return
     with torch.no_grad():
-        writer.add_scalar(f'FCN2_{TRAINID}/Train_Step',
+        if dev_mode is False:
+            writer.add_scalar(f'FCN3_{TRAINID}/Train_Step',
                                 loss, epoch)
+        if dev_mode is False:
+            if hasattr(model, 'W0'):                                                                    
+                writer.add_histogram(f'FCN3_{TRAINID}/W0_hist', model.W0.detach().cpu().numpy(), epoch) 
 
         # Add histograms of the first and second layer weights
-        if hasattr(model, 'W0'):
-            writer.add_histogram(f'FCN2_{TRAINID}/W0_hist', model.W0.detach().cpu().numpy(), epoch)
-        if hasattr(model, 'A'):
-            writer.add_histogram(f'FCN2_{TRAINID}/W1_hist', model.A.detach().cpu().numpy(), epoch)
+        if not dev_mode:
+            if hasattr(model, 'W1'):
+                writer.add_histogram(f'FCN3_{TRAINID}/W1_hist', model.W0.detach().cpu().numpy(), epoch)
+            if hasattr(model, 'A'):
+                writer.add_histogram(f'FCN3_{TRAINID}/A_hist', model.A.detach().cpu().numpy(), epoch)
 #       H = compute_avg_channel_covariance(model, data, layer_name='lin1')
-#       log_matrix_to_tensorboard(writer,f'FCN2_{model_identifier}/H', H.cpu().numpy(),epoch)
+#       log_matrix_to_tensorboard(writer,f'FCN3_{model_identifier}/H', H.cpu().numpy(),epoch)
 #       X = data
 #       d = X.shape[-1] # Get d from X's last dimension
 #
@@ -226,26 +281,26 @@ def epoch_callback_fcn2(epoch, loss, writer, model, data, model_identifier):
 #       for i, value_li in enumerate(lK):
 #           scalarsK[str(i)] = value_li.cpu().numpy().item()
 #
-#       writer.add_scalars(f'FCN2_{model_identifier}/eig_lH',scalarsH,epoch)
+#       writer.add_scalars(f'FCN3_{model_identifier}/eig_lH',scalarsH,epoch)
 #       writer.add_scalars(f'FCN2_{model_identifier}/eig_lK',scalarsK,epoch)
 
     if epoch % CASH_FREAK != 0: return
     with torch.no_grad():
         # W: d, N, ensembles
-        W = model.W0.permute(*torch.arange(model.W0.ndim - 1, -1, -1))
-        Wm = torch.mean(W, axis=1)
-        Wm2 = torch.einsum('ai,bi->abi', Wm,Wm)
-        cov_W = torch.einsum('aji,bji->abi', W, W) / N - Wm2
+        W0 = model.W0.permute(*torch.arange(model.W0.ndim - 1, -1, -1))
+        W1 = model.W1.permute(*torch.arange(model.W1.ndim - 1, -1, -1))
+
+        covW0W1 = contract('kje,ije,nme,kme->ine', W1,W0,W0,W1, backend='torch') / N
+
         # Average over the ensemble dimension
-        cov_W_m = torch.mean(cov_W, axis=2)
-        cov_W = cov_W_m.cpu().numpy()
+        cov_W_m = torch.mean(covW0W1, axis=2)
         lH = cov_W_m.diagonal().squeeze()
         scalarsH = {}
-        
+
         for i in range(lH.shape[0]):
             scalarsH[str(i)] = lH[i]
-
-        writer.add_scalars(f'FCN2_{TRAINID}/lambda_H', scalarsH, epoch)
+        if dev_mode is False:
+            writer.add_scalars(f'FCN3_{TRAINID}/lambda_H(W1)', scalarsH, epoch)
 
 #       # Create a Matplotlib figure
 #       fig,( ax1,ax2)= plt.subplots(2,1, figsize=(10, 20)) # Adjust size as needed
@@ -295,7 +350,7 @@ def epoch_callback_fcn2(epoch, loss, writer, model, data, model_identifier):
 #       image_tensor_chw = torch.from_numpy(image_np_hwc).permute(2, 0, 1).float() / 255.0 # Normalize to 0-1 if RGB
 #
 #       # Log the image to TensorBoard
-#       writer.add_image(  f'FCN2_{model_identifier}/fc2.Weights_Cov', image_tensor_chw, global_step=epoch)
+#       writer.add_image(  f'FCN3_{model_identifier}/fc2.Weights_Cov', image_tensor_chw, global_step=epoch)
 
     writer.flush()
 
@@ -305,7 +360,7 @@ def epoch_callback_fcn2(epoch, loss, writer, model, data, model_identifier):
 class LangevinSimple2(optim.Optimizer):
 
 
-    def __init__(self, model: nn.Module, learning_rate, weight_decay_1, weight_decay_2, temperature):
+    def __init__(self, model: nn.Module, learning_rate, weight_decay_1, weight_decay_2, weight_decay_3, temperature):
 
         defaults = {
             'learning_rate': learning_rate,
@@ -313,14 +368,18 @@ class LangevinSimple2(optim.Optimizer):
             'temperature': temperature
         }
 
-        # a list of dictionaries which gives a simple way of breaking a model’s parameters into separate components   for optimization.
+        # a list of dictionaries which gives a simple way of breaking a model's parameters into separate components   for optimization.
         groups = [{'params' : model.W0, # input to hidden Conv
                    'learning_rate' : learning_rate,
                    'weight_decay' : weight_decay_1,
                    'temperature' : temperature},
-                   {'params' : model.A, # hidden to linear readout
+                   {'params' : model.W1, # hidden to hidden
                     'learning_rate' : learning_rate,
                     'weight_decay'  : weight_decay_2,
+                    'temperature' : temperature},
+                   {'params' : model.A, # hidden to linear readout
+                    'learning_rate' : learning_rate,
+                    'weight_decay'  : weight_decay_3,
                     'temperature' : temperature},
                  ]
         super(LangevinSimple2, self).__init__(groups, defaults)
@@ -339,10 +398,11 @@ class LangevinSimple2(optim.Optimizer):
                 d_p = d_p.to(DEVICE)
 
                 d_p.add_(parameter, alpha=-learning_rate*weight_decay)
+
                 if on_data is True and parameter.grad is not None:
                     # The factor of 0.5 has to do with the normalization of the
                     # loss
-                    d_p.add_(parameter.grad, alpha=-0.5*learning_rate)
+                    d_p.add_(parameter.grad, alpha=-learning_rate)
                 parameter.add_(d_p)
 
 
@@ -403,67 +463,61 @@ def calc_run_time(start, end):
 
 #---------------------------------------------------------------------------------------------------------
 
-class FCN_2_layers(nn.Module):
-      def __init__(self, d,N,init_out,init_hidden,activation, init_seed=None):
+class FCN3NetworkEnsembleLinear(nn.Module):
+
+    def __init__(self, d, n1, n2,ensembles=1, weight_initialization_variance=(1.0, 1.0, 1.0)):
         super().__init__()
-        if init_seed is None:
-            torch.manual_seed(INIT_SEED)
-        self.lin1 = nn.Linear(d,N, bias=False)
-        self.lin2 = nn.Linear(N,1, bias=False)
-        self.activation=activation
-        self.N = N
-        self.d = d
-        #np.random.seed(5)
-        nn.init.normal_(self.lin1.weight,0,(init_hidden)**0.5)
-        nn.init.normal_(self.lin2.weight,0,(init_out)**0.5)
 
-      def forward(self, x):
-        x = self.lin1(x)
-
-        res = self.lin2(torch.flatten(x, start_dim=1))
-        return res
-
-class FCN_2_Ensemble(nn.Module):
-    def __init__(self, d, n1, s2W, s2A,ensembles=1,init_seed=None):
-        super().__init__()        
-        if init_seed is None: 
-            torch.manual_seed(INIT_SEED)
-
-        self.arch = [d, n1]
+        self.arch = [d, n1, n2]
         self.d = d
         self.n1 = n1
-        self.W0 = nn.Parameter(torch.normal(mean=0.0,
-            std=torch.full((ensembles,n1,d),s2W**0.5)).to(DEVICE),
-            requires_grad=True)
-        self.A = nn.Parameter(torch.normal(
-            mean=0.0,
-            std=torch.full((ensembles,n1), s2A**0.5)).to(DEVICE),
-            requires_grad=True)
+        self.n2 = n2
+        self.W0 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ensembles, n1, d), weight_initialization_variance[0]**0.5)).to(DEVICE),
+                                            requires_grad=True) # requires_grad moved here
+        self.W1 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ensembles, n2, n1), weight_initialization_variance[1]**0.5)).to(DEVICE),
+                                            requires_grad=True) # requires_grad moved here
+        self.A = nn.Parameter(torch.normal(mean=0.0, 
+                                           std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(DEVICE),
+                                           requires_grad=True) # requires_grad moved here
 
-    def forward(self,X):
-        """                                                       
-                                                                  
-        Efficiently computes the outputs of a three layer network 
-        using opt_einsum                                          
-                                                                  
-        f : P*d -> P*e*1                                          
-        C1_ui = W1_ijk*x_uk                                       
-        C3_ui = A_ij*C2_uij                                       
-        """                                                       
-        Xp = X.squeeze()
-        return contract(                                          
-           'ik,ikl,ul->ui',                                  
-            self.A, self.W0, Xp,                                         
-          backend='torch'                                         
-        )                                                         
 
-    def h_activation(self,X):
+    def h1_activation(self, X):
         return contract(
-            'ikl,ul->uik',
-            W1, X,
+            'ijk,ikl,unl->uij',
+            self.W1, self.W0, X,
             backend='torch'
         )
-                                                                  
+
+    def h0_activation(self, X):
+        return contract(
+            'ikl,unl->uik',
+            self.W0, X,
+            backend='torch'
+        )
+
+
+    def forward(self, X):
+        """
+
+        Efficiently computes the outputs of a three layer network
+        using opt_einsum
+
+        f : P*d -> P*e*1
+        C1_ui = W1_ijk*x_uk
+        C2_uij = W2_ijk*C1_uik
+        C3_ui = A_ij*C2_uij
+        """
+        A = self.A
+        W1 = self.W1
+        W0 = self.W0
+
+        return contract(
+            'ij,ijk,ikl,unl->ui',
+            A, W1, W0, X,
+          backend='torch'
+        )                                            
 #--------------------------------------------------------------------------------------------------------
 # Class specific for the Lengevin network training
 
@@ -471,31 +525,32 @@ class FCN_2_Ensemble(nn.Module):
 
 class MyNetwork():
     #sigmas should all be of order one, and then divided by the MF scaling
-    def __init__(self, input_dim, num_channels,n_train,n_test,max_epochs,sigma_2,sigma_a2,sigma_w2,FL_scale,eps,seeds,activation,save_path,lr0, chi_param):
+    def __init__(self, input_dim, num_channels,n_train,n_test,max_epochs,sigma_2,sigma_a2,sigma_h2,sigma_w2,FL_scale,eps,seeds,activation,save_path,lr0, chi_param):
         [self.train_seed, self.test_seed] = seeds
 
         self.d,self.N,self.n,self.n_test = int(input_dim),int(num_channels),int(n_train),int(n_test)
 
         self.activation = activation
-        self.net = FCN_2_Ensemble(
+        self.net = FCN3NetworkEnsembleLinear(
                 self.d,
                 self.N,
-                1.0/(self.N*chi_param),
-                1.0/self.d,
+                self.N,
+                weight_initialization_variance=(1.0/self.d,1.0/self.N,1.0/(self.N*chi_param)),
                 ensembles=ens).to(DEVICE)
         self.chi = chi_param # Use the chi_param passed in
 
         self.lr = lr0/self.n
         self.max_epochs = max_epochs
-        self.sa2,self.sw2,self.s2 = sigma_a2 ,sigma_w2,sigma_2
+        self.sa2,self.sh2,self.sw2,self.s2 = sigma_a2 ,sigma_h2,sigma_w2,sigma_2
         #print(self.sa2,self.sw2,self.s2)
         self.save_path = save_path
         self.eps,self.FL_scale = eps,FL_scale
 
         #To calculate the wd terms I used the term appearing after eqn. 2 in the paper: Predicting the outputs of finite deep neural networks...
-        self.temperature = 1.0/(self.chi)
+        self.temperature = 2.0/(self.chi)
         self.wd_input = self.temperature*self.d
-        self.wd_output = self.temperature*(self.N*self.chi)
+        self.wd_preactivation = self.temperature*self.N
+        self.wd_output = self.temperature*self.N*self.chi
 
         self.X_train,self.X_test,self.Y_train,self.Y_test,self.train_loader,self.test_loader = prep_train_test(self.d,self.n,self.n_test,self.train_seed,self.test_seed,eps)
 
@@ -548,6 +603,7 @@ class MyNetwork():
         #     fs = self.net(self.X_test.to(DEVICE)).detach().cpu().numpy().flatten()
 
             #calculate train loss
+
         outputs = self.net(self.inputs).unsqueeze(1)
         loss = criterion(outputs, self.labels)
 
@@ -566,22 +622,32 @@ class MyNetwork():
     def train_net(self):
         with SummaryWriter(SAVE_PATH) as writer:
             start = time.time()
-            optimizer = LangevinSimple2(self.net, self.lr, self.wd_input, self.wd_output, self.temperature)
+            optimizer = LangevinSimple2(self.net, self.lr, self.wd_input, self.wd_preactivation, self.wd_output, self.temperature)
 
             # Initialize tqdm progress bar
             with tqdm(total=self.max_epochs, desc=f"Training Net {ens}") as pbar:
                 for epoch in range(self.max_epochs):
+                    # Update learning rate according to schedule
+                    if lr_schedule is True:
+                        lr = lr0 * np.exp((-1.0 / args.rate_decay) * epoch)
+                        self.lr = lr
+                        print(f"Learning rate: {self.lr}, epoch: {epoch}")
+                        for param_group in optimizer.param_groups:
+                            param_group['learning_rate'] = lr
+             
                     loss = self.one_epoch(epoch,optimizer)
-                    optimizer =  LangevinSimple2(self.net, self.lr, self.wd_input,self.wd_output, self.temperature)
+                    optimizer =  LangevinSimple2(self.net, self.lr, self.wd_input,self.wd_preactivation, self.wd_output, self.temperature)
                     if epoch % 1000 == 0: # Ensure update happens every 1000 epochs or so
                         pbar.set_postfix(loss=f'{loss:.4f}, epoch:{epoch}')
                         pbar.update(1000 if epoch + 1000 <= self.max_epochs else self.max_epochs - epoch)
-                       #print(f'Loss: {loss: .4f}, epoch:{epoch}')
                     if epoch % CASH_FREAK == 0:
-                        torch.save(self.net, os.path.join(SAVE_PATH, f'netnum_{ens}'))
-                        epoch_callback_fcn2(epoch, loss, writer, self.net, self.inputs.squeeze(1), ens)
+                        if dev_mode is False:
+                            torch.save(self.net, os.path.join(SAVE_PATH, f'netnum_{ens}'))
+                        epoch_callback_fcn3(epoch, loss, writer, self.net, self.inputs.squeeze(1), ens)
 
-
+            if dev_mode is False:
+                torch.save(self.net, os.path.join(SAVE_PATH, f'netnum_{ens}'))
+                epoch_callback_fcn3(epoch, loss, writer, self.net, self.inputs.squeeze(1), ens)
 #           self.net_save_output_only()
             end_epoch = time.time()
             run_time = calc_run_time(start, end_epoch)
@@ -592,7 +658,15 @@ class MyNetwork():
 # The outer script will handle the hyperparameter sweep
 torch.seed() # make sure DNN initialization is different every time
 np.random.seed()
-# Pass the correct `chi` based on the N value from args
-net = MyNetwork(d, N, n_train, n_test, max_epochs, s2, sa2, sw2, FL_scale, eps, [train_seed, test_seed], activation, SAVE_PATH, lr0, chi)
-net.train_net() # k=0 since we are running one net at a time
+
+# Check if the network already exists
+net_path = os.path.join(SAVE_PATH, f'netnum_{ens}')
+if os.path.exists(net_path):
+    print(f"Loading existing network from {net_path}")
+    net = MyNetwork(d, N, n_train, n_test, max_epochs, s2, sa2, sh2, sw2, FL_scale, eps, [train_seed, test_seed], activation, SAVE_PATH, lr0, chi)
+    net.net = torch.load(net_path)
+else:
+    print(f"No existing network found at {net_path}. Creating and training a new network.")
+    net = MyNetwork(d, N, n_train, n_test, max_epochs, s2, sa2, sh2, sw2, FL_scale, eps, [train_seed, test_seed], activation, SAVE_PATH, lr0, chi)
+    net.train_net() # k=0 since we are running one net at a time
 print(f"done with N:{N}, D:{d}, P:{n_train}")

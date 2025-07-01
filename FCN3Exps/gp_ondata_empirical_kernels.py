@@ -1,6 +1,6 @@
 """
 
-THIS FILE IS MEANT TO COMPARE AN FCN2 IN STANDARD SCALING
+THIS FILE IS MEANT TO COMPARE AN FCN3 IN STANDARD SCALING
 TO THE GPR
 
 """
@@ -25,7 +25,7 @@ sys.path.append(parent_dir)
 
 from GPKit import *
 
-parser = argparse.ArgumentParser(description="Post computation of FCN2 NN trains in MF and STD scaling")
+parser = argparse.ArgumentParser(description="Post computation of FCN3 NN trains in MF and STD scaling")
 parser.add_argument('filename', help='The name of the file to process.')
 args = parser.parse_args()
 fname = args.filename
@@ -37,66 +37,62 @@ X_inf = None
 P_inf = 10_000
 test_seed = 10
 
-class FCN_2_layers(nn.Module):
-      def __init__(self, d,N,init_out,init_hidden,activation, init_seed=None):
+class FCN3NetworkEnsembleLinear(nn.Module):
+
+    def __init__(self, d, n1, n2,ensembles=1, weight_initialization_variance=(1.0, 1.0, 1.0)):
         super().__init__()
-        if init_seed is not None:
-            torch.manual_seed(INIT_SEED)
-        self.lin1 = nn.Linear(d,N, bias=False)
-        self.lin2 = nn.Linear(N,1, bias=False)
-        self.activation=activation
-        self.N = N
-        self.d = d
-        #np.random.seed(5)
-        nn.init.normal_(self.lin1.weight,0,(init_hidden)**0.5)
-        nn.init.normal_(self.lin2.weight,0,(init_out)**0.5)
 
-      def forward(self, x):
-        x = self.lin1(x)
-
-        res = self.lin2(torch.flatten(x, start_dim=1))
-        return res
-
-class FCN_2_Ensemble(nn.Module):
-    def __init__(self, d, n1, s2W, s2A,ensembles=1,init_seed=None):
-        super().__init__()        
-        if init_seed is not None: 
-            torch.manual_seed(INIT_SEED)
-
-        self.arch = [d, n1]
+        self.arch = [d, n1, n2]
         self.d = d
         self.n1 = n1
-        self.W0 = nn.Parameter(torch.normal(mean=0.0,
-            std=torch.full((ensembles,n1,d),s2W**0.5)).to(DEVICE),
-            requires_grad=True)
-        self.A = nn.Parameter(torch.normal(
-            mean=0.0,
-            std=torch.full((ensembles,n1), s2A**0.5)).to(DEVICE),
-            requires_grad=True)
+        self.n2 = n2
+        self.W0 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ensembles, n1, d), weight_initialization_variance[0]**0.5)).to(DEVICE),
+                                            requires_grad=True) # requires_grad moved here
+        self.W1 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ensembles, n2, n1), weight_initialization_variance[1]**0.5)).to(DEVICE),
+                                            requires_grad=True) # requires_grad moved here
+        self.A = nn.Parameter(torch.normal(mean=0.0, 
+                                           std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(DEVICE),
+                                           requires_grad=True) # requires_grad moved here
 
-    def forward(self,X):
-        """                                                       
-                                                                  
-        Efficiently computes the outputs of a three layer network 
-        using opt_einsum                                          
-                                                                  
-        f : P*d -> P*e*1                                          
-        C1_ui = W1_ijk*x_uk                                       
-        C3_ui = A_ij*C2_uij                                       
-        """                                                       
-        Xp = X.squeeze()
-        return contract(                                          
-           'ik,ikl,ul->ui',                                  
-            self.A, self.W0, Xp,                                         
-          backend='torch'                                         
-        )                                                         
 
-    def h_activation(self,X):
+    def h1_activation(self, X):
+
         return contract(
-            'ikl,ul->uik',
+            'ijk,ikl,ul->uij',
+            self.W1, self.W0, X,
+            backend='torch'
+        )
+
+    def h0_activation(self, X):
+        return contract(
+            'ikl,unl->uik',
             self.W0, X,
             backend='torch'
         )
+
+
+    def forward(self, X):
+        """
+
+        Efficiently computes the outputs of a three layer network
+        using opt_einsum
+
+        f : P*d -> P*e*1
+        C1_ui = W1_ijk*x_uk
+        C2_uij = W2_ijk*C1_uik
+        C3_ui = A_ij*C2_uij
+        """
+        A = self.A
+        W1 = self.W1
+        W0 = self.W0
+
+        return contract(
+            'ij,ijk,ikl,ul->ui',
+            A, W1, W0, X,
+          backend='torch'
+        )                 
 
 def activation(x):
     return x
@@ -204,9 +200,10 @@ def run(fname):
     all_networks_discrepancy_data = []
     empirical_lH_dict = {}  # N -> lH vector
     N_list = []
-
+    d = None
     for i in range(len(nets)): 
         print(f'Loading net {i} @ {nets[i]}')
+        print(nets[i])
         model = torch.load(nets[i]).to(DEVICE)
 
         # W: d, N, ensembles
@@ -216,40 +213,48 @@ def run(fname):
         N = W.shape[1] # Width of W0
         q = W.shape[2] # Number of ensembles
         
-        torch.set_printoptions(precision=3, sci_mode=False)
+        torch.set_printoptions(precision=6, sci_mode=False)
 
         X = get_data(d, 30, train_seed).to(DEVICE) # this is the train seed used in net.py
         X = X.squeeze()
 
         P = X.shape[0]
 
-        Wm = torch.mean(W, axis=1)
-        Wm2 = torch.einsum('ai,bi->abi', Wm,Wm)
-        cov_W = torch.einsum('aji,bji->abi', W, W) / N - Wm2
+        # W: d, N, ensembles
+        W0 = model.W0.permute(*torch.arange(model.W0.ndim - 1, -1, -1))
+        W1 = model.W1.permute(*torch.arange(model.W1.ndim - 1, -1, -1))
+        print(f"Layer size: {N}")
+        print(f"Should have std W0: {1.0/np.sqrt(d)} and std W1: {1.0/np.sqrt(N)}")
+        print(f"But actually torch.std(W0): {torch.std(W0)} and torch.std(W1): {torch.std(W1)}")
+
+
+        print(f"Should have std A: {1.0/(np.sqrt(N))}")
+        print(f"But actually torch.std(model.A): {torch.std(model.A)}")
+
+        covW0W1 = contract('kje,ije,nme,kme->ine', W1,W0,W0,W1, backend='torch') / N
+
         # Average over the ensemble dimension
-        cov_W_m = torch.mean(cov_W, axis=2)
-        cov_W = cov_W_m.cpu().detach()
-        lH = cov_W_m.diagonal().squeeze().cpu().detach() if hasattr(cov_W_m.diagonal().squeeze(), 'cpu') else cov_W_m.diagonal().squeeze()
+        cov_W_m = torch.mean(covW0W1, axis=2)
+        print(cov_W_m.shape)
+        lH = cov_W_m.diagonal().squeeze()
         empirical_lH_dict[N] = lH.cpu().detach().numpy()
         N_list.append(N)
         print(f'-- d: {d} --- N: {N} ----- P: {P} ------')
 
         print("Representative Preactivation Kernel Values")
         print("X[:5,:]")
-        print(X[:5,:])
+        print(X[:3,:])
         print("Empirical (ensemble averaged; q=5)")
         print("K_Emp[:5,:5]")
 
 
-        f = torch.einsum('ui,ijk->ujk', X, W) # P * N * ensembles
-        fm = torch.mean(f, dim=1) # P * ensembles
+        f = model.h1_activation(X)
 
         # Tensor product over the output dimensions
         # and average over the internal neurons
         # and the ensemble dimension
         hh = torch.einsum('uim,vim->uv', f, f)/(N * q)
         print(hh[:5,:5])
-
         print("Theoretical")
         print("K_theory[:5,:5]")
         real_hh = torch.einsum('ui,vi->uv',X,X)/d
@@ -270,8 +275,8 @@ def run(fname):
         if X_inf == None:
             X_inf = get_data(d, P_inf, test_seed).squeeze().to(DEVICE)
 
-        f_inf = torch.einsum('ui,ijk->ujk', X_inf, W) # P * N * ensembles
-        fm_inf = torch.mean(torch.mean(f_inf, dim=1), dim=1)
+        f_inf = model.h1_activation(X_inf)# P * N * ensembles
+
 
         # Kernel is averaged over ensemble and neuron indices
         hh_inf = torch.einsum('uim,vim->uv', f_inf, f_inf)/(N * q * P_inf) #- torch.einsum('u,v->uv', fm_inf,fm_inf)
@@ -281,6 +286,10 @@ def run(fname):
         norm = torch.einsum('ij,ij->j',X_inf, X_inf) / P_inf
         lsT = Ls
 
+        print("Eigenvalues")   
+        print(f"Projection Eigenvalues: {Ls}")
+        print(f"Weight Covariance Eigenvalues: {lH}")
+        print(f"Theoretical Eigenvalues: {lsT * 0 + 1.0/d}")
         # breakpoint()
 
 
@@ -365,7 +374,7 @@ def run(fname):
 
         # To display the plot, uncomment the line below when you run your script:
         # plt.show()
-        plt.savefig(os.path.join(Menagerie_dir, fname, f'gpr_discrepancy_P_{P}_N_{N}_d_{d}_chi_1.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(Menagerie_dir, fname, f'gpr_discrepancy_P_{P}_N_{N}_d_{d}_chi_{1}.png'), dpi=300, bbox_inches='tight')
 
 
         dats.append({'width':N,
@@ -485,10 +494,14 @@ def run(fname):
             
     # Only plot the lH comparison if chi != 1
     # Theoretical values from Mathematica output for N=[50, 200, 600, 2000], d=3
-    theoretical_Ns = [50, 200, 600, 2000]
-    theoretical_perp = [0.3333333333333333, 0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
-    theoretical_targ = [0.743841, 0.743841, 0.743841, 0.743841]
-
+    theoretical_Ns = empirical_lH_dict.keys()
+    
+ #  theoretical_perp = {50: 0.33333333333333354, 200: 0.33333333333333326, 600: 0.3333333333333333, 1000: 0.3333333333333333}# {50: 0.3333333333333333, 200: 0.3333333333333333, 600: 0.3333333333333333, 1000: 0.3333333333333333}
+ #   theoretical_targ = theoretical_perp # {50: 0.7314341803167995, 200: 0.7407831191433091, 600: 0.7428251116358064, 1000: 0.7432320110787786}#{50: 0.7314, 200: 0.7407, 600: 0.7428, 1000: 0.7435}
+  # theoretical_targ = theoretical_perp
+    theoretical_perp = {N: 1.0/d for N in theoretical_Ns}
+    theoretical_targ = {400: 0.363}
+    #theoretical_targ = {200:0.0234606}
     colors = plt.cm.viridis(np.linspace(0, 1, len(theoretical_Ns)))
     plt.figure(figsize=(10,6))
     for idx, N in enumerate(theoretical_Ns):
@@ -496,17 +509,23 @@ def run(fname):
         # Plot empirical lH for this N (dots)
         if N in empirical_lH_dict:
             lH_vec = empirical_lH_dict[N]
+            print(f"Printing lH_vec: {lH_vec}")
             x_vals = np.arange(1, len(lH_vec)+1)
             # Plot empirical lH as scatter
             plt.scatter(x_vals, lH_vec, color=color, label=f'Empirical lH (N={N})', marker='o')
             # Plot empirical lH as line
             plt.plot(x_vals, lH_vec, color=color, linestyle='-', alpha=0.7)
         # Plot theoretical perp (X) as scatter and line
-        plt.scatter([2,3], [theoretical_perp[idx],theoretical_perp[idx]], color=color, marker='x', s=100, label=f'Theory perp (N={N})')
-        plt.plot([2,3], [theoretical_perp[idx],theoretical_perp[idx]], color=color, linestyle='--', alpha=0.5)
-        # Plot theoretical targ (X) as scatter and line
-        plt.scatter([1], [theoretical_targ[idx]], color=color, marker='X', s=100, label=f'Theory targ (N={N})')
-        plt.plot([1], [theoretical_targ[idx]], color=color, linestyle=':', alpha=0.5)
+        perp_x = range(2,d)
+        perp_y = theoretical_perp[N] * np.ones(len(perp_x))
+        plt.scatter(perp_x, perp_y, color=color, marker='x', s=100, label=f'Theory perp (N={N})')
+        plt.plot(perp_x, perp_y, color=color, linestyle='--', alpha=0.5)
+        # Plot theoretical targ (X) as scatter and
+        # 
+        target_x = [1]
+        target_y = theoretical_targ[N]  
+        plt.scatter(target_x, target_y, color=color, marker='X', s=100, label=f'Theory targ (N={N})')
+        plt.plot(target_x, target_y, color=color, linestyle=':', alpha=0.5)
     plt.xlabel('Eigenvalue Index (1 to d)')
     plt.ylabel('lH Eigenvalue')
     plt.title('Empirical vs Theoretical lH Eigenvalues for Each N')
@@ -547,7 +566,7 @@ def pl(dats,ens):
     # Add labels and title for clarity
     plt.xlabel("N (width)")
     plt.ylabel("Diff $K_{uv}$ Exp-Theory")
-    plt.title( f'Ensemble of {len(dats)} FCN2s @ 30/N On Data | d:3 P:30 | '+ '$\hat{K}_{uv}-K^t_{uv}$')
+    plt.title( f'Ensemble of {len(dats)} FCN3s @ 30/N On Data | d:3 P:30 | '+ '$\hat{K}_{uv}-K^t_{uv}$')
     plt.legend()
     plt.tight_layout()
 

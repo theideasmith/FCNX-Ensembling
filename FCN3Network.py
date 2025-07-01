@@ -51,11 +51,12 @@ class FCN3NetworkEnsembleLinear(nn.Module):
         C2_uij = W2_ijk*C1_uik
         C3_ui = A_ij*C2_uij
         """
+        print(X.shape)
         A = self.A.clone()
         W1 = self.W1.clone()
         W0 = self.W0.clone()
         return contract(
-            'ij,ijk,ikl,ul->ui',
+            'ij,ijk,ikl,unl->ui',
             A, W1, W0, X,
           backend='torch'
         )

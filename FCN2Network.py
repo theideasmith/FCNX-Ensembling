@@ -1,8 +1,16 @@
 import torch
 import torch.nn as nn
+from opt_einsum import contract
 
 import standard_hyperparams as hp
 from typing import Tuple, Optional, Callable, Dict
+
+# Add these after imports
+INIT_SEED = 222
+try:
+    DEVICE = hp.DEVICE
+except AttributeError:
+    DEVICE = 'cpu'
 
 class FCN2Network(nn.Module):
     """
@@ -90,3 +98,35 @@ class FCN2Network(nn.Module):
         # Activation of the layer
         a1: torch.Tensor = self.activation(h2)
         return a1
+
+class FCN_2_Ensemble(nn.Module):
+    def __init__(self, d, n1, s2W, s2A, ensembles=1, init_seed=None):
+        super().__init__()
+        if init_seed is None:
+            torch.manual_seed(INIT_SEED)
+
+        self.arch = [d, n1]
+        self.d = d
+        self.n1 = n1
+        self.W0 = nn.Parameter(torch.normal(mean=0.0,
+            std=torch.full((ensembles, n1, d), s2W ** 0.5)).to(DEVICE),
+            requires_grad=True)
+        self.A = nn.Parameter(torch.normal(
+            mean=0.0,
+            std=torch.full((ensembles, n1), s2A ** 0.5)).to(DEVICE),
+            requires_grad=True)
+
+    def forward(self, X):
+        Xp = X.squeeze()
+        return contract(
+            'ik,ikl,ul->ui',
+            self.A, self.W0, Xp,
+            backend='torch'
+        )
+
+    def h_activation(self, X):
+        return contract(
+            'ikl,ul->uik',
+            self.W0, X,
+            backend='torch'
+        )

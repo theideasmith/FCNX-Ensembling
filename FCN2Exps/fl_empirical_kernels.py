@@ -1,14 +1,8 @@
-"""
-
-THIS FILE IS MEANT TO COMPARE AN FCN2 IN STANDARD SCALING
-TO THE GPR
-
-"""
-import matplotlib.pyplot as plt
 import math
 import torch
 import sys
 import os
+import matplotlib.pyplot as plt
 import numpy as np
 import json
 import torch.nn as nn
@@ -16,7 +10,7 @@ INIT_SEED = 222
 import argparse
 from scipy.stats import zscore
 import torch
-
+import matplotlib.pyplot as plt # For visualization, not part of the core function
 from opt_einsum import contract
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -202,8 +196,6 @@ def run(fname):
     """
     print(f'{len(nets)} nets identified. Loading now....')
     all_networks_discrepancy_data = []
-    empirical_lH_dict = {}  # N -> lH vector
-    N_list = []
 
     for i in range(len(nets)): 
         print(f'Loading net {i} @ {nets[i]}')
@@ -228,10 +220,8 @@ def run(fname):
         cov_W = torch.einsum('aji,bji->abi', W, W) / N - Wm2
         # Average over the ensemble dimension
         cov_W_m = torch.mean(cov_W, axis=2)
-        cov_W = cov_W_m.cpu().detach()
-        lH = cov_W_m.diagonal().squeeze().cpu().detach() if hasattr(cov_W_m.diagonal().squeeze(), 'cpu') else cov_W_m.diagonal().squeeze()
-        empirical_lH_dict[N] = lH.cpu().detach().numpy()
-        N_list.append(N)
+        cov_W = cov_W_m.cpu().detach().numpy()
+        lH = cov_W_m.diagonal().squeeze()
         print(f'-- d: {d} --- N: {N} ----- P: {P} ------')
 
         print("Representative Preactivation Kernel Values")
@@ -321,14 +311,12 @@ def run(fname):
 
 
         # Calculate the absolute discrepancy for each approximation against tru_y
-        discrepancy_network_output = np.abs(model(X).mean(axis=1).cpu().detach().numpy() - tru_y)
         discrepancy_projection_gpr = np.abs(projection_gpr - true_gpr)
         discrepancy_weight_cov_gpr = np.abs(weight_cov_gpr - true_gpr)
         discrepancy_nngp_gpr = np.abs(nngp_gpr - true_gpr)
 
         # Group the discrepancies for easier processing
         all_discrepancies = [
-            discrepancy_network_output,
             discrepancy_projection_gpr,
             discrepancy_weight_cov_gpr,
             discrepancy_nngp_gpr
@@ -340,7 +328,6 @@ def run(fname):
 
         # Define labels for the x-axis
         labels = [
-            'Network Output',
             'Projection GPR',
             'Weight Cov. GPR',
             'NNGP Theoretical'
@@ -371,13 +358,12 @@ def run(fname):
         dats.append({'width':N,
                     'ratio_mean': krat.mean(), 
                     'ratio_std': krat.std(),
-                    'eig': lH,
+                    'eig': lH.cpu().detach().numpy(),
                     'diff_mean': kdiff.mean(),
                     'diff_std': kdiff.std()})
           # Group the discrepancies for easier processing
         current_net_discrepancies = {
             'N': N, # Store N for sorting
-            'Network Output': {'mean': np.mean(discrepancy_network_output), 'std': np.std(discrepancy_network_output)},
             'Projection GPR': {'mean': np.mean(discrepancy_projection_gpr), 'std': np.std(discrepancy_projection_gpr)},
             'Weight Cov. GPR': {'mean': np.mean(discrepancy_weight_cov_gpr), 'std': np.std(discrepancy_weight_cov_gpr)},
             'NNGP Theoretical': {'mean': np.mean(discrepancy_nngp_gpr), 'std': np.std(discrepancy_nngp_gpr)},
@@ -392,14 +378,12 @@ def run(fname):
 
     # Define the discrepancy types and their corresponding titles for subplots
     discrepancy_types = [
-        'Network Output',
         'Projection GPR',
         'Weight Cov. GPR',
         'NNGP Theoretical'
     ]
 
     discrepancy_titles = {
-        'Network Output': 'Network Output',
         'Projection GPR': 'Projection NNGP',
         'Weight Cov. GPR': 'Weight Covariance NNGP',
         'NNGP Theoretical': 'Theoretical $\lambda$ NNGP'
@@ -408,7 +392,7 @@ def run(fname):
     # Create a single figure and a single subplot
     fig, ax = plt.subplots(figsize=(15, 8)) # Adjust figure size as needed
 
-    fig.suptitle('Mean Absolute Discrepancy with GPR $y^\\text{GPR}(x)$ (d=3, P=30)', fontsize=16)
+    fig.suptitle('Mean Absolute Discrepancy of GPR Approximations - $y^\\text{GPR}(x)$ (d=3, P=30)', fontsize=16)
     ax.set_ylabel('Mean Absolute Discrepancy $|\hat{y}_\mu-y^\\text{GPR}_\mu|$')
     ax.yaxis.grid(True, linestyle='--', alpha=0.7)
     ax.set_ylim(bottom=0) # Ensure y-axis starts at 0
@@ -479,41 +463,9 @@ def run(fname):
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
     # Assuming Menagerie_dir and fname are defined in the broader context
     final_plot_path = os.path.join(Menagerie_dir, fname, 'consolidated_gpr_discrepancy_plot.png')
-    print(final_plot_path)
     plt.savefig(final_plot_path, dpi=300, bbox_inches='tight')
     # print(f"\nConsolidated plot saved to: {final_plot_path}")
             
-    # Only plot the lH comparison if chi != 1
-    # Theoretical values from Mathematica output for N=[50, 200, 600, 2000], d=3
-    theoretical_Ns = [50, 200, 600, 2000]
-    theoretical_perp = [0.3333333333333333, 0.3333333333333333, 0.3333333333333333, 0.3333333333333333]
-    theoretical_targ = [0.743841, 0.743841, 0.743841, 0.743841]
-
-    colors = plt.cm.viridis(np.linspace(0, 1, len(theoretical_Ns)))
-    plt.figure(figsize=(10,6))
-    for idx, N in enumerate(theoretical_Ns):
-        color = colors[idx]
-        # Plot empirical lH for this N (dots)
-        if N in empirical_lH_dict:
-            lH_vec = empirical_lH_dict[N]
-            x_vals = np.arange(1, len(lH_vec)+1)
-            # Plot empirical lH as scatter
-            plt.scatter(x_vals, lH_vec, color=color, label=f'Empirical lH (N={N})', marker='o')
-            # Plot empirical lH as line
-            plt.plot(x_vals, lH_vec, color=color, linestyle='-', alpha=0.7)
-        # Plot theoretical perp (X) as scatter and line
-        plt.scatter([2,3], [theoretical_perp[idx],theoretical_perp[idx]], color=color, marker='x', s=100, label=f'Theory perp (N={N})')
-        plt.plot([2,3], [theoretical_perp[idx],theoretical_perp[idx]], color=color, linestyle='--', alpha=0.5)
-        # Plot theoretical targ (X) as scatter and line
-        plt.scatter([1], [theoretical_targ[idx]], color=color, marker='X', s=100, label=f'Theory targ (N={N})')
-        plt.plot([1], [theoretical_targ[idx]], color=color, linestyle=':', alpha=0.5)
-    plt.xlabel('Eigenvalue Index (1 to d)')
-    plt.ylabel('lH Eigenvalue')
-    plt.title('Empirical vs Theoretical lH Eigenvalues for Each N')
-    plt.legend(loc='best', fontsize='small', ncol=2)
-    plt.tight_layout()
-    plt.savefig(os.path.join(Menagerie_dir, fname, 'lH_empirical_vs_theory_per_N.png'), dpi=300)
-    # plt.show()
 
     return dats 
 
@@ -551,29 +503,7 @@ def pl(dats,ens):
     plt.legend()
     plt.tight_layout()
 
-def plot_lH_comparison():
-    # Provided data
-    data = {"perps":[[3.0303030303030304e-2,0.3333333333333333],[3.0303030303030304e-2,0.3333333333333333],[3.0303030303030304e-2,0.3333333333333333],[3.0303030303030304e-2,0.3333333333333333]],"targ":[[0.8637623643058426,0.34924085250172204],[0.8586076472397874,0.3374244768618376],[0.8573772570623069,0.33470611792696187],[0.8569386080936743,0.33374613819478083]],"params":[[30,50,3],[30,200,3],[30,600,3],[30,2000,3]]}
-    
-    # Extract values
-    params = data['params']
-    theoretical_lH = [x[1] for x in data['perps']]
-    actual_lH = [x[1] for x in data['targ']]
-    labels = [f"P={p},N={n},d={d}" for p,n,d in params]
 
-    x = np.arange(len(labels))
-    width = 0.35
-
-    plt.figure(figsize=(8,5))
-    plt.bar(x - width/2, theoretical_lH, width, label='Theoretical lH')
-    plt.bar(x + width/2, actual_lH, width, label='Empirical lH')
-    plt.xticks(x, labels, rotation=30, ha='right')
-    plt.ylabel('lH Eigenvalue')
-    plt.title('Empirical vs Theoretical lH Eigenvalues')
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig('lH_eigenvalue_comparison.png')
-    plt.show()
 
 if __name__=='__main__':
     print("HIO")
@@ -590,9 +520,6 @@ if __name__=='__main__':
     plt.figure()
     pl(processdats(dats), 5)
     plt.savefig(os.path.join(Menagerie_dir, fname, 'kernel_discrepancy_scaling')+'.png', dpi=300, bbox_inches='tight')
-
-    # Optionally call the function here or from main
-    # plot_lH_comparison()
 
 
 

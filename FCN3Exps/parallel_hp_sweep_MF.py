@@ -5,11 +5,11 @@ import itertools
 from multiprocessing import Pool
 
 # Define the hyperparameters lists
-Ps = [30]
-Ns = [40, 130, 200, 800, 1000, 2000, 4000]
-Ds = [3]
+Ps = [200]
+Ns = [400]
+Ds = [10]
 
-ens = 30
+ens = 5
 print("Ps:")
 print(Ps)
 print("Ns:")
@@ -17,9 +17,9 @@ print(Ns)
 print("Ds:")
 print(Ds)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-SAVEPATH = f"/home/akiva/gpnettrain/fcn2_GP_{timestamp}"
+SAVEPATH = f"/home/akiva/gpnettrain/fcn3_MF_LOWLR_{timestamp}"
 # Path to the refactored net.py script
-refactored_script = 'net.py'
+refactored_script = 'net_einsum_parallel.py'
 print(f'Save to: {SAVEPATH}')
 print("Starting hyperparameter sweep...")
 print("-" * 50)
@@ -27,10 +27,12 @@ print("-" * 50)
 def run_training_command(params):
     """Function to execute a single training command."""
     p, n, d, chi, enum, save_path, script_path = params
-    nepochs = 500_000 if chi == 1 else 10_000_000
-
-    print(f"Running training for P={p}, N={n}, D={d}, ens={enum}")
-    print(f'{p}, {n}, {d}, {chi}')
+    nepochs =  100_000_000
+    lrGP = 1e-2
+    lrMF = 0.5 * 1e-3
+    lr0 = lrGP if chi == 1 else lrMF
+    rate_decay = 434294.0
+    print(f"Running training for p: {p}, n: {n}, d: {d}, chi: {chi}, ens: {enum}, epochs: {nepochs}, save_path: {save_path}")
     try:
         command = [
             'python', script_path,
@@ -38,10 +40,13 @@ def run_training_command(params):
             '--N', str(n),
             '--D', str(d),
             '--chi', str(chi),
+            '--lr', str(lr),
             '--epochs', str(nepochs),
             '--to', save_path,
             '--ens', str(enum),
-            '--off_data',
+            '--rate_decay', str(rate_decay),
+            '--lr_schedule', 'true',
+            '--lr0', str(lr0)'
         ]
 
         result = subprocess.run(command, check=True, capture_output=True, text=True)
@@ -73,10 +78,10 @@ def run_training_command(params):
 
 if __name__ == '__main__':
     all_commands_params = []
-    for enum in range(ens):
-        for p, n, d in itertools.product(Ps, Ns, Ds):
-            chi = 1 # as per your original code
-            all_commands_params.append((p, n, d, chi, enum, SAVEPATH+f'_d_{d}_N_{N}_P_{P}_chi_{chi}', refactored_script))
+
+    for p, n, d in itertools.product(Ps, Ns, Ds):
+        chi = n # as per your original code
+        all_commands_params.append((p, n, d, chi, ens, os.path.join(SAVEPATH, f'd_{d}_N_{n}_P_{p}_chi_{chi}'), refactored_script))
 
     # Determine the number of processes to use. You can adjust this.
     # A common choice is os.cpu_count() or a fixed number.
