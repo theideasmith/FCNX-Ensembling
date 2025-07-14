@@ -3,4 +3,5 @@ Menagerie/*
 **.pth
 plots/*
 plots/
+FCN3Exps/**.log
 

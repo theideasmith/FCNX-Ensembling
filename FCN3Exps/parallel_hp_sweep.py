@@ -21,17 +21,21 @@ Ns = config.get('Ns', [50, 200, 600, 1000])
 Ds = config.get('Ds', [3])
 ens = config.get('ens', 2)
 nepochs = config.get('nepochs', 100_000_000)
-lrGP = config.get('lrGP', 1e-3)
-lrMF = config.get('lrMF', 1e-3)
+lrGP = config.get('lrGP', 1e-4)
+lrMF = config.get('lrMF', 1e-4)
 num_processes = config.get('num_processes', 10)
 refactored_script = config.get('script', 'net_einsum_parallel.py')
+lr_schedule = config.get('lr_schedule', False)
+rate_decay = config.get('rate_decay', 434294.0)
+kappas = config.get('kappa', [1.0])
+
 
 # Compose save path
 if 'savepath' in config:
     SAVEPATH = config['savepath']
 else:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    SAVEPATH = f"/home/akiva/gpnettrain/fcn3_GP_ULTIMATE{timestamp}"
+    SAVEPATH = f"/home/akiva/gpnettrain/fcn3_MF_SLOWLR_{timestamp}"
 
 print("Ps:")
 print(Ps)
@@ -45,7 +49,7 @@ print("-" * 50)
 
 def run_training_command(params):
     """Function to execute a single training command."""
-    p, n, d, chi, enum, save_path, script_path = params
+    p, n, d, chi, enum, kappa, save_path, script_path = params
     print(f"Running training for p: {p}, n: {n}, d: {d}, chi: {chi}, ens: {enum}, epochs: {nepochs}, save_path: {save_path}")
     try:
         command = [
@@ -54,11 +58,15 @@ def run_training_command(params):
             '--N', str(n),
             '--D', str(d),
             '--chi', str(chi),
-            '--lr', str(lrGP if chi == 1 else lrMF),
+            '--lr0', str(lrGP if chi == 1 else lrMF),
             '--epochs', str(nepochs),
             '--to', save_path,
             '--ens', str(enum),
+            '--lr_schedule',
+            '--rate_decay', str(rate_decay),
+            '--kappa', str(kappa),
         ]
+        print(' '.join(command))
 
         result = subprocess.run(command, check=True, capture_output=True, text=True)
 
@@ -90,10 +98,15 @@ def run_training_command(params):
 if __name__ == '__main__':
     all_commands_params = []
 
-    for p, n, d in itertools.product(Ps, Ns, Ds):
-        chi = 1
-        all_commands_params.append((p, n, d, chi, ens, os.path.join(SAVEPATH, f'd_{d}_N_{n}_P_{p}_chi_{chi}'), refactored_script))
-
+    for p, n, d, kappa in zip(Ps, Ns, Ds, kappas):
+        chi = 1.0
+        if config.get('chi', 1.0) == 'use_N_as_chi':
+            chi = n
+        all_commands_params.append((p, n, d, chi, ens, kappa, os.path.join(SAVEPATH, f'd_{d}_N_{n}_P_{p}_chi_{chi}_kappa_{kappa}'), refactored_script))
+    for i, c in enumerate(all_commands_params):
+        print(c)
+        if i > 10:
+            break
     print(f"Using {num_processes} parallel processes.")
 
     with Pool(processes=num_processes) as pool:

@@ -38,7 +38,7 @@ from decimal import Decimal
 import os
 from PIL import Image
 from opt_einsum import contract
-import  standard_hyperparams_fcn2 as hp2
+
 
 
 import torchvision
@@ -83,8 +83,7 @@ from tqdm import tqdm # Import tqdm
 
 # Add argparse for command-line arguments
 parser = argparse.ArgumentParser(description='Train a fcn3 neural network with specified hyperparameters.')
-parser.add_argument('--chi', type=int, required=True, help='Set scaling regime (Chi)')
-parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate for training')
+parser.add_argument('--chi', type=float, required=True, help='Set scaling regime (Chi)')
 parser.add_argument('--N', type=int, required=True, help='Hidden layer width (N)')
 parser.add_argument('--D', type=int, required=True, help='Input dimension (d)')
 parser.add_argument('--P', type=int, required=True, help='Number of training samples (n_train)')
@@ -96,7 +95,8 @@ parser.add_argument('--ethereal', default=False,action='store_true', help='Dont 
 parser.add_argument('--rate_decay', type=float, default=1.302e7, help='Decay constant for learning rate schedule')
 parser.add_argument('--lr0', type=float, default=1e-3, help='Initial learning rate for schedule')
 parser.add_argument('--lr_schedule', action='store_true', help='Whether to use a learning rate schedule')
-
+parser.add_argument('--kappa', type=float, default=1.0, help='kappa')
+parser.add_argument('--lr_stepped', action='store_true', help='Whether to use a learning rate schedule')
 args = parser.parse_args()
 
 
@@ -116,28 +116,34 @@ N = args.N     # Use N from arguments
 chi = args.chi
 d = args.D     # Use D from arguments
 n_test = 200
-s2, sa2, sh2, sw2 = 1.0, 1.0, 1.0, 1.0 # These are k, sa2, sw2
+
+s2, sa2, sh2, sw2 = args.kappa, 1.0, 1.0, 1.0 # These are k, sa2, sw2
 FL_scale = 1.0 # float(128)
 activation = "lin"
 eps = 0.
 on_data = True if args.off_data is False else False
 lr0 = args.lr0
 lr_schedule = args.lr_schedule
-
+lr_stepped = args.lr_stepped
 ens = args.ens
 # Update SAVE_PATH to include N, D, P
 def trainid():
     add = ens
-    return f"epochs_{max_epochs}_N:{N}_chi_{chi}_D:{d}_P:{n_train}_k:{s2}_ondata_{on_data}_{add}"
+    return f"epochs_{max_epochs}_N:{N}_chi_{chi}_D:{d}_P:{n_train}_k:{s2}_ondata_{on_data}_{add}_kappa_{args.kappa}_lr0_{lr0}_lr_stepped_{lr_stepped}"
 
 TRAINID = trainid()
-SAVE_PATH = os.path.join(SAVE_PATH, TRAINID)
 
 import shutil
 
 if dev_mode is False:
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    SAVE_PATH = SAVE_PATH + f"_time_{timestamp}"
+    
     if not os.path.exists(SAVE_PATH):
         os.makedirs(SAVE_PATH)
+    else:
+        import os, shutil; [os.remove(entry.path) if entry.is_file() else shutil.rmtree(entry.path) for entry in os.scandir(SAVE_PATH)]
 # else:
 #   shutil.rmtree(SAVE_PATH)
     # os.makedirs(SAVE_PATH)
@@ -189,7 +195,7 @@ class VectorizedSumSquaredDifferenceLoss(nn.Module):
 
         return loss
 
-criterion = VectorizedSumSquaredDifferenceLoss()
+criterion = nn.MSELoss(reduction='sum')
 
 def log_matrix_to_tensorboard(
     writer: SummaryWriter,
@@ -238,12 +244,24 @@ def log_matrix_to_tensorboard(
 
 INIT_SEED = 222
 
-# Assuming hp2.DEVICE is defined elsewhere or defaults to CPU/CUDA
-# For this refactor, it's assumed to be accessible.
-# If hp2.DEVICE is not defined, you might need to add:
-DEVICE = "cuda:1" 
+import GPUtil
+def get_torch_gpu_device_id():
+    try:
+        gpus = GPUtil.getGPUs()
+        if not gpus:
+            return None
+        
+        lowest_load_gpu = min(gpus, key=lambda gpu: gpu.load)
+        return lowest_load_gpu.id
+    except Exception:
+        return None
 
-
+gpu_id = get_torch_gpu_device_id()
+device = torch.device('cpu')
+if gpu_id is not None:
+    device = torch.device(f'cuda:{gpu_id}')
+print(f"Using device: {device}")
+DEVICE = device
 
 CASH_FREAK = 1000
 def epoch_callback_fcn3(epoch, loss, writer, model, data, model_identifier):
@@ -253,15 +271,30 @@ def epoch_callback_fcn3(epoch, loss, writer, model, data, model_identifier):
             writer.add_scalar(f'FCN3_{TRAINID}/Train_Step',
                                 loss, epoch)
         if dev_mode is False:
-            if hasattr(model, 'W0'):                                                                    
-                writer.add_histogram(f'FCN3_{TRAINID}/W0_hist', model.W0.detach().cpu().numpy(), epoch) 
+            if hasattr(model, 'W0'):
+                try:
+
+                    writer.add_histogram(f'FCN3_{TRAINID}/W0_hist', model.W0, epoch)
+                except Exception as e:
+                    print(model.W0.shape)
+                    print(model.W0.detach)
+                    print(f"Error logging W0 histogram: {e}")
 
         # Add histograms of the first and second layer weights
         if not dev_mode:
-            if hasattr(model, 'W1'):
-                writer.add_histogram(f'FCN3_{TRAINID}/W1_hist', model.W0.detach().cpu().numpy(), epoch)
-            if hasattr(model, 'A'):
-                writer.add_histogram(f'FCN3_{TRAINID}/A_hist', model.A.detach().cpu().numpy(), epoch)
+            try:
+                if hasattr(model, 'W1'):
+                    try:
+                        writer.add_histogram(f'FCN3_{TRAINID}/W1_hist', model.W1, epoch)
+                    except Exception as e:
+                        print(f"Error logging W1 histogram: {e}")
+                if hasattr(model, 'A'):
+                    try:
+                        writer.add_histogram(f'FCN3_{TRAINID}/A_hist', model.A, epoch)
+                    except Exception as e:
+                        print(f"Error logging A histogram: {e}")
+            except Exception as e:
+                print(f"Error in histogram logging block: {e}")
 #       H = compute_avg_channel_covariance(model, data, layer_name='lin1')
 #       log_matrix_to_tensorboard(writer,f'FCN3_{model_identifier}/H', H.cpu().numpy(),epoch)
 #       X = data
@@ -381,7 +414,9 @@ class LangevinSimple2(optim.Optimizer):
                     'learning_rate' : learning_rate,
                     'weight_decay'  : weight_decay_3,
                     'temperature' : temperature},
-                 ]
+                 ]  
+
+    
         super(LangevinSimple2, self).__init__(groups, defaults)
 
     @torch.no_grad()
@@ -393,6 +428,7 @@ class LangevinSimple2(optim.Optimizer):
             weight_decay = group['weight_decay']
             temperature = group['temperature']
             for parameter in group['params']:
+
                 eta = torch.randn_like(parameter)
                 d_p = eta * (2*learning_rate*temperature)**0.5
                 d_p = d_p.to(DEVICE)
@@ -432,7 +468,10 @@ def target(X,eps):
 def get_data(d,n,seed,target_func):
     np.random.seed(seed)
     X = torch.tensor(np.random.normal(loc=0,scale=1.,size=(n,1,d))).to(dtype=DTYPE)
-    return X, target_func(X)
+    y = target_func(X) * 0.0 # y ~ O(1)
+
+    X_scaled = X  # X ~ O(1/sqrt(d))
+    return X_scaled, y
 
 def get_train_test_data(d,n,n_test,train_seed,test_seed,target_func):
     X_train, Y_train = get_data(d,n,train_seed,target_func)
@@ -477,10 +516,10 @@ class FCN3NetworkEnsembleLinear(nn.Module):
                                             requires_grad=True) # requires_grad moved here
         self.W1 = nn.Parameter(torch.normal(mean=0.0, 
                                             std=torch.full((ensembles, n2, n1), weight_initialization_variance[1]**0.5)).to(DEVICE),
-                                            requires_grad=True) # requires_grad moved here
+                                            requires_grad=True).to(DEVICE) # requires_grad moved here
         self.A = nn.Parameter(torch.normal(mean=0.0, 
-                                           std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(DEVICE),
-                                           requires_grad=True) # requires_grad moved here
+                                           std=torch.full((ensembles, 1, n2), weight_initialization_variance[2]**0.5)).to(DEVICE),
+                                           requires_grad=True).to(DEVICE) # requires_grad moved here
 
 
     def h1_activation(self, X):
@@ -514,10 +553,10 @@ class FCN3NetworkEnsembleLinear(nn.Module):
         W0 = self.W0
 
         return contract(
-            'ij,ijk,ikl,unl->ui',
+            'eij,ejk,ekl,unl->uie',
             A, W1, W0, X,
           backend='torch'
-        )                                            
+        )                                              
 #--------------------------------------------------------------------------------------------------------
 # Class specific for the Lengevin network training
 
@@ -547,13 +586,12 @@ class MyNetwork():
         self.eps,self.FL_scale = eps,FL_scale
 
         #To calculate the wd terms I used the term appearing after eqn. 2 in the paper: Predicting the outputs of finite deep neural networks...
-        self.temperature = 2.0/(self.chi)
+        self.temperature = 2.0*self.s2/(self.chi)
         self.wd_input = self.temperature*self.d
         self.wd_preactivation = self.temperature*self.N
         self.wd_output = self.temperature*self.N*self.chi
 
         self.X_train,self.X_test,self.Y_train,self.Y_test,self.train_loader,self.test_loader = prep_train_test(self.d,self.n,self.n_test,self.train_seed,self.test_seed,eps)
-
 
         for i, data in enumerate(self.train_loader, 0): # for Langevin training we use full-batch
             inputs, labels = data
@@ -604,13 +642,14 @@ class MyNetwork():
 
             #calculate train loss
 
-        outputs = self.net(self.inputs).unsqueeze(1)
+        outputs = self.net(self.inputs)
+
         loss = criterion(outputs, self.labels)
 
             #calculate test loss
         if on_data is True:
-            outputs_test_full = self.net(self.inputs_test).unsqueeze(1)
-            loss_test = criterion(outputs_test_full, self.labels_test)
+            # outputs_test_full = self.net(self.inputs_test).unsqueeze(1)
+            # loss_test = criterion(outputs_test_full, self.labels_test)
             loss.backward()
         optimizer.step()
 
@@ -630,16 +669,16 @@ class MyNetwork():
                     # Update learning rate according to schedule
                     if lr_schedule is True:
                         lr = lr0 * np.exp((-1.0 / args.rate_decay) * epoch)
-                        self.lr = lr
-                        print(f"Learning rate: {self.lr}, epoch: {epoch}")
-                        for param_group in optimizer.param_groups:
-                            param_group['learning_rate'] = lr
-             
+                        self.lr = lr / self.n
+                    if lr_stepped is True:
+                        if epoch > max_epochs * 0.8: 
+                            self.lr = (lr0 / 3) / self.n                    
+
                     loss = self.one_epoch(epoch,optimizer)
                     optimizer =  LangevinSimple2(self.net, self.lr, self.wd_input,self.wd_preactivation, self.wd_output, self.temperature)
-                    if epoch % 1000 == 0: # Ensure update happens every 1000 epochs or so
-                        pbar.set_postfix(loss=f'{loss:.4f}, epoch:{epoch}')
-                        pbar.update(1000 if epoch + 1000 <= self.max_epochs else self.max_epochs - epoch)
+                    
+                    pbar.set_postfix(loss=f'{loss:.10f}, epoch:{epoch}')
+                    pbar.update(1 if epoch + 1 <= self.max_epochs else self.max_epochs - epoch)
                     if epoch % CASH_FREAK == 0:
                         if dev_mode is False:
                             torch.save(self.net, os.path.join(SAVE_PATH, f'netnum_{ens}'))
@@ -664,7 +703,8 @@ net_path = os.path.join(SAVE_PATH, f'netnum_{ens}')
 if os.path.exists(net_path):
     print(f"Loading existing network from {net_path}")
     net = MyNetwork(d, N, n_train, n_test, max_epochs, s2, sa2, sh2, sw2, FL_scale, eps, [train_seed, test_seed], activation, SAVE_PATH, lr0, chi)
-    net.net = torch.load(net_path)
+    net.net = torch.load(net_path).to(DEVICE)
+    net.train_net()
 else:
     print(f"No existing network found at {net_path}. Creating and training a new network.")
     net = MyNetwork(d, N, n_train, n_test, max_epochs, s2, sa2, sh2, sw2, FL_scale, eps, [train_seed, test_seed], activation, SAVE_PATH, lr0, chi)

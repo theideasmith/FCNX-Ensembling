@@ -5,11 +5,14 @@ import itertools
 from multiprocessing import Pool
 
 # Define the hyperparameters lists
-Ps = [200]
-Ns = [400]
+Ps = [50]
+Ns =[60, 80, 160, 600, 1200]
 Ds = [10]
-
-ens = 5
+chis = [1]
+lrMF = 1e-3
+lrs = [1e-4]
+kappa = [1.0]
+ens = 2
 print("Ps:")
 print(Ps)
 print("Ns:")
@@ -17,7 +20,7 @@ print(Ns)
 print("Ds:")
 print(Ds)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-SAVEPATH = f"/home/akiva/gpnettrain/fcn3_MF_LOWLR_{timestamp}"
+SAVEPATH = f"/home/akiva/gpnettrain/fcn3_GP_GPR_lr0_1e-4_{timestamp}"
 # Path to the refactored net.py script
 refactored_script = 'net_einsum_parallel.py'
 print(f'Save to: {SAVEPATH}')
@@ -26,28 +29,29 @@ print("-" * 50)
 
 def run_training_command(params):
     """Function to execute a single training command."""
-    p, n, d, chi, enum, save_path, script_path = params
+    p, n, d, chi, enum, k, lr, save_path, script_path = params
     nepochs =  100_000_000
-    lrGP = 1e-2
-    lrMF = 0.5 * 1e-3
-    lr0 = lrGP if chi == 1 else lrMF
-    rate_decay = 434294.0
+
+    lr0 = lr
     print(f"Running training for p: {p}, n: {n}, d: {d}, chi: {chi}, ens: {enum}, epochs: {nepochs}, save_path: {save_path}")
+    command = [
+        'python', script_path,
+        '--P', str(p),
+        '--N', str(n),
+        '--D', str(d),
+        '--chi', str(chi),
+        '--epochs', str(nepochs),
+        '--to', save_path,
+        '--ens', str(enum),
+     #   '--rate_decay', str(rate_decay),
+      #  '--lr_schedule',
+        # '--lr_stepped',
+        '--lr0', str(lr0),
+        '--kappa', str(k)
+    ]
+    print(' '.join(command))
+
     try:
-        command = [
-            'python', script_path,
-            '--P', str(p),
-            '--N', str(n),
-            '--D', str(d),
-            '--chi', str(chi),
-            '--lr', str(lr),
-            '--epochs', str(nepochs),
-            '--to', save_path,
-            '--ens', str(enum),
-            '--rate_decay', str(rate_decay),
-            '--lr_schedule', 'true',
-            '--lr0', str(lr0)'
-        ]
 
         result = subprocess.run(command, check=True, capture_output=True, text=True)
 
@@ -79,9 +83,8 @@ def run_training_command(params):
 if __name__ == '__main__':
     all_commands_params = []
 
-    for p, n, d in itertools.product(Ps, Ns, Ds):
-        chi = n # as per your original code
-        all_commands_params.append((p, n, d, chi, ens, os.path.join(SAVEPATH, f'd_{d}_N_{n}_P_{p}_chi_{chi}'), refactored_script))
+    for p, n, d, k, chi, lr in itertools.product(Ps, Ns, Ds, kappa, chis, lrs):
+        all_commands_params.append((p, n, d, chi, ens, k, lr, os.path.join(SAVEPATH, f'd_{d}_N_{n}_P_{p}_chi_{chi}_kappa_{k}_lr_{lr}'), refactored_script))
 
     # Determine the number of processes to use. You can adjust this.
     # A common choice is os.cpu_count() or a fixed number.

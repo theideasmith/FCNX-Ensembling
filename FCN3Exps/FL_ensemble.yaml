@@ -1,14 +1,13 @@
-Ps: [150]
+Ps: [20]
 Ns: [400]
-Ds: [10]
-ens: 5`
+Ds: [20]
+ens: 50
 
 chi: 'use_N_as_chi' # or a specific integer
-nepochs:
-  if_chi_eq_1: 100000
-  otherwise: 50000000
+nepochs: 2000000
 
 ondata: true         # if false, pass --off_data
-save_prefix: fcn3_FEATURE_LEARNING_LR_SCHEDULED
+savepath: /home/akiva/gpnettrain/fcn3_MF_P20D20N400
 script: 'net_einsum_parallel.py'
-lr0: 1e-4
+lrfL: 1e-8 
+lr_schedule: True

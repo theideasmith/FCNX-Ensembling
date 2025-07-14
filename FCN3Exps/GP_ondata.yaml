@@ -1,15 +1,16 @@
-Ps: [200]
-Ns: [400]
-Ds: [10]
-ens: 5
+Ps: [30,240]
+Ns: [400, 3000]
+Ds: [3, 50]
+ens: 2
 
 chi: 1 # or a specific integer
-nepochs: 30000000
+nepochs: 100000000
 
 ondata: true         # if false, pass --off_data
-save_prefix: fcn3_GP_ondata_LR_SCHEDULED
+savepath: /home/akiva/gpnettrain/fcn3_GP_P_eq_D_y_0
 script: net_einsum_parallel.py
 
-lr0: 1e-3
-lr_schedule: true
+lrGP: 1e-4
+lr_schedule: false
 rate_decay: 434294.0
+kappa: [0.1,1.0]

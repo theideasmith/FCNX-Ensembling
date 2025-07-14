@@ -1,0 +1,11 @@
+Ns: [20]
+Ds: [2]
+Ps: [10]
+nepochs: 100000
+lrGP: 0.001 
+kappa: [1.0]
+savepath: /home/akiva/gpnettrain/fcn3_GP_P_eq_D_y_0_langeviagainstcolabimplementation
+script: net_einsum_parallel.py
+ens: 1
+ondata: true
+lr_schedule: false

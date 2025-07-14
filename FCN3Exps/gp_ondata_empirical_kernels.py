@@ -4,6 +4,10 @@ THIS FILE IS MEANT TO COMPARE AN FCN3 IN STANDARD SCALING
 TO THE GPR
 
 """
+import warnings
+warnings.filterwarnings("ignore")
+import re
+
 import matplotlib.pyplot as plt
 import math
 import torch
@@ -34,7 +38,7 @@ DEVICE = 'cuda:1'
 
 
 X_inf = None
-P_inf = 10_000
+P_inf = 5_000
 test_seed = 10
 
 class FCN3NetworkEnsembleLinear(nn.Module):
@@ -51,14 +55,14 @@ class FCN3NetworkEnsembleLinear(nn.Module):
                                             requires_grad=True) # requires_grad moved here
         self.W1 = nn.Parameter(torch.normal(mean=0.0, 
                                             std=torch.full((ensembles, n2, n1), weight_initialization_variance[1]**0.5)).to(DEVICE),
-                                            requires_grad=True) # requires_grad moved here
+                                            requires_grad=True).to(DEVICE) # requires_grad moved here
         self.A = nn.Parameter(torch.normal(mean=0.0, 
-                                           std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(DEVICE),
-                                           requires_grad=True) # requires_grad moved here
+                                           std=torch.full((ensembles, 1, n2), weight_initialization_variance[2]**0.5)).to(DEVICE),
+                                           requires_grad=True).to(DEVICE) # requires_grad moved here
 
 
     def h1_activation(self, X):
-
+        
         return contract(
             'ijk,ikl,ul->uij',
             self.W1, self.W0, X,
@@ -89,7 +93,7 @@ class FCN3NetworkEnsembleLinear(nn.Module):
         W0 = self.W0
 
         return contract(
-            'ij,ijk,ikl,ul->ui',
+            'eij,ejk,ekl,ul->uie',
             A, W1, W0, X,
           backend='torch'
         )                 
@@ -179,8 +183,8 @@ def find_net0_files_os_walk(base_dir):
 
 def get_data(d,n,seed):
     np.random.seed(seed)
-    X = torch.tensor(np.random.normal(loc=0,scale=1.,size=(n,1,d))).to(dtype=torch.float32)
-    return X
+    X = torch.tensor(np.random.normal(loc=0,scale=1.0,size=(n,1,d))).to(dtype=torch.float32)
+    return X 
 
 train_seed = 563
 
@@ -196,14 +200,15 @@ def run(fname):
         ratios}
     ]
     """
-    print(f'{len(nets)} nets identified. Loading now....')
+    # print(f'{len(nets)} nets identified. Loading now....')
     all_networks_discrepancy_data = []
     empirical_lH_dict = {}  # N -> lH vector
+    empirical_lH_list = []
     N_list = []
     d = None
     for i in range(len(nets)): 
         print(f'Loading net {i} @ {nets[i]}')
-        print(nets[i])
+        # print(nets[i]) /
         model = torch.load(nets[i]).to(DEVICE)
 
         # W: d, N, ensembles
@@ -212,40 +217,47 @@ def run(fname):
         d = W.shape[0] # Input dimension
         N = W.shape[1] # Width of W0
         q = W.shape[2] # Number of ensembles
-        
+        ens = q
+        # breakpoint()
         torch.set_printoptions(precision=6, sci_mode=False)
-
-        X = get_data(d, 30, train_seed).to(DEVICE) # this is the train seed used in net.py
+        P = 20
+        X = get_data(d, P, train_seed).to(DEVICE) # this is the train seed used in net.py
         X = X.squeeze()
 
-        P = X.shape[0]
+ 
 
         # W: d, N, ensembles
         W0 = model.W0.permute(*torch.arange(model.W0.ndim - 1, -1, -1))
         W1 = model.W1.permute(*torch.arange(model.W1.ndim - 1, -1, -1))
-        print(f"Layer size: {N}")
-        print(f"Should have std W0: {1.0/np.sqrt(d)} and std W1: {1.0/np.sqrt(N)}")
-        print(f"But actually torch.std(W0): {torch.std(W0)} and torch.std(W1): {torch.std(W1)}")
+
+        # print(f"Layer size: {N}")
+        # print(f"Should have std W0: {1.0/np.sqrt(d)} and std W1: {1.0/np.sqrt(N)}")
+        # print(f"But actually torch.std(W0): {torch.std(W0)} and torch.std(W1): {torch.std(W1)}")
 
 
-        print(f"Should have std A: {1.0/(np.sqrt(N))}")
-        print(f"But actually torch.std(model.A): {torch.std(model.A)}")
+        # print(f"Should have std A: {1.0/(np.sqrt(N))}")
+        # print(f"But actually torch.std(model.A): {torch.std(model.A)}")
+
 
         covW0W1 = contract('kje,ije,nme,kme->ine', W1,W0,W0,W1, backend='torch') / N
-
+        # covW0W1 = contract('abl,ial,nal,abe->ine', W1,W0,W0,W1, backend='torch') / N
         # Average over the ensemble dimension
         cov_W_m = torch.mean(covW0W1, axis=2)
-        print(cov_W_m.shape)
+        # print(cov_W_m.shape)
         lH = cov_W_m.diagonal().squeeze()
-        empirical_lH_dict[N] = lH.cpu().detach().numpy()
-        N_list.append(N)
-        print(f'-- d: {d} --- N: {N} ----- P: {P} ------')
+       
 
-        print("Representative Preactivation Kernel Values")
-        print("X[:5,:]")
-        print(X[:3,:])
-        print("Empirical (ensemble averaged; q=5)")
-        print("K_Emp[:5,:5]")
+        N_list.append(N)
+
+
+        # breakpoint()
+        # print(f'-- d: {d} --- N: {N} ----- P: {P} ------')
+
+        # print("Representative Preactivation Kernel Values")
+        # print("X[:5,:]")
+        # print(X[:3,:])
+        # print("Empirical (ensemble averaged; q=5)")
+        # print("K_Emp[:5,:5]")
 
 
         f = model.h1_activation(X)
@@ -254,11 +266,11 @@ def run(fname):
         # and average over the internal neurons
         # and the ensemble dimension
         hh = torch.einsum('uim,vim->uv', f, f)/(N * q)
-        print(hh[:5,:5])
-        print("Theoretical")
-        print("K_theory[:5,:5]")
+        # print(hh[:5,:5])
+        # print("Theoretical")
+        # print("K_theory[:5,:5]")
         real_hh = torch.einsum('ui,vi->uv',X,X)/d
-        print(real_hh[:5,:5])
+        # print(real_hh[:5,:5])
 
         a0 = hh.flatten()
         b0 = real_hh.flatten()
@@ -271,12 +283,13 @@ def run(fname):
 
         # I need to compute the empirical eigenvalues using a 
         # finite matrix "operator" projection 
-        global X_inf
-        if X_inf == None:
-            X_inf = get_data(d, P_inf, test_seed).squeeze().to(DEVICE)
+
+
+        X_inf = get_data(d, P_inf, test_seed).squeeze().to(DEVICE) 
 
         f_inf = model.h1_activation(X_inf)# P * N * ensembles
-
+        f_inf_A = model(X_inf)
+        # breakpoint()
 
         # Kernel is averaged over ensemble and neuron indices
         hh_inf = torch.einsum('uim,vim->uv', f_inf, f_inf)/(N * q * P_inf) #- torch.einsum('u,v->uv', fm_inf,fm_inf)
@@ -285,11 +298,15 @@ def run(fname):
         Ls = torch.einsum('uj,uv,vj->j', X_inf, hh_inf, X_inf) / P_inf
         norm = torch.einsum('ij,ij->j',X_inf, X_inf) / P_inf
         lsT = Ls
-
-        print("Eigenvalues")   
-        print(f"Projection Eigenvalues: {Ls}")
+        # print(norm)
+        # print("Eigenvalues")   
+        print(f"Projection Eigenvalues: {Ls/norm}")
         print(f"Weight Covariance Eigenvalues: {lH}")
-        print(f"Theoretical Eigenvalues: {lsT * 0 + 1.0/d}")
+        lH_proj = Ls/norm
+        netname = os.path.basename(os.path.dirname(os.path.dirname(nets[i])))
+        empirical_lH_dict[N] = {'l': lH.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname }
+        empirical_lH_list.append({'l': lH.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname})
+        # print(f"Theoretical Eigenvalues: {lsT * 0 + 1.0/d}")
         # breakpoint()
 
 
@@ -298,7 +315,8 @@ def run(fname):
         # of the gpr result. 
 
         # beta = 1.0/d
-        true_gpr = gpr_dot_product_explicit(X, X[:,0], X, 1.0).cpu().detach().numpy()
+        Y = X[:,0] 
+        true_gpr = gpr_dot_product_explicit(X, Y, X, 1.0).cpu().detach().numpy()
         # X = X.to(torch.float64)
         # Xnp = X.cpu().detach().numpy()
         # K_yy_noisy_np = beta*np.dot(Xnp, Xnp.T) + 1.0 * np.eye(Xnp.shape[0])
@@ -317,31 +335,69 @@ def run(fname):
         # print(X[:,0])
 
         # This is nngp with the eigenvalues obtained via operator projection onto kernel eigenfunctions
-        projection_gpr = compute_gpr_nngp_torch(X, X[:,0], X, lsT, 1.0).cpu().detach().numpy()
+        projection_gpr = compute_gpr_nngp_torch(X, Y, X, lsT, 1.0).cpu().detach().numpy()
         
         # NNGP with eigenvalues obtained from the covariance matrix of the weights
-        weight_cov_gpr = compute_gpr_nngp_torch(X, X[:,0], X, lH, 1.0).cpu().detach().numpy()
+        weight_cov_gpr = compute_gpr_nngp_torch(X, Y, X, lH, 1.0).cpu().detach().numpy()
 
         # NNGP with the exact theoretical NNGP limit eigenvalues (1/d) 
-        nngp_gpr = compute_gpr_nngp_torch(X, X[:,0], X, lsT * 0 + 1.0/d,  1.0).cpu().detach().numpy()
+        nngp_gpr = compute_gpr_nngp_torch(X, Y, X, lsT * 0 + 1.0/d,  1.0).cpu().detach().numpy()
         
         # The true target function
-        tru_y =  X[:,0].cpu().numpy()
+        tru_y =  Y.cpu().numpy() 
 
 
         # Calculate the absolute discrepancy for each approximation against tru_y
-        discrepancy_network_output = np.abs(model(X).mean(axis=1).cpu().detach().numpy() - tru_y)
+        discrepancy_network_output = np.abs(model(X ).squeeze().mean(axis=1).cpu().detach().numpy() - true_gpr)
         discrepancy_projection_gpr = np.abs(projection_gpr - true_gpr)
         discrepancy_weight_cov_gpr = np.abs(weight_cov_gpr - true_gpr)
         discrepancy_nngp_gpr = np.abs(nngp_gpr - true_gpr)
-
+        discrepancy_tru_y = np.abs(tru_y - true_gpr)
         # Group the discrepancies for easier processing
         all_discrepancies = [
             discrepancy_network_output,
             discrepancy_projection_gpr,
             discrepancy_weight_cov_gpr,
-            discrepancy_nngp_gpr
+            discrepancy_nngp_gpr,
+            discrepancy_tru_y,
         ]
+
+        # Plot per-x GPR vs. model output for comparison, and include tru_y as well
+        # Original plot: Per-x GPR vs. Model Output vs. True y(x)
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        x_indices = np.arange(len(tru_y))
+        model_outputs = model(X).squeeze().mean(axis=1).cpu().detach().numpy()
+        ax2.plot(x_indices[:30], true_gpr[:30], label='GPR', marker='o')
+        ax2.plot(x_indices[:30], model_outputs[:30], label='Model Output', marker='x')
+        ax2.plot(x_indices[:30], tru_y[:30], label='True $y(x)$', marker='s')
+        ax2.set_xlabel('Data Index')
+        ax2.set_ylabel('Output Value')
+        ax2.set_title(f'Per-x GPR vs. Model Output vs. True $y(x)$ ({netname})')
+        ax2.legend()
+        ax2.grid(True)
+        plt.tight_layout()
+        # To display the plot, uncomment the line below:
+        # plt.show()
+        path = os.path.join(Menagerie_dir, fname, os.path.basename(os.path.dirname(nets[i])) + '_gpr_vs_model.png')
+
+        print(f'Saving plot to {path}')
+        plt.savefig(path, dpi=300, bbox_inches='tight')
+
+        # New plot: Absolute deviation between tru_y and gpr, and model and gpr
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        gpr_model = np.abs(true_gpr - model_outputs)
+        tru_y_model = np.abs(model_outputs - tru_y)
+        ax3.plot(x_indices, tru_y_model, label=f'|True $y(x)$ - Model Output|: mean:{tru_y_model.mean():.3f} std:{tru_y_model.std():.3f}', marker='s')
+        ax3.plot(x_indices, gpr_model, label=f'|Model Output - GPR|: mean:{gpr_model.mean():.3f} std:{gpr_model.std():.3f}', marker='x')
+        ax3.set_xlabel('Data Index')
+        ax3.set_ylabel('Absolute Deviation')
+        ax3.set_title(f'Absolute Deviation: True $y(x)$ vs. GPR and Model Output vs. GPR ({netname})')
+        ax3.legend()
+        ax3.grid(True)
+        plt.tight_layout()
+        absdev_path = os.path.join(Menagerie_dir, fname, os.path.basename(os.path.dirname(nets[i])) + '_absdev_gpr_vs_model.png')
+        print(f'Saving absolute deviation plot to {absdev_path}')
+        plt.savefig(absdev_path, dpi=300, bbox_inches='tight')
 
         # Calculate the mean and standard deviation for each set of discrepancies
         means = [np.mean(d) for d in all_discrepancies]
@@ -352,7 +408,8 @@ def run(fname):
             'Network Output',
             'Projection GPR',
             'Weight Cov. GPR',
-            'NNGP Theoretical'
+            'NNGP Theoretical',
+            'True Target'
         ]
 
         # Set up the plot
@@ -374,7 +431,9 @@ def run(fname):
 
         # To display the plot, uncomment the line below when you run your script:
         # plt.show()
-        plt.savefig(os.path.join(Menagerie_dir, fname, f'gpr_discrepancy_P_{P}_N_{N}_d_{d}_chi_{1}.png'), dpi=300, bbox_inches='tight')
+        path = os.path.join(Menagerie_dir, fname, os.path.dirname(os.path.dirname(nets[i])) + '.png')
+        print(f'Saving MAD discrepancy plot to {path}')
+        plt.savefig(path, dpi=300, bbox_inches='tight')
 
 
         dats.append({'width':N,
@@ -385,11 +444,14 @@ def run(fname):
                     'diff_std': kdiff.std()})
           # Group the discrepancies for easier processing
         current_net_discrepancies = {
-            'N': N, # Store N for sorting
+            'N': N, # Store N for sorting,
+            'P': P,
+            'netname': netname,
             'Network Output': {'mean': np.mean(discrepancy_network_output), 'std': np.std(discrepancy_network_output)},
             'Projection GPR': {'mean': np.mean(discrepancy_projection_gpr), 'std': np.std(discrepancy_projection_gpr)},
             'Weight Cov. GPR': {'mean': np.mean(discrepancy_weight_cov_gpr), 'std': np.std(discrepancy_weight_cov_gpr)},
             'NNGP Theoretical': {'mean': np.mean(discrepancy_nngp_gpr), 'std': np.std(discrepancy_nngp_gpr)},
+            'True Target': {'mean': np.mean(discrepancy_tru_y), 'std': np.std(discrepancy_tru_y)},
         }
         all_networks_discrepancy_data.append(current_net_discrepancies)
 
@@ -404,14 +466,16 @@ def run(fname):
         'Network Output',
         'Projection GPR',
         'Weight Cov. GPR',
-        'NNGP Theoretical'
+        'NNGP Theoretical',
+        'True Target'
     ]
 
     discrepancy_titles = {
         'Network Output': 'Network Output',
         'Projection GPR': 'Projection NNGP',
         'Weight Cov. GPR': 'Weight Covariance NNGP',
-        'NNGP Theoretical': 'Theoretical $\lambda$ NNGP'
+        'NNGP Theoretical': 'Theoretical $\lambda$ NNGP',
+        'True Target': 'True Target'
     }
 
     # Create a single figure and a single subplot
@@ -423,7 +487,7 @@ def run(fname):
     ax.set_ylim(bottom=0) # Ensure y-axis starts at 0
 
     # Number of network widths (N values)
-    num_Ns = len(Ns)
+    num_Ns = len(empirical_lH_list)
     # Number of discrepancy types
     num_disc_types = len(discrepancy_types)
 
@@ -435,7 +499,7 @@ def run(fname):
     x_group_positions = np.arange(num_disc_types)
 
     # Colors for each N to differentiate networks across discrepancy types
-    colors = plt.cm.viridis(np.linspace(0, 1, num_Ns))
+    colors = plt.cm.viridis(np.linspace(0, 1, len(empirical_lH_list)))
 
     # List to store handles and labels for the legend
     legend_handles = []
@@ -443,7 +507,7 @@ def run(fname):
 
     nmax = 0.0
     # Iterate through each network (N value) to plot its bars across discrepancy types
-    for j, N_val in enumerate(Ns):
+    for j, lh in enumerate(empirical_lH_list):
         # Calculate the offset for the current N within each group
         # This centers the group of bars around the x_group_positions
         offset = (j - (num_Ns - 1) / 2) * bar_width
@@ -453,7 +517,7 @@ def run(fname):
         current_N_stds = []
         for disc_type in discrepancy_types:
             # Find the data for the current N_val in the sorted list
-            net_data = next(item for item in all_networks_discrepancy_data_sorted if item["N"] == N_val)
+            net_data = next(item for item in all_networks_discrepancy_data_sorted if item["netname"] == lh['netname'])
             current_N_means.append(net_data[disc_type]['mean'])
             current_N_stds.append(net_data[disc_type]['std'])
             nmax = np.max([net_data[disc_type]['mean'], nmax]) # Update max for y-limit
@@ -461,20 +525,33 @@ def run(fname):
         # Plot bars for the current N across all discrepancy types
         bars = ax.bar(x_group_positions + offset, current_N_means,
                     yerr=current_N_stds, align='center', alpha=0.7, capsize=5,
-                    width=bar_width, color=colors[j], label=f'N={N_val}')
-        
-        # Add small circle markers for each bar
+                    width=bar_width, color=colors[j], label=f'N={lh["netname"]}')
+
+
+        # Add small circle markers for each bar and annotate with idx above
         for k, bar in enumerate(bars):
             x_val = bar.get_x() + bar.get_width() / 2
             y_val = current_N_means[k] # Use the mean value for the marker position
             
             # Plot a small circle marker at the top of the bar
             ax.plot(x_val, y_val, 'o', color='black', markersize=6, markeredgecolor='white', markeredgewidth=0.5, zorder=3)
-
+            
+            # Annotate the marker with its index above the circle
+            ax.annotate(
+                str(j),
+                (x_val, y_val),
+                textcoords="offset points",
+                xytext=(0, 8),  # 8 points above the marker
+                ha='center',
+                va='bottom',
+                fontsize=9,
+                color='black',
+                fontweight='bold'
+            )
 
         # Add to legend handles and labels
         legend_handles.append(bars[0])
-        legend_labels.append(f'N={N_val}')
+        legend_labels.append(f'{j}: N={lh["netname"]}'.replace('_', ' '))
 
 
     ax.set_ylim(top=nmax*2.0)
@@ -496,36 +573,42 @@ def run(fname):
     # Theoretical values from Mathematica output for N=[50, 200, 600, 2000], d=3
     theoretical_Ns = empirical_lH_dict.keys()
     
- #  theoretical_perp = {50: 0.33333333333333354, 200: 0.33333333333333326, 600: 0.3333333333333333, 1000: 0.3333333333333333}# {50: 0.3333333333333333, 200: 0.3333333333333333, 600: 0.3333333333333333, 1000: 0.3333333333333333}
- #   theoretical_targ = theoretical_perp # {50: 0.7314341803167995, 200: 0.7407831191433091, 600: 0.7428251116358064, 1000: 0.7432320110787786}#{50: 0.7314, 200: 0.7407, 600: 0.7428, 1000: 0.7435}
+    # theoretical_perp = {50: 0.33333333333333354, 200: 0.33333333333333326, 600: 0.3333333333333333, 1000: 0.3333333333333333}# {50: 0.3333333333333333, 200: 0.3333333333333333, 600: 0.3333333333333333, 1000: 0.3333333333333333}
+    # theoretical_targ = {50: 0.7314341803167995, 200: 0.7407831191433091, 600: 0.7428251116358064, 1000: 0.7432320110787786}#{50: 0.7314, 200: 0.7407, 600: 0.7428, 1000: 0.7435}
   # theoretical_targ = theoretical_perp
     theoretical_perp = {N: 1.0/d for N in theoretical_Ns}
-    theoretical_targ = {400: 0.363}
-    #theoretical_targ = {200:0.0234606}
-    colors = plt.cm.viridis(np.linspace(0, 1, len(theoretical_Ns)))
+    # theoretical_targ = {600: 0.363}
+    theoretical_targ =  theoretical_perp
+    colors = plt.cm.viridis(np.linspace(0, 1, len(empirical_lH_list)))
     plt.figure(figsize=(10,6))
-    for idx, N in enumerate(theoretical_Ns):
+    for idx, lh in enumerate(empirical_lH_list):
         color = colors[idx]
         # Plot empirical lH for this N (dots)
-        if N in empirical_lH_dict:
-            lH_vec = empirical_lH_dict[N]
-            print(f"Printing lH_vec: {lH_vec}")
-            x_vals = np.arange(1, len(lH_vec)+1)
-            # Plot empirical lH as scatter
-            plt.scatter(x_vals, lH_vec, color=color, label=f'Empirical lH (N={N})', marker='o')
-            # Plot empirical lH as line
-            plt.plot(x_vals, lH_vec, color=color, linestyle='-', alpha=0.7)
-        # Plot theoretical perp (X) as scatter and line
-        perp_x = range(2,d)
-        perp_y = theoretical_perp[N] * np.ones(len(perp_x))
-        plt.scatter(perp_x, perp_y, color=color, marker='x', s=100, label=f'Theory perp (N={N})')
+
+        lH_vec = lh['l']
+        # print(f"Printing lH_vec: {lH_vec}")
+        x_vals = np.arange(1, len(lH_vec)+1)
+        # Plot empirical lH as scatter
+        netname = os.path.basename(os.path.dirname(os.path.dirname(nets[idx])))
+        plt.scatter(x_vals, lH_vec, color=color, label=f'idx: {idx} lH: {netname}'.replace('_', ' '), marker='o')
+        # Plot empirical lH as line
+        plt.plot(x_vals, lH_vec, color=color, linestyle='-', alpha=0.7)
+    # Plot theoretical perp (X) as scatter and line
+        perp_x = range(2,lh['d'])
+        perp_y = theoretical_perp[lh['N']] * np.ones(len(perp_x))
+        plt.scatter(perp_x, perp_y, color=color, marker='x', s=100, label=f'Theory perp (N={lh["N"]})')
         plt.plot(perp_x, perp_y, color=color, linestyle='--', alpha=0.5)
         # Plot theoretical targ (X) as scatter and
         # 
         target_x = [1]
-        target_y = theoretical_targ[N]  
-        plt.scatter(target_x, target_y, color=color, marker='X', s=100, label=f'Theory targ (N={N})')
+        target_y = theoretical_targ[lh['N']]  
+        plt.scatter(target_x, target_y, color=color, marker='X', s=100, label=f'Theory targ (N={lh["N"]})')
         plt.plot(target_x, target_y, color=color, linestyle=':', alpha=0.5)
+        plt.annotate(f'l: {idx}', (x_vals[0], lH_vec[0]),  # Coordinates of the point to annotate
+             textcoords="offset points", # How to position the text
+             xytext=(0.1, 0.1),           # Distance from text to point (x,y)
+             ha='left',                 # Horizontal alignment
+             color='blue')
     plt.xlabel('Eigenvalue Index (1 to d)')
     plt.ylabel('lH Eigenvalue')
     plt.title('Empirical vs Theoretical lH Eigenvalues for Each N')

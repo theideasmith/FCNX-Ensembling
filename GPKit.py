@@ -94,7 +94,7 @@ def compute_gpr_nngp_torch(
     phis_test = phis_test.to(device)
     eigenvalues = eigenvalues.to(device)
 
-    K_xx = compute_nngp_kernel(phis_train, phis_train, eigenvalues) + noise_variance * torch.eye(num_train_points, device=device)
+    K_xx = compute_nngp_kernel(phis_train, phis_train, eigenvalues) + noise_variance * torch.eye(num_train_points, device=device) 
    
     K_xx_inv = torch.linalg.inv(K_xx)
     alpha = K_xx_inv @ y_train
@@ -140,7 +140,7 @@ def gpr_dot_product_explicit(train_x, train_y, test_x, sigma_0_sq):
         b = X2 / X2.shape[1]**0.5
         return a @ b.T
 
-    K_xx = dot_product_kernel_torch(train_x, train_x) + sigma_0_sq * torch.eye(train_x.shape[0], device=train_x.device)
+    K_xx = dot_product_kernel_torch(train_x, train_x) + sigma_0_sq * torch.eye(train_x.shape[0], device=train_x.device) 
 
     K_xstar_x = dot_product_kernel_torch(test_x, train_x)
 

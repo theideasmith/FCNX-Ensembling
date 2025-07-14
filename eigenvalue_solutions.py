@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.optimize import fsolve, root
 import argparse
+import os
+import json
 
 def eigenvalue_solver_alternative(params):
     P, k, d, sigma2, N0, N1, chi = params
@@ -37,57 +39,75 @@ def eigenvalue_solver_alternative(params):
 
 def eigenvalue_solver(params):
     P, k, d, sigma2, N0, N1, chi = params
-    initial_guess = np.ones(5) * 0.5 # Initial guess for the eigenvalues
-    """Solves the eigenvalue equations for the empirical kernels."""
-    # This line unpacks the values from the tuple
-    # l is a shorthand for lambda
-    # the next letter is the kernel type.
-    # the kernel type is suffixed by h if it is a helper kernel
-    # the final letter, T or p signifies whether the eigenvalue is for the target or the perpendicular kernel
+    initial_guess = np.ones(5) * 100 # Initial guess for the eigenvalues
     varnamesT = ['lKT', 'lKhT', 'lHT', 'lHhT', 'lJT']
     varnamesp = ['lKp', 'lKhp', 'lHp', 'lHhp', 'lJp']
-
     def eqsp(vals):
         lKp, lKhp, lHp, lHhp, lJp = vals
         equations = [
             k/(chi*P) * lHp / (lHp + k/P)                           - lKp,
-            # -chi/lHp -chi/lHp + chi**2 * lKp/lHp**2                          - lKhp,
             -lKhp,
             sigma2*((1/chi) * (lKhp/N1) + lJp**-1)**-1       - lHp,
             (-1.0/lJp + lHp/(lJp**2))               - lHhp,
             1/(lHhp / N0 + d/sigma2)                       - lJp
         ]
-
         return np.array(equations)
     def eqsT(vals):
         lKT, lKhT, lHT, lHhT, lJT= vals
-
         equations = [
             (k/(chi*P))*(lHT)/(lHT + k/P) + (lHT/(lHT+k/P))**2      - lKT,
-            # -chi/lHT + chi**2 * (lKT/(lHT**2) - (lHT + k/P)**-2)    - lKhT,
             -(chi**2 * (lHT + k/P)**-2)    - lKhT,
             ((1.0/(chi*N1))*lKhT + 1.0/lJT)**-1       - lHT,
             (-1.0/lJT + 1.0/sigma2 * lHT/(lJT**2))               - lHhT,
             1/(lHhT/N0 + d)                      - lJT, 
         ]
-
         return np.array(equations)
-    solutionT = root(eqsT, initial_guess,  method='lm').x
-    solutionp = root(eqsp, initial_guess, method='lm').x
-
+    solutionT = root(eqsT, initial_guess, method='hybr')
+    solutionp = root(eqsp, initial_guess, method='hybr')
+    residualsT = np.abs(eqsT(solutionT.x)) if solutionT.success else [np.nan]*5
+    residualsp = np.abs(eqsp(solutionp.x)) if solutionp.success else [np.nan]*5
     print("-----<<((Eigenvalue Solver Target))>>-----")
     print("Solution found:")
-    # Prints out each variable name and its corresponding value
-    for varname, value in zip(varnamesT, solutionT):
+    for varname, value in zip(varnamesT, solutionT.x):
         print(f"{varname} = {value:.10f}")
-
+    print("Residuals:")
+    for varname, res in zip(varnamesT, residualsT):
+        print(f"{varname} residual = {res:.2e}")
     print("-----<<((Eigenvalue Solver Perp))>>-----")
     print("Solution found:")
-    # Prints out each variable name and its corresponding value
-    for varname, value in zip(varnamesp, solutionp):
+    for varname, value in zip(varnamesp, solutionp.x):
         print(f"{varname} = {value:.10f}")
-
-    return solutionT[2], solutionp[2]
+    print("Residuals:")
+    for varname, res in zip(varnamesp, residualsp):
+        print(f"{varname} residual = {res:.2e}")
+    # Save solutions and residuals
+    save_dir = 'eigenvalue_solutions_scan'
+    os.makedirs(save_dir, exist_ok=True)
+    save_dict = {
+        'solutionT': solutionT.x.tolist(),
+        'solutionp': solutionp.x.tolist(),
+        'residualsT': [float(r) for r in residualsT],
+        'residualsp': [float(r) for r in residualsp],
+        'varnamesT': varnamesT,
+        'varnamesp': varnamesp,
+        'params': {
+            'P': P, 'kappa': k, 'd': d, 'sigma2': sigma2, 'N0': N0, 'N1': N1, 'chi': chi
+        }
+    }
+    save_path = os.path.join(save_dir, 'single_run_solutions_and_residuals.json')
+    # Append to JSON file if it exists, otherwise create new
+    if os.path.exists(save_path):
+        with open(save_path, 'r') as f:
+            all_results = json.load(f)
+        if not isinstance(all_results, list):
+            all_results = [all_results]
+        all_results.append(save_dict)
+    else:
+        all_results = [save_dict]
+    with open(save_path, 'w') as f:
+        json.dump(all_results, f, indent=2)
+    print(f"Solutions and residuals appended to {save_path}")
+    return solutionT.x[2], solutionp.x[2]
 
 
 if __name__ == '__main__':
@@ -111,23 +131,29 @@ if __name__ == '__main__':
     sigma2 = args.sigma2
 
     # Define the N values as requested
-    N_values = [50, 200, 600, 1000]
-    
+    N_values = [N0]
+    chi_values = [1.0, N0/10, N0/5, N0/2, N0, N0*2, N0*5, N0*10]
+    initial_guesses = [0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.20]
+    kappa_values = [1.0, 10.0, 100.0]
     eigperp_results = {}
     eigtarg_results = {}
+    solutions = {}
+    for kappa in kappa_values:
+        for N_val in N_values:
+            for initial_guess in initial_guesses:
+            # For the problem statement, chi = N
+                for chi in chi_values:
+                    print(f"\n--- Solving for N = {N_val} and initial guess = {initial_guess} and chi = {chi} and kappa = {kappa} ---")
 
-    for N_val in N_values:
-        print(f"\n--- Solving for N = {N_val} ---")
-        # For the problem statement, chi = N
-        chi = N_val 
-
-        solver_params = [P, kappa, d, sigma2, N_val, N_val, chi]
-        print(f"solver_params: {solver_params}")
-        eigperp_val, eigtarg_val = eigenvalue_solver(solver_params)
+                    solver_params = [P, kappa, d, sigma2, N_val, N_val, chi]
+                    print(f"solver_params: {solver_params}")
+                    initial_guess_matrix = np.ones(5) * initial_guess
+                    eigperp_val, eigtarg_val = eigenvalue_solver(solver_params)
+                    
+                    eigperp_results[N_val] = eigperp_val
+                    eigtarg_results[N_val] = eigtarg_val
+                    solutions[f'kappa={kappa}, N={N_val}, chi={chi}, initial_guess={initial_guess}'] = (round(eigperp_val, 4), round(eigtarg_val, 4))
         
-        eigperp_results[N_val] = eigperp_val
-        eigtarg_results[N_val] = eigtarg_val
-
         # Print detailed results for the current N value if needed
         # (This part can be uncommented if you need to see the intermediate print statements
         # from the original `eigenvalue_solver` function during the loop)
@@ -153,10 +179,11 @@ if __name__ == '__main__':
         #     print(f"lHhp = {lHhp:.10f}")
         #     print(f"lJp = {lJp:.10f}")
 
-    print("\n--- Final Results ---")
-    print("eigperp_results (N: eigperp):", eigperp_results)
-    print("eigtarg_results (N: eigtarg):", eigtarg_results)
-
+        print("\n--- Final Results ---")
+        print("eigperp_results (N: eigperp):", eigperp_results)
+        print("eigtarg_results (N: eigtarg):", eigtarg_results)
+    import pprint
+    pprint.pprint(solutions)
 
 # import numpy as np
 # from scipy.optimize import fsolve, root
