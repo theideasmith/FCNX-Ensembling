@@ -468,7 +468,7 @@ def target(X,eps):
 def get_data(d,n,seed,target_func):
     np.random.seed(seed)
     X = torch.tensor(np.random.normal(loc=0,scale=1.,size=(n,1,d))).to(dtype=DTYPE)
-    y = target_func(X) * 0.0 # y ~ O(1)
+    y = target_func(X) # y ~ O(1)
 
     X_scaled = X  # X ~ O(1/sqrt(d))
     return X_scaled, y
