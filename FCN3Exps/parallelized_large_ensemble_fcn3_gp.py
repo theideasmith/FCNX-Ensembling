@@ -258,7 +258,7 @@ if __name__ == '__main__':
                     for k, v in checkpoint.items():
                         new_key = f"_orig_mod.{k}"
                         new_state_dict[new_key] = v
-                    breakpoint()
+
                     model.load_state_dict(new_state_dict)
                 else:
                     print("State_dict keys already aligned. Loading directly...")
