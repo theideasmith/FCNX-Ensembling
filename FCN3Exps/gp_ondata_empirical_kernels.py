@@ -174,7 +174,7 @@ def find_net0_files_os_walk(base_dir):
     # Now, walk through each of these specific subdirectories
     for root, _, files in os.walk(fname):
         for filename in files:
-            if filename.startswith("netnum_"):
+            if filename.startswith("netnum_") or filename.startswith("model"):
                 full_path = os.path.join(root, filename)
                 found_files.append(full_path)
 
@@ -184,7 +184,7 @@ def find_net0_files_os_walk(base_dir):
 def get_data(d,n,seed):
     np.random.seed(seed)
     X = torch.tensor(np.random.normal(loc=0,scale=1.0,size=(n,1,d))).to(dtype=torch.float32)
-    return X 
+    return X.to(dtype=torch.float64)
 
 train_seed = 563
 
@@ -206,10 +206,62 @@ def run(fname):
     empirical_lH_list = []
     N_list = []
     d = None
-    for i in range(len(nets)): 
-        print(f'Loading net {i} @ {nets[i]}')
+
+    for i, ntname in enumerate(nets): 
+        print(f'Loading net {i} @ {ntname}')
         # print(nets[i]) /
-        model = torch.load(nets[i]).to(DEVICE)
+        try:
+            model = torch.load(ntname).to(DEVICE)
+        except AttributeError as e:
+            print(f"Direct torch.load failed for {ntname}: {e}")
+            # Try loading as a state_dict
+            try:
+                checkpoint = torch.load(ntname, map_location=DEVICE)
+                # You must define the model class and instantiate it with correct args before loading state_dict
+                # Here, we try to infer d, N, q from the checkpoint if possible, else you may need to set them manually
+                # For this context, we try to infer from file name or elsewhere
+                # Example: FCN3NetworkEnsembleLinear(d, N, N, ens=q)
+                # We'll try to extract d, N, q from the checkpoint or filename
+                # Fallback: d, N, q = 20, 1500, 5 (example defaults)
+                d, N, q = None, None, None
+                # Try to infer from checkpoint
+                for k, v in checkpoint.items():
+                    if k.endswith("W0"):
+                        # v shape: (q, N, d)
+                        q, N, d = v.shape
+                        break
+                if d is None or N is None or q is None:
+                    # fallback: try to parse from filename or set manually
+                    print("Could not infer d, N, q from checkpoint; using defaults d=20, N=1500, q=5")
+                    d, N, q = 20, 1500, 5
+                model = FCN3NetworkEnsembleLinear(d, N, N, ensembles=q)
+                # Check if keys need adaptation (PyTorch 2.0+ compiled models may have _orig_mod. prefix)
+                needs_adaptation = False
+                model_keys = list(model.state_dict().keys())
+                checkpoint_keys = list(checkpoint.keys())
+                if len(model_keys) != len(checkpoint_keys):
+                    needs_adaptation = True
+                else:
+                    for mk, ck in zip(model_keys, checkpoint_keys):
+                        if mk != ck:
+                            needs_adaptation = True
+                            break
+                if needs_adaptation:
+                    print("Adapting state_dict keys for loaded model (assigning by order)...")
+                    new_state_dict = {}
+                    for i, mk in enumerate(model_keys):
+                        if i < len(checkpoint_keys):
+                            new_state_dict[mk] = checkpoint[checkpoint_keys[i]]
+                        else:
+
+                            print(f"Warning: checkpoint missing key for model param {mk}")
+                    model.load_state_dict(new_state_dict)
+                else:
+                    model.load_state_dict(checkpoint)
+                model = model.to(DEVICE)
+            except Exception as e2:
+                print(f"Failed to load model as state_dict for {ntname}: {e2}")
+                raise e2
 
         # W: d, N, ensembles
         W = model.W0.permute(*torch.arange(model.W0.ndim - 1, -1, -1)).to(DEVICE)
@@ -222,7 +274,7 @@ def run(fname):
         torch.set_printoptions(precision=6, sci_mode=False)
         P = 20
         X = get_data(d, P, train_seed).to(DEVICE) # this is the train seed used in net.py
-        X = X.squeeze()
+        X = X.squeeze().to(dtype = torch.float64)
 
  
 
@@ -259,7 +311,7 @@ def run(fname):
         # print("Empirical (ensemble averaged; q=5)")
         # print("K_Emp[:5,:5]")
 
-
+        X = X.to(dtype = model.A.dtype)
         f = model.h1_activation(X)
 
         # Tensor product over the output dimensions
@@ -285,7 +337,7 @@ def run(fname):
         # finite matrix "operator" projection 
 
 
-        X_inf = get_data(d, P_inf, test_seed).squeeze().to(DEVICE) 
+        X_inf = get_data(d, P_inf, test_seed).squeeze().to(DEVICE, dtype=model.A.dtype) 
 
         f_inf = model.h1_activation(X_inf)# P * N * ensembles
         f_inf_A = model(X_inf)
@@ -303,7 +355,9 @@ def run(fname):
         print(f"Projection Eigenvalues: {Ls/norm}")
         print(f"Weight Covariance Eigenvalues: {lH}")
         lH_proj = Ls/norm
-        netname = os.path.basename(os.path.dirname(os.path.dirname(nets[i])))
+
+        netname = os.path.basename(os.path.dirname(os.path.dirname(ntname)))
+
         empirical_lH_dict[N] = {'l': lH.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname }
         empirical_lH_list.append({'l': lH.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname})
         # print(f"Theoretical Eigenvalues: {lsT * 0 + 1.0/d}")
@@ -378,7 +432,7 @@ def run(fname):
         plt.tight_layout()
         # To display the plot, uncomment the line below:
         # plt.show()
-        path = os.path.join(Menagerie_dir, fname, os.path.basename(os.path.dirname(nets[i])) + '_gpr_vs_model.png')
+        path = os.path.join(Menagerie_dir, fname, os.path.basename(os.path.dirname(ntname)) + '_gpr_vs_model.png')
 
         print(f'Saving plot to {path}')
         plt.savefig(path, dpi=300, bbox_inches='tight')
@@ -395,7 +449,7 @@ def run(fname):
         ax3.legend()
         ax3.grid(True)
         plt.tight_layout()
-        absdev_path = os.path.join(Menagerie_dir, fname, os.path.basename(os.path.dirname(nets[i])) + '_absdev_gpr_vs_model.png')
+        absdev_path = os.path.join(Menagerie_dir, fname, os.path.basename(os.path.dirname(ntname)) + '_absdev_gpr_vs_model.png')
         print(f'Saving absolute deviation plot to {absdev_path}')
         plt.savefig(absdev_path, dpi=300, bbox_inches='tight')
 
@@ -431,7 +485,7 @@ def run(fname):
 
         # To display the plot, uncomment the line below when you run your script:
         # plt.show()
-        path = os.path.join(Menagerie_dir, fname, os.path.dirname(os.path.dirname(nets[i])) + '.png')
+        path = os.path.join(Menagerie_dir, fname, os.path.dirname(os.path.dirname(ntname)) + '.png')
         print(f'Saving MAD discrepancy plot to {path}')
         plt.savefig(path, dpi=300, bbox_inches='tight')
 
