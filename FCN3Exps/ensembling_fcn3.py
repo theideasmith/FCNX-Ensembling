@@ -85,7 +85,7 @@ def _init_gsheets():
         print(f"Google Sheets setup error: {e}")
         _gs_worksheet = None
 
-def log_to_gsheets(epoch, gpr_alignment, eigenvalues, folder_name, input_size, hidden_size, ensemble_size, chi, learning_rate, status='RUNNING'):
+def log_to_gsheets(epoch, gpr_alignment, eigenvalues, folder_name, input_size, hidden_size, ensemble_size, chi, learning_rate, status='RUNNING', current_loss=None):
     folder_name = os.path.basename(folder_name)
     if not GOOGLE_SHEETS_ENABLED:
         return
@@ -93,47 +93,36 @@ def log_to_gsheets(epoch, gpr_alignment, eigenvalues, folder_name, input_size, h
     if _gs_worksheet is None:
         _init_gsheets()
     from datetime import datetime
-    now = datetime.now().isoformat()
     header = [
         "FolderName", "Timestamp", "Epoch", "GPRAlignment", "Eigenvalues",
-        "InputSize", "HiddenSize", "EnsembleSize", "Chi", "LearningRate", "Status"
+        "InputSize", "HiddenSize", "EnsembleSize", "Chi", "LearningRate", "CurrentLoss", "Status"
     ]
     row = [
-        folder_name, now, epoch, gpr_alignment, str(eigenvalues),
-        input_size, hidden_size, ensemble_size, chi, learning_rate, status
+        folder_name, datetime.now().isoformat(), epoch, gpr_alignment, str(eigenvalues),
+        input_size, hidden_size, ensemble_size, chi, learning_rate, current_loss, status
     ]
     try:
         if _gs_worksheet is not None:
-            # Update header in place if missing columns or incorrect
             first_row = _gs_worksheet.row_values(1)
             if first_row != header:
-                # Only update the header row, do not delete or insert rows
-                # Pad or trim as needed
                 update_header = header[:]
                 if len(first_row) < len(header):
-                    # Pad with empty strings if old header is short
                     first_row += [''] * (len(header) - len(first_row))
                 elif len(first_row) > len(header):
-                    # Trim if old header is longer
                     first_row = first_row[:len(header)]
-                # Only update if different
                 if first_row != header:
-                    _gs_worksheet.update([header], 'A1:K1')
-            # Find row with matching folder_name in the first column
+                    _gs_worksheet.update([header], 'A1:L1')
             folder_names = _gs_worksheet.col_values(1)
             found = False
-            for idx, val in enumerate(folder_names[1:], start=2):  # skip header
+            for idx, val in enumerate(folder_names[1:], start=2):
                 if val == str(folder_name):
-                    # Get the current row values
                     current_row = _gs_worksheet.row_values(idx)
-                    # Pad or trim current_row to match header length
                     if len(current_row) < len(header):
                         current_row += [None] * (len(header) - len(current_row))
                     elif len(current_row) > len(header):
                         current_row = current_row[:len(header)]
-                    # Overwrite with new values as needed
                     updated_row = [new_val if new_val != str(None) else old_val for new_val, old_val in zip(row, current_row)]
-                    _gs_worksheet.update([updated_row], f'A{idx}:K{idx}')
+                    _gs_worksheet.update([updated_row], f'A{idx}:L{idx}')
                     found = True
                     _set_status_cell_color(_gs_worksheet, idx, len(header), status)
                     break
@@ -196,34 +185,6 @@ def delete_gsheets_row_by_foldername(folder_name):
     except Exception as e:
         print(f'Google Sheets row delete error: {e}')
 
-# 2. Generate Data
-input_size = 50
-hidden_size = 200
-output_size = 1
-num_samples = 400
-epochs = 10_000_000  # You might increase this with a decaying LR
-chi = hidden_size
-k = 1.0
-t0 = 2 * k
-t = t0 / chi  # Temperature for Langevin (used in noise)
-
-# --- Learning Rate Schedule Parameters ---
-T = epochs * 0.7
-lrA = 1e-3 / num_samples
-lrB = (1.0 / 3) * lrA / num_samples 
-beta = mt.log(lrA / lrB) / T
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
-
-# Redefine log intervals after parsing arguments
-log_interval = 5000
-detailed_log_interval = log_interval * 4
-eigenvalue_log_interval = log_interval * 10
-
-# Set seeds as constants
-DATA_SEED = 613
-MODEL_SEED = 26
-LANGEVIN_SEED = 480
-
 # Set the default dtype to float64
 torch.set_default_dtype(torch.float64)
 
@@ -232,16 +193,29 @@ def custom_mse_loss(outputs, targets):
     diff = outputs - targets
     return 0.5 * torch.sum(diff * diff)
 
+def atomic_save_model(model, save_path):
+    import torch, os
+    tmp_path = save_path + ".tmp"
+    torch.save(model.state_dict(), tmp_path)
+    os.replace(tmp_path, save_path)
+
+def atomic_save_json(data, save_path):
+    import json, os
+    tmp_path = save_path + ".tmp"
+    with open(tmp_path, 'w') as f:
+        json.dump(data, f)
+    os.replace(tmp_path, save_path)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train or resume FCN3 ensemble model.')
     parser.add_argument('--modeldesc', type=str, default=None, help='Model description directory to resume from')
     parser.add_argument('--debug', action='store_true', help='Run in debug mode (no logging or saving)')
     parser.add_argument('--epochs', type=int, default=2_000_000, help='Number of training epochs (default: 2,000,000)')
-    parser.add_argument('--chi', type=int, default=200, help='Value for chi (default: 200)')
-    parser.add_argument('--P', type=int, default=400, help='Number of samples P (default: 400)')
-    parser.add_argument('--N', type=int, default=200, help='Hidden size N (default: 200)')
-    parser.add_argument('--d', type=int, default=50, help='Input size d (default: 50)')
-    parser.add_argument('--lrA', type=float, default=1e-3/400, help='Learning rate lrA (default: 1e-3/400)')
+    parser.add_argument('--chi', type=int, default=1, help='Value for chi (default: 200)')
+    parser.add_argument('--P', type=int, default=20, help='Number of samples P (default: 400)')
+    parser.add_argument('--N', type=int, default=400, help='Hidden size N (default: 200)')
+    parser.add_argument('--d', type=int, default=20, help='Input size d (default: 50)')
+    parser.add_argument('--lrA', type=float, default=1e-9, help='Learning rate lrA (default: 1e-3/400)')
     args = parser.parse_args()
 
     debug = args.debug
@@ -352,16 +326,21 @@ if __name__ == '__main__':
     import signal
     def handle_tb_sigint(sig, frame):
         print("KeyboardInterrupt received: saving model before shutdown...")
+        # Close tqdm progress bar if available
+        try:
+            if 'training_pbar' in globals() and training_pbar is not None:
+                training_pbar.close()
+        except Exception as e:
+            print(f"Could not close tqdm progress bar: {e}")
         # Save model and state
         try:
             if 'model' in globals() and 'save_dir' in globals() and not debug:
                 model_filename = f"model.pth"
-                torch.save(model.state_dict(), os.path.join(save_dir, model_filename))
+                atomic_save_model(model, os.path.join(save_dir, model_filename))
                 with open(os.path.join(save_dir, f"losses.txt"), "a") as f:
                     if 'loss' in locals():
                         f.write(f"{{'interrupt': True, 'epoch': epoch, 'loss': {loss.item()}}}\n")
-                with open(state_path, 'w') as f:
-                    json.dump({'epoch': epoch}, f)
+                atomic_save_json({'epoch': epoch}, state_path)
                 print(f"Model and state saved at interrupt (epoch {epoch})")
         except Exception as e:
             print(f"Error saving model/state on interrupt: {e}")
@@ -484,7 +463,11 @@ if __name__ == '__main__':
     print(f"Beginning training at epoch {epoch}")
     initialized = False
     # Main training loop
+
     with tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch) as pbar:
+        # Make pbar accessible to signal handler
+        global training_pbar
+        training_pbar = pbar
         while epoch < epochs:
             # Update learning rate
             if epoch < T:
@@ -511,6 +494,7 @@ if __name__ == '__main__':
                     continue
 
                 losses.append(loss.item())
+                avg_loss = loss.item() / (ens * num_samples)
 
                 # Backward pass
                 loss.backward()
@@ -524,6 +508,7 @@ if __name__ == '__main__':
                             param.add_(param.data, alpha=-(weight_decay[i]).item() * effective_learning_rate_for_update)
                             if param.grad is not None:
                                 param.add_(param.grad, alpha=-effective_learning_rate_for_update)
+
             except Exception as e:
                 print(f"Error in training loop at epoch {epoch}: {e}")
                 exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -565,6 +550,15 @@ if __name__ == '__main__':
                         W1 = model.W1.permute(*range(model.W1.ndim - 1, -1, -1))
                         covW0W1 = contract('kje,ije,nme,kme->in', W1, W0, W0, W1, backend='torch') / (hidden_size * ens)
                         lH = torch.diagonal(covW0W1).squeeze()
+                        # Print initial eigenvalues summary
+                        if lH.shape[0] > 1:
+                            lH0 = lH[0].item() if hasattr(lH[0], 'item') else float(lH[0])
+                            lH_rest = lH[1:]
+                            lH_rest_mean = lH_rest.mean().item() if hasattr(lH_rest.mean(), 'item') else float(lH_rest.mean())
+                            lH_rest_std = lH_rest.std().item() if hasattr(lH_rest.std(), 'item') else float(lH_rest.std())
+                            print(f"Initial eigenvalues: lH[0]={lH0:.4g}, mean(lH[1:])={lH_rest_mean:.4g}, std(lH[1:])={lH_rest_std:.4g}")
+                        else:
+                            print(f"Initial eigenvalue: lH[0]={lH[0].item() if hasattr(lH[0], 'item') else float(lH[0])}")
                         scalarsH = {}
                         for i in range(min(lH.shape[0], 10)):
                             scalarsH[str(i)] = lH[i].item() if hasattr(lH[i], 'item') else float(lH[i])
@@ -572,25 +566,29 @@ if __name__ == '__main__':
                     except Exception:
                         pass
 
-                log_to_gsheets(
-                    epoch=epoch,
-                    gpr_alignment=cos_sim.item() if cos_sim is not None else None,
-                    eigenvalues=eigenvalues,
-                    folder_name=modeldesc,
-                    input_size=input_size,
-                    hidden_size=hidden_size,
-                    ensemble_size=ens,
-                    chi=chi,
-                    learning_rate=current_base_learning_rate,
-                    status='RUNNING'
-                )
+                # Wrap first-epoch log_to_gsheets call in try/except
+                try:
+                    log_to_gsheets(
+                        epoch=epoch,
+                        gpr_alignment=cos_sim.item() if cos_sim is not None else None,
+                        eigenvalues=eigenvalues,
+                        folder_name=modeldesc,
+                        input_size=input_size,
+                        hidden_size=hidden_size,
+                        ensemble_size=ens,
+                        chi=chi,
+                        learning_rate=current_base_learning_rate,
+                        status='RUNNING',
+                        current_loss=avg_loss
+                    )
+                except Exception as gsheets_exc:
+                    print(f"[Warning] Google Sheets logging failed at first epoch: {gsheets_exc}")
 
             # Optimized logging
             if (epoch + 1) % log_interval == 0 or epoch == 0:
                 # breakpoint()
                 with open(state_path, 'w') as f:
                             json.dump({'epoch': epoch}, f)
-                avg_loss = loss.item()
                 
                 if writer_cm is not None:
 
@@ -599,7 +597,7 @@ if __name__ == '__main__':
                     writer_cm.add_scalar('Learning Rate', current_base_learning_rate, epoch)
                     
                     # More expensive computations less frequently
-                    if (epoch + 1) % detailed_log_interval == 0:
+                    if (epoch + 1) % detailed_log_interval == 0 or epoch ==0:
                         # --- Cosine Similarity with GPR ---
                         with torch.no_grad():
                             # Compute GPR prediction (dot product kernel)
@@ -616,7 +614,7 @@ if __name__ == '__main__':
                         
                         # Eigenvalue computation even less frequently
                         eigenvalues = None
-                        if (epoch + 1) % eigenvalue_log_interval == 0:
+                        if (epoch + 1) % eigenvalue_log_interval == 0 or epoch == 0:
                             with torch.no_grad():
                                 W0 = model.W0.permute(*range(model.W0.ndim - 1, -1, -1))
                                 W1 = model.W1.permute(*range(model.W1.ndim - 1, -1, -1))
@@ -633,18 +631,23 @@ if __name__ == '__main__':
                         else:
                             eigenvalues = None
                         # --- Google Sheets logging ---
-                        log_to_gsheets(
-                            epoch=epoch,
-                            gpr_alignment=cos_sim.item() if 'cos_sim' in locals() else None,
-                            eigenvalues=eigenvalues,
-                            folder_name=modeldesc,
-                            input_size=input_size,
-                            hidden_size=hidden_size,
-                            ensemble_size=ens,
-                            chi=chi,
-                            learning_rate=current_base_learning_rate,
-                            status='RUNNING'
-                        )
+                        # Wrap detailed_log_interval log_to_gsheets call in try/except
+                        try:
+                            log_to_gsheets(
+                                epoch=epoch,
+                                gpr_alignment=cos_sim.item() if 'cos_sim' in locals() else None,
+                                eigenvalues=eigenvalues,
+                                folder_name=modeldesc,
+                                input_size=input_size,
+                                hidden_size=hidden_size,
+                                ensemble_size=ens,
+                                chi=chi,
+                                learning_rate=current_base_learning_rate,
+                                status='RUNNING',
+                                current_loss=avg_loss
+                            )
+                        except Exception as gsheets_exc:
+                            print(f"[Warning] Google Sheets logging failed at detailed log interval: {gsheets_exc}")
                     # Save model and state less frequently
                     if (epoch + 1) % detailed_log_interval == 0:
                         model_filename = f"model.pth"
@@ -688,7 +691,8 @@ if __name__ == '__main__':
                 ensemble_size=ens,
                 chi=chi,
                 learning_rate=current_base_learning_rate,
-                status='COMPLETE'
+                status='COMPLETE',
+                current_loss = avg_loss
             )
         except Exception as e:
             print(f"Error updating Google Sheets status at end of training: {e}")

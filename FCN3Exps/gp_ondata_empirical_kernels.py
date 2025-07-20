@@ -358,8 +358,8 @@ def run(fname):
 
         netname = os.path.basename(os.path.dirname(os.path.dirname(ntname)))
 
-        empirical_lH_dict[N] = {'l': lH.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname }
-        empirical_lH_list.append({'l': lH.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname})
+        empirical_lH_dict[N] = {'l': lsT.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname }
+        empirical_lH_list.append({'l': lsT.cpu().detach().numpy(), 'd': d, 'N': N, 'P': P, 'netname':netname})
         # print(f"Theoretical Eigenvalues: {lsT * 0 + 1.0/d}")
         # breakpoint()
 
