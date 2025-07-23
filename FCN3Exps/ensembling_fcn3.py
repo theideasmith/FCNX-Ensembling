@@ -216,6 +216,8 @@ if __name__ == '__main__':
     parser.add_argument('--N', type=int, default=400, help='Hidden size N (default: 200)')
     parser.add_argument('--d', type=int, default=20, help='Input size d (default: 50)')
     parser.add_argument('--lrA', type=float, default=1e-9, help='Learning rate lrA (default: 1e-3/400)')
+    parser.add_argument('--ens', type=int, default=100, help='Number of ensembles to train')
+    parser.add_argument('--kappa', type=float, default = 1.0, help='Data noise parameter kappa')
     args = parser.parse_args()
 
     debug = args.debug
@@ -223,12 +225,13 @@ if __name__ == '__main__':
     modeldesc = ''
     save_dir = getattr(args, 'modeldesc', '')
     chi = args.chi
+    ensembles = getattr(args, 'ens', 100)
     num_samples = args.P
     hidden_size = args.N
     input_size = args.d
     lrA = args.lrA / num_samples
     output_size = 1
-    k = 1.0
+    k = getattr(args, 'kappa', 1.0)
     t0 = 2 * k
     t = t0 / chi  # Temperature for Langevin (used in noise)
     # --- Learning Rate Schedule Parameters ---
@@ -246,7 +249,8 @@ if __name__ == '__main__':
     DATA_SEED = 613
     MODEL_SEED = 26
     LANGEVIN_SEED = 480
-
+    global current_base_learning_rate
+    current_base_learning_rate = lrA
     # Set the default dtype to float64
     torch.set_default_dtype(torch.float64)
 
@@ -293,35 +297,35 @@ if __name__ == '__main__':
             exit(0)
         signal.signal(signal.SIGINT, handle_sigint)
     
-    # Launch TensorBoard on an unused port (always, regardless of debug)
-    tb = None  # Store tb globally for shutdown
-    try:
-        from tensorboard import program
-        # Find an unused port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('', 0))
-            port = s.getsockname()[1]
-        logdir = runs_dir if not debug else debug_tmp_dir
-        tb = program.TensorBoard()
-        tb.configure(argv=[None, '--logdir', logdir, '--port', str(6006)])
-        url = tb.launch()
-        print(f"TensorBoard started at {url}")
-        print(f"Open {url} in your browser")  # For Cursor/IDE port detection
-    except Exception as e:
-        print(f"Could not launch TensorBoard: {e}")
+    # # Launch TensorBoard on an unused port (always, regardless of debug)
+    # tb = None  # Store tb globally for shutdown
+    # try:
+    #     from tensorboard import program
+    #     # Find an unused port
+    #     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    #         s.bind(('', 0))
+    #         port = s.getsockname()[1]
+    #     logdir = runs_dir if not debug else debug_tmp_dir
+    #     tb = program.TensorBoard()
+    #     tb.configure(argv=[None, '--logdir', logdir, '--port', str(6006)])
+    #     url = tb.launch()
+    #     print(f"TensorBoard started at {url}")
+    #     print(f"Open {url} in your browser")  # For Cursor/IDE port detection
+    # except Exception as e:
+    #     print(f"Could not launch TensorBoard: {e}")
 
-    def shutdown_tensorboard():
-        global tb
-        if tb is not None and hasattr(tb, 'server') and tb.server is not None:
-            try:
-                print("Shutting down TensorBoard server...")
-                tb.server.shutdown()
-                print("TensorBoard server shut down.")
-            except Exception as e:
-                print(f"Error shutting down TensorBoard: {e}")
+    # def shutdown_tensorboard():
+    #     global tb
+    #     if tb is not None and hasattr(tb, 'server') and tb.server is not None:
+    #         try:
+    #             print("Shutting down TensorBoard server...")
+    #             tb.server.shutdown()
+    #             print("TensorBoard server shut down.")
+    #         except Exception as e:
+    #             print(f"Error shutting down TensorBoard: {e}")
 
-    import atexit
-    atexit.register(shutdown_tensorboard)
+    # import atexit
+    # atexit.register(shutdown_tensorboard)
     # Also handle KeyboardInterrupt
     import signal
     def handle_tb_sigint(sig, frame):
@@ -360,7 +364,7 @@ if __name__ == '__main__':
             )
         except Exception as e:
             print(f"Error updating Google Sheets status on interrupt: {e}")
-        shutdown_tensorboard()
+        # shutdown_tensorboard()
         # If in debug mode, delete the row from Google Sheets
         if debug:
             try:
@@ -386,7 +390,8 @@ if __name__ == '__main__':
 
     # Seed for model
     torch.manual_seed(MODEL_SEED)
-    ens = 100
+    ens = getattr(args, 'ens', 100)
+
     model = FCN3NetworkEnsembleLinear(input_size, hidden_size, hidden_size,
                                      ens=ens,
                                      weight_initialization_variance=(1/input_size, 1.0/hidden_size, 1.0/(hidden_size * chi)),
@@ -465,6 +470,7 @@ if __name__ == '__main__':
     # Main training loop
 
     with tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch) as pbar:
+
         # Make pbar accessible to signal handler
         global training_pbar
         training_pbar = pbar
@@ -671,7 +677,7 @@ if __name__ == '__main__':
     elif debug and writer_cm is not None:
         writer_cm.close()
     # Shutdown TensorBoard server (if running)
-    shutdown_tensorboard()
+    # shutdown_tensorboard()
     # If in debug mode, delete the row from Google Sheets
     if debug:
         try:
