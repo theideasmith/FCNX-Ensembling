@@ -1,4 +1,4 @@
-from opt_einsum import contract
+from opt_einsum import contract, contract_path
 import torch.nn as nn
 import torch
 from activations import *
@@ -24,7 +24,7 @@ class FCN3NetworkEnsembleLinear(nn.Module):
                                            std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)).to(hp.DEVICE),
                                            requires_grad=True) # requires_grad moved here
 
-
+        
     def h1_activation(self, X):
         return contract(
             'ijk,ikl,ul->uij',
@@ -60,6 +60,186 @@ class FCN3NetworkEnsembleLinear(nn.Module):
             A, W1, W0, X,
           backend='torch'
         )
+
+
+
+class FCN3NetworkEnsembleErf(nn.Module):
+
+    def __init__(self, d, n1, n2,P,ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device=hp.DEVICE):
+        super().__init__()
+
+        self.arch = [d, n1, n2]
+        self.d = d
+        self.n1 = n1
+        self.n2 = n2
+        self.ens = ens
+        self.num_samples = P
+        self.device = device
+        self.W0 = nn.Parameter(torch.normal(mean=0.0,  std=torch.full((ens, n1, d), weight_initialization_variance[0]**0.5)).to(device),
+                                            requires_grad=True) # requires_grad moved here
+
+        # self._h1_buffer = nn.Parameter(torch.zeros((P, ensembles, n1)).to(device), requires_grad=False)
+        # self._h2_buffer = nn.Parameter(torch.zeros((P, ensembles, n2)).to(device), requires_grad=False)
+        # self._f_buffer = nn.Parameter(torch.zeros((P,ensembles)).to(device), requires_grad=False)
+
+        self.W1 = nn.Parameter(torch.normal(mean=0.0, 
+                                            std=torch.full((ens, n2, n1), weight_initialization_variance[1]**0.5)).to(device),
+                                            requires_grad=True) # requires_grad moved here
+        self.A = nn.Parameter(torch.normal(mean=0.0, 
+                                           std=torch.full((ens, n2), weight_initialization_variance[2]**0.5)).to(device),
+                                           requires_grad=True) # requires_grad moved here
+        if self.num_samples is not None:
+            self._precompute_einsum_paths_h1(self.num_samples)
+            self._precompute_einsum_paths_h0(self.num_samples)
+            self._precompute_einsum_paths_f(self.num_samples)
+
+    def _precompute_einsum_paths_f(self, num_samples):
+        eq = 'qk,uqk->uq'
+        shapes = [
+            (self.ens, self.n2),
+            (num_samples, self.ens, self.n2)
+        ]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]     
+        path, _ = contract_path(eq, *dummy_tensors)
+        self.forward_path_f = path
+
+    def _precompute_einsum_paths_h1(self, num_samples):
+        eq = 'qjk,uqj->uqk'
+        shapes = [
+            (self.ens, self.n1, self.n2),
+            (num_samples, self.ens, self.n1)
+        ]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        path, _ = contract_path(eq, *dummy_tensors)
+        self.forward_path_h1 = path
+
+    def _precompute_einsum_paths_h0(self, num_samples):
+        eq = 'qkl,ul->uqk'
+        shapes = [
+            (self.ens, self.n1, self.d),
+            (num_samples, self.d)
+        ]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        path, _ = contract_path(eq, *dummy_tensors)
+        self.forward_path_h0 = path
+
+
+    def h1_GP_preactivation(self, X):
+        h0 = contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+          backend='torch'
+        )
+        h1_pre = contract(
+            'qjk,uqj->uqk',self.W1,h0,
+            optimize=self.forward_path_h1 if self.forward_path_h1 is not None else None,
+            backend='torch'
+        )
+        return h1_pre
+
+    def H_GP_eig(self, X,Y):
+
+        h1 = self.h1_GP_preactivation(X)
+
+        h1_kernel = contract('ul, uqk,  vqk, vl->l', Y, h1, h1, Y, backend='torch') / contract('ul, ul->l', Y, Y) 
+
+        ret =  h1_kernel / (self.ens * self.n1 * X.shape[0])
+
+        return ret
+
+    def h1_preactivation(self, X):
+        h0 = torch.erf(contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+          backend='torch'
+        ))
+        h1_pre = contract(
+            'qjk,uqj->uqk',self.W1,h0,
+            optimize=self.forward_path_h1 if self.forward_path_h1 is not None else None,
+            backend='torch'
+        )
+        return h1_pre
+
+    def h1_activation(self, X):
+       
+      
+        h0 = torch.erf(contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+          backend='torch'
+        ))
+
+        h1 = torch.erf(contract(
+            'qjk,uqj->uqk',self.W1,h0,
+            optimize=self.forward_path_h1 if self.forward_path_h1 is not None else None,
+            backend='torch'
+        ))
+        return h1
+
+    def J_eig(self, X, Y):
+        J = contract('qkl,ul->uqk',self.W0, X,optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,backend='torch')
+        J_k = contract('ul, uqk,  vqk, vl->l', Y, J, J, Y, backend='torch') / contract('ul, ul->l', Y, Y)
+        lJ =  J_k / (self.ens * self.n1 * X.shape[0]);
+        return lJ
+    def H_eig(self,X, Y, std=False):
+
+
+        if std is False:
+            h1 = self.h1_preactivation(X)
+
+            h1_kernel = contract('ul, uqk,  vqk, vl->l', Y, h1, h1, Y, backend='torch') / contract('ul, ul->l', Y, Y) 
+
+
+            ret =  h1_kernel / (self.ens * self.n1 * X.shape[0])
+            return ret
+        else:
+            h1 = self.h1_preactivation(X)
+
+            h1_kernel = contract('ul, uqk,  vqk, vl->kql', Y, h1, h1, Y, backend='torch') / contract('ul, ul->l', Y, Y) / X.shape[0]
+            print(h1_kernel.shape)
+
+            ls = torch.mean(h1_kernel, dim=(0,1))
+            std = torch.std(h1_kernel, dim=(0,1))
+            return ls, std
+
+    def forward(self, X):
+        """
+
+        Efficiently computes the outputs of a three layer network
+        using opt_einsum
+
+        f : P*d -> P*e*1
+        C1_ui = W1_ijk*x_uk
+        C2_uij = W2_ijk*C1_uik
+        C3_ui = A_ij*C2_uij
+        """
+    
+ 
+
+        h0 = torch.erf(contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+          backend='torch'
+        ))
+
+        h1 = torch.erf(contract(
+            'qjk,uqj->uqk',self.W1,h0,
+            optimize=self.forward_path_h1 if self.forward_path_h1 is not None else None,
+            backend='torch'
+        ))
+
+        f = contract(
+            'qk,uqk->uq',
+            self.A,h1,
+            optimize=self.forward_path_f if self.forward_path_f is not None else None,
+            backend='torch'
+        ).unsqueeze(1)
+
+        return f
 
 class FCN3Network(nn.Module):
     """

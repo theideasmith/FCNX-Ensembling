@@ -29,7 +29,7 @@ import uuid
 import math as mt
 import gspread
 from google.oauth2.service_account import Credentials
-from FCN3NetworkEnsembleLinear import FCN3NetworkEnsembleLinear
+from FCN3Network import FCN3NetworkEnsembleErf
 
 # --- Google Sheets Logging Setup ---
 GOOGLE_SHEETS_ENABLED = True  # Set to False to disable
@@ -243,7 +243,7 @@ if __name__ == '__main__':
     # Redefine log intervals after parsing arguments
     log_interval = 5000
     detailed_log_interval = log_interval * 4
-    eigenvalue_log_interval = log_interval * 10
+    eigenvalue_log_interval = log_interval * 2
     
     # Set seeds as constants
     DATA_SEED = 613
@@ -253,18 +253,18 @@ if __name__ == '__main__':
     current_base_learning_rate = lrA
     # Set the default dtype to float64
     torch.set_default_dtype(torch.float64)
-
+    resume = False
     if not debug:
         if args.modeldesc is not None:
             modeldesc = os.path.normpath(args.modeldesc)
-            save_dir = os.path.join("/home/akiva/gpnettrain", modeldesc)
+            save_dir = os.path.join("/home/akiva/fcn3s", modeldesc)
             runs_dir = os.path.join(save_dir, "runs")
             os.makedirs(runs_dir, exist_ok=True)
             resume = True
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            modeldesc = f"P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lrA_{lrA:.2e}_time_{timestamp}"
-            save_dir = os.path.join("/home/akiva/gpnettrain", modeldesc)
+            modeldesc = f"erf_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lrA_{lrA:.2e}_time_{timestamp}"
+            save_dir = os.path.join("/home/akiva/exp/fcn3erf", modeldesc)
             os.makedirs(save_dir, exist_ok=True)
             runs_dir = os.path.join(save_dir, "runs")
             os.makedirs(runs_dir, exist_ok=True)
@@ -277,7 +277,7 @@ if __name__ == '__main__':
         if args.modeldesc is not None:
             resume = True
         # Create a random temp directory for debug TensorBoard logs
-        debug_tmp_dir = os.path.join('/home/akiva/gpnettrain/debugtmp', str(uuid.uuid4()))
+        debug_tmp_dir = os.path.join('/home/akiva/exp/fcn3erf/debugtmp', str(uuid.uuid4()))
         print(f"Debug mode: logging to {debug_tmp_dir}")
         save_dir = debug_tmp_dir
         modeldesc = debug_tmp_dir  # Set foldername/modeldesc to tmp dir in debug mode
@@ -392,11 +392,12 @@ if __name__ == '__main__':
     torch.manual_seed(MODEL_SEED)
     ens = getattr(args, 'ens', 100)
 
-    model = FCN3NetworkEnsembleLinear(input_size, hidden_size, hidden_size,
-                                     ens=ens,
-                                     weight_initialization_variance=(1/input_size, 1.0/hidden_size, 1.0/(hidden_size * chi)),
-                                     device=device,
-                                     num_samples=num_samples)
+    model = FCN3NetworkEnsembleErf(input_size, hidden_size, hidden_size,
+                                    num_samples,
+                                    ens=ens,
+                                    weight_initialization_variance=(1/input_size, 1.0/hidden_size, 1.0/(hidden_size * chi)),
+                                    device=device)
+
     model.to(device)
 
     # Compile model if available (PyTorch 2.0+)
@@ -411,7 +412,7 @@ if __name__ == '__main__':
     
     # Move weight decay to GPU - THIS IS CRITICAL FOR PERFORMANCE
     weight_decay = torch.tensor([input_size, hidden_size, hidden_size*chi], dtype=torch.float64, device=device) * t
-
+    
     # Pre-allocate noise buffer for Langevin dynamics
     noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
     
@@ -468,7 +469,10 @@ if __name__ == '__main__':
     print(f"Beginning training at epoch {epoch}")
     initialized = False
     # Main training loop
-
+    torch.manual_seed(DATA_SEED)
+    X_inf = torch.randn((5000, input_size), dtype=torch.float64, device=device)
+    Y_inf = X_inf
+    torch.manual_seed(LANGEVIN_SEED)
     with tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch) as pbar:
 
         # Make pbar accessible to signal handler
@@ -483,7 +487,72 @@ if __name__ == '__main__':
             
             effective_learning_rate_for_update = current_base_learning_rate 
             noise_scale = (2 * effective_learning_rate_for_update * t)**0.5
+            
+            if epoch == 0 or initialized == False:
 
+                initialized = True
+                # Compute GPR alignment and eigenvalues if possible
+                cos_sim = None
+                eigenvalues = None
+                with torch.no_grad():
+                    try:
+                        gpr_pred = gpr_dot_product_explicit(X, Y.squeeze(), X, 1.0)
+                        model_out = model(X)
+                        if model_out.ndim == 3:
+                            model_out = model_out.mean(dim=2)
+                        model_out_flat = model_out.flatten()
+                        gpr_pred_flat = gpr_pred.flatten()
+                        cos_sim = torch.dot(model_out_flat, gpr_pred_flat) / (torch.norm(model_out_flat) * torch.norm(gpr_pred_flat) + 1e-12)
+                    except Exception:
+                        pass
+                    try:
+                        lH = model.h1_eig(X_inf, Y_inf)
+
+                        # Print initial eigenvalues summary
+                        if lH.shape[0] > 1:
+                            lH0 = lH[0].item() if hasattr(lH[0], 'item') else float(lH[0])
+                            lH_rest = lH[1:]
+                            lH_rest_mean = lH_rest.mean().item() if hasattr(lH_rest.mean(), 'item') else float(lH_rest.mean())
+                            lH_rest_std = lH_rest.std().item() if hasattr(lH_rest.std(), 'item') else float(lH_rest.std())
+                            print(f"Initial eigenvalues: lH[0]={lH0:.4g}, mean(lH[1:])={lH_rest_mean:.4g}, std(lH[1:])={lH_rest_std:.4g}")
+                        else:
+                            print(f"Initial eigenvalue: lH[0]={lH[0].item() if hasattr(lH[0], 'item') else float(lH[0])}")
+                        scalarsH = {}
+                        for i in range(min(lH.shape[0], 10)):
+                            scalarsH[str(i)] = lH[i].item() if hasattr(lH[i], 'item') else float(lH[i])
+                        eigenvalues = scalarsH
+                    except Exception:
+                        pass
+
+                # Wrap first-epoch log_to_gsheets call in try/except
+                try:
+                    outputs = model(X)
+                    loss = custom_mse_loss(outputs, Y.unsqueeze(-1))
+
+                    # Check for valid loss
+                    if not torch.isfinite(loss):
+                        print(f"Warning: Invalid loss at epoch {epoch}: {loss.item()}")
+                        pbar.update(1)
+                        epoch += 1
+                        continue
+
+                    losses.append(loss.item())
+                    avg_loss = loss.item() / (ens * num_samples)
+                    log_to_gsheets(
+                        epoch=epoch,
+                        gpr_alignment=cos_sim.item() if cos_sim is not None else None,
+                        eigenvalues=eigenvalues,
+                        folder_name=modeldesc,
+                        input_size=input_size,
+                        hidden_size=hidden_size,
+                        ensemble_size=ens,
+                        chi=chi,
+                        learning_rate=current_base_learning_rate,
+                        status='RUNNING',
+                        current_loss=avg_loss
+                    )
+                except Exception as gsheets_exc:
+                    print(f"[Warning] Google Sheets logging failed at first epoch: {gsheets_exc}")
             # Clear gradients
             model.zero_grad()
 
@@ -491,7 +560,7 @@ if __name__ == '__main__':
             try:
                 outputs = model(X)
                 loss = custom_mse_loss(outputs, Y.unsqueeze(-1))
-                
+
                 # Check for valid loss
                 if not torch.isfinite(loss):
                     print(f"Warning: Invalid loss at epoch {epoch}: {loss.item()}")
@@ -534,61 +603,20 @@ if __name__ == '__main__':
             
 
             # --- Google Sheets logging at the very first epoch ---
-            if epoch == 0 or initialized == False:
+         
 
-                initialized = True
-                # Compute GPR alignment and eigenvalues if possible
-                cos_sim = None
-                eigenvalues = None
+            if (epoch + 1) % eigenvalue_log_interval == 0 or epoch == 0:
                 with torch.no_grad():
-                    try:
-                        gpr_pred = gpr_dot_product_explicit(X, Y.squeeze(), X, 1.0)
-                        model_out = model(X)
-                        if model_out.ndim == 3:
-                            model_out = model_out.mean(dim=2)
-                        model_out_flat = model_out.flatten()
-                        gpr_pred_flat = gpr_pred.flatten()
-                        cos_sim = torch.dot(model_out_flat, gpr_pred_flat) / (torch.norm(model_out_flat) * torch.norm(gpr_pred_flat) + 1e-12)
-                    except Exception:
-                        pass
-                    try:
-                        W0 = model.W0.permute(*range(model.W0.ndim - 1, -1, -1))
-                        W1 = model.W1.permute(*range(model.W1.ndim - 1, -1, -1))
-                        covW0W1 = contract('kje,ije,nme,kme->in', W1, W0, W0, W1, backend='torch') / (hidden_size * ens)
-                        lH = torch.diagonal(covW0W1).squeeze()
-                        # Print initial eigenvalues summary
-                        if lH.shape[0] > 1:
-                            lH0 = lH[0].item() if hasattr(lH[0], 'item') else float(lH[0])
-                            lH_rest = lH[1:]
-                            lH_rest_mean = lH_rest.mean().item() if hasattr(lH_rest.mean(), 'item') else float(lH_rest.mean())
-                            lH_rest_std = lH_rest.std().item() if hasattr(lH_rest.std(), 'item') else float(lH_rest.std())
-                            print(f"Initial eigenvalues: lH[0]={lH0:.4g}, mean(lH[1:])={lH_rest_mean:.4g}, std(lH[1:])={lH_rest_std:.4g}")
-                        else:
-                            print(f"Initial eigenvalue: lH[0]={lH[0].item() if hasattr(lH[0], 'item') else float(lH[0])}")
-                        scalarsH = {}
-                        for i in range(min(lH.shape[0], 10)):
-                            scalarsH[str(i)] = lH[i].item() if hasattr(lH[i], 'item') else float(lH[i])
-                        eigenvalues = scalarsH
-                    except Exception:
-                        pass
 
-                # Wrap first-epoch log_to_gsheets call in try/except
-                try:
-                    log_to_gsheets(
-                        epoch=epoch,
-                        gpr_alignment=cos_sim.item() if cos_sim is not None else None,
-                        eigenvalues=eigenvalues,
-                        folder_name=modeldesc,
-                        input_size=input_size,
-                        hidden_size=hidden_size,
-                        ensemble_size=ens,
-                        chi=chi,
-                        learning_rate=current_base_learning_rate,
-                        status='RUNNING',
-                        current_loss=avg_loss
-                    )
-                except Exception as gsheets_exc:
-                    print(f"[Warning] Google Sheets logging failed at first epoch: {gsheets_exc}")
+                    lH = model.H_eig(X_inf, Y_inf)
+
+                    scalarsH = {}
+                    for i in range(min(lH.shape[0], 10)):
+                        scalarsH[str(i)] = lH[i].item() if hasattr(lH[i], 'item') else float(lH[i])
+                    writer_cm.add_scalars(f'Eigenvalues/lambda_H(W1)', scalarsH, epoch)
+                    eigenvalues = scalarsH
+            else:
+                eigenvalues = None
 
             # Optimized logging
             if (epoch + 1) % log_interval == 0 or epoch == 0:
@@ -612,6 +640,7 @@ if __name__ == '__main__':
                             model_out = model(X)
                             if model_out.ndim == 3:
                                 model_out = model_out.mean(dim=2)  # average over ensemble
+
                             model_out_flat = model_out.flatten()
                             gpr_pred_flat = gpr_pred.flatten()
                             # Cosine similarity
@@ -620,40 +649,25 @@ if __name__ == '__main__':
                         
                         # Eigenvalue computation even less frequently
                         eigenvalues = None
-                        if (epoch + 1) % eigenvalue_log_interval == 0 or epoch == 0:
-                            with torch.no_grad():
-                                W0 = model.W0.permute(*range(model.W0.ndim - 1, -1, -1))
-                                W1 = model.W1.permute(*range(model.W1.ndim - 1, -1, -1))
-                                
-                                covW0W1 = contract('kje,ije,nme,kme->in', W1, W0, W0, W1, backend='torch') / (hidden_size * ens)
-                                
-                                # Only compute diagonal if that's all we need
-                                lH = torch.diagonal(covW0W1).squeeze()
-                                scalarsH = {}
-                                for i in range(min(lH.shape[0], 10)):
-                                    scalarsH[str(i)] = lH[i].item() if hasattr(lH[i], 'item') else float(lH[i])
-                                writer_cm.add_scalars(f'Eigenvalues/lambda_H(W1)', scalarsH, epoch)
-                                eigenvalues = scalarsH
-                        else:
-                            eigenvalues = None
-                        # --- Google Sheets logging ---
-                        # Wrap detailed_log_interval log_to_gsheets call in try/except
-                        try:
-                            log_to_gsheets(
-                                epoch=epoch,
-                                gpr_alignment=cos_sim.item() if 'cos_sim' in locals() else None,
-                                eigenvalues=eigenvalues,
-                                folder_name=modeldesc,
-                                input_size=input_size,
-                                hidden_size=hidden_size,
-                                ensemble_size=ens,
-                                chi=chi,
-                                learning_rate=current_base_learning_rate,
-                                status='RUNNING',
-                                current_loss=avg_loss
-                            )
-                        except Exception as gsheets_exc:
-                            print(f"[Warning] Google Sheets logging failed at detailed log interval: {gsheets_exc}")
+       
+                    # --- Google Sheets logging ---
+                    # Wrap detailed_log_interval log_to_gsheets call in try/except
+                    try:
+                        log_to_gsheets(
+                            epoch=epoch,
+                            gpr_alignment=cos_sim.item() if 'cos_sim' in locals() else None,
+                            eigenvalues=eigenvalues,
+                            folder_name=modeldesc,
+                            input_size=input_size,
+                            hidden_size=hidden_size,
+                            ensemble_size=ens,
+                            chi=chi,
+                            learning_rate=current_base_learning_rate,
+                            status='RUNNING',
+                            current_loss=avg_loss
+                        )
+                    except Exception as gsheets_exc:
+                        print(f"[Warning] Google Sheets logging failed at detailed log interval: {gsheets_exc}")
                     # Save model and state less frequently
                     if (epoch + 1) % detailed_log_interval == 0:
                         model_filename = f"model.pth"
