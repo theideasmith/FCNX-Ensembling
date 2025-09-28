@@ -12,6 +12,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
 import logging
 logging.getLogger('tensorflow').setLevel(logging.ERROR)
 import sys
+import re
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 import os
@@ -40,28 +41,36 @@ _gs_client = None
 _gs_worksheet = None
 _gs_sheet_url_printed = False
 
-# --- Automatic Google Sheets Creation (before training) ---
-if GOOGLE_SHEETS_ENABLED and __name__=="__main__":
-    scopes = ['https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_file(GOOGLE_SHEETS_CREDENTIALS_FILE, scopes=scopes)
-    client = gspread.authorize(creds)
-    user_email = 'aclscientist@gmail.com'  # <-- put your email here
+def _precreate_gsheet():
+    """Create and share the Google Sheet once, and print its URL.
+
+    This replaces the previous import-time side effect and will only be called
+    after CLI args are parsed and Google Sheets logging is confirmed enabled.
+    """
+    if not GOOGLE_SHEETS_ENABLED:
+        return
     try:
-        spreadsheet = client.open(GOOGLE_SHEET_NAME)
-        print(f"Sheet '{GOOGLE_SHEET_NAME}' already exists.")
-        # Check if already shared
-        permissions = spreadsheet.list_permissions()
-        already_shared = any(p['type'] == 'user' and p.get('emailAddress', '') == user_email for p in permissions)
-        if not already_shared:
+        scopes = ['https://www.googleapis.com/auth/drive']
+        creds = Credentials.from_service_account_file(GOOGLE_SHEETS_CREDENTIALS_FILE, scopes=scopes)
+        client = gspread.authorize(creds)
+        user_email = 'aclscientist@gmail.com'
+        try:
+            spreadsheet = client.open(GOOGLE_SHEET_NAME)
+            print(f"Sheet '{GOOGLE_SHEET_NAME}' already exists.")
+            permissions = spreadsheet.list_permissions()
+            already_shared = any(p['type'] == 'user' and p.get('emailAddress', '') == user_email for p in permissions)
+            if not already_shared:
+                spreadsheet.share(user_email, perm_type='user', role='writer')
+                print(f"Shared with {user_email}.")
+            print(f"Sheet URL: https://docs.google.com/spreadsheets/d/{spreadsheet.id}/edit")
+        except gspread.exceptions.SpreadsheetNotFound:
+            print(f"Sheet '{GOOGLE_SHEET_NAME}' not found. Creating new sheet.")
+            spreadsheet = client.create(GOOGLE_SHEET_NAME)
+            print(f"New sheet created: https://docs.google.com/spreadsheets/d/{spreadsheet.id}/edit")
             spreadsheet.share(user_email, perm_type='user', role='writer')
-            print(f"Shared with {user_email}.")
-        print(f"Sheet URL: https://docs.google.com/spreadsheets/d/{spreadsheet.id}/edit")
-    except gspread.exceptions.SpreadsheetNotFound:
-        print(f"Sheet '{GOOGLE_SHEET_NAME}' not found. Creating new sheet.")
-        spreadsheet = client.create(GOOGLE_SHEET_NAME)
-        print(f"New sheet created: https://docs.google.com/spreadsheets/d/{spreadsheet.id}/edit")
-        spreadsheet.share(user_email, perm_type='user', role='writer')
-        print(f"Sheet URL: https://docs.google.com/spreadsheets/d/{spreadsheet.id}/edit")
+            print(f"Sheet URL: https://docs.google.com/spreadsheets/d/{spreadsheet.id}/edit")
+    except Exception as e:
+        print(f"Google Sheets setup error: {e}")
 
 def _init_gsheets():
     global _gs_client, _gs_worksheet, _gs_sheet_url_printed
@@ -210,6 +219,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train or resume FCN3 ensemble model.')
     parser.add_argument('--modeldesc', type=str, default=None, help='Model description directory to resume from')
     parser.add_argument('--debug', action='store_true', help='Run in debug mode (no logging or saving)')
+    parser.add_argument('--nolog', action='store_true', help='Disable Google Sheets logging for this run')
+    parser.add_argument('--tags', type=str, default='', help='Comma/space-separated tags; include "nolog" to disable Sheets logging; use eiglog[:|=]N to set eigen log interval (default 150 if no N)')
+    parser.add_argument('--eiglog', type=int, default=None, help='Log eigenvalues every N epochs; can also use tag eiglog[:|=]N, default 150 when tag has no value')
     parser.add_argument('--epochs', type=int, default=2_000_000, help='Number of training epochs (default: 2,000,000)')
     parser.add_argument('--chi', type=int, default=1, help='Value for chi (default: 200)')
     parser.add_argument('--P', type=int, default=20, help='Number of samples P (default: 400)')
@@ -218,9 +230,43 @@ if __name__ == '__main__':
     parser.add_argument('--lrA', type=float, default=1e-9, help='Learning rate lrA (default: 1e-3/400)')
     parser.add_argument('--ens', type=int, default=100, help='Number of ensembles to train')
     parser.add_argument('--kappa', type=float, default = 1.0, help='Data noise parameter kappa')
+    parser.add_argument('-static', '--static', action='store_true', help='Keep the learning rate static at lrA')
+    parser.add_argument('--alphaT', type=float, default=0.7, help='Fraction (<=1) of epochs before lowering learning rate')
     args = parser.parse_args()
 
     debug = args.debug
+    # Determine if Google Sheets logging should be disabled via flags/tags
+    provided_tags = {t for t in [s.strip().lower() for s in args.tags.replace(',', ' ').split()] if t}
+    nolog_requested = args.nolog or ('nolog' in provided_tags) or (args.modeldesc is not None and 'nolog' in str(args.modeldesc).lower())
+    if nolog_requested or debug:
+        # Disable Sheets logging globally if requested or in debug mode
+        GOOGLE_SHEETS_ENABLED = False
+    # Parse eiglog interval from flag, tags, or modeldesc
+    eiglog_interval = None
+    if args.eiglog is not None and args.eiglog > 0:
+        eiglog_interval = int(args.eiglog)
+    else:
+        # From --tags: accepts eiglog, eiglog:150, eiglog=150
+        m = re.search(r'(?:(?<=^)|(?<=[\s,]))eiglog(?:[:=](\d+))?(?=\b)', args.tags.lower())
+        if m is not None:
+            if m.group(1) is not None:
+                try:
+                    eiglog_interval = int(m.group(1))
+                except ValueError:
+                    eiglog_interval = 150
+            else:
+                eiglog_interval = 150
+        elif args.modeldesc is not None:
+            # Allow containing eiglog in modeldesc, e.g., run_eiglog200
+            m2 = re.search(r'eiglog(?:[:=]?(\d+))?', str(args.modeldesc).lower())
+            if m2 is not None:
+                if m2.group(1) is not None:
+                    try:
+                        eiglog_interval = int(m2.group(1))
+                    except ValueError:
+                        eiglog_interval = 150
+                else:
+                    eiglog_interval = 150
     epochs = args.epochs
     modeldesc = ''
     save_dir = getattr(args, 'modeldesc', '')
@@ -235,15 +281,15 @@ if __name__ == '__main__':
     t0 = 2 * k
     t = t0 / chi  # Temperature for Langevin (used in noise)
     # --- Learning Rate Schedule Parameters ---
-    T = epochs * 0.7
+    alphaT = max(0.0, min(1.0, getattr(args, 'alphaT', 0.7)))
+    T = int(epochs * alphaT)
     lrB = (1.0 / 3) * lrA / num_samples
-    beta = mt.log(lrA / lrB) / T
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Redefine log intervals after parsing arguments
     log_interval = 5000
     detailed_log_interval = log_interval * 4
-    eigenvalue_log_interval = log_interval * 2
+    eigenvalue_log_interval = eiglog_interval if (eiglog_interval is not None and eiglog_interval > 0) else (log_interval * 2)
     
     # Set seeds as constants
     DATA_SEED = 613
@@ -273,6 +319,9 @@ if __name__ == '__main__':
         writer_cm = SummaryWriter(log_dir=runs_dir)
         state_path = os.path.join(save_dir, 'state.json')
         model_path = os.path.join(save_dir, 'model.pth')
+        # Prepare Google Sheet only if enabled and not debug
+        if GOOGLE_SHEETS_ENABLED:
+            _precreate_gsheet()
     else:
         if args.modeldesc is not None:
             resume = True
@@ -415,6 +464,8 @@ if __name__ == '__main__':
     
     # Pre-allocate noise buffer for Langevin dynamics
     noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
+    # Dedicated RNG for Langevin noise to ensure deterministic, epoch-indexed randomness
+    langevin_gen = torch.Generator(device=device)
     
     # Resume logic
     epoch = 0
@@ -480,13 +531,18 @@ if __name__ == '__main__':
         training_pbar = pbar
         while epoch < epochs:
             # Update learning rate
-            if epoch < T:
+            if getattr(args, 'static', True):
                 current_base_learning_rate = lrA
             else:
-                current_base_learning_rate = lrA / 3
+                if epoch < T:
+                    current_base_learning_rate = lrA
+                else:
+                    current_base_learning_rate = lrA / 3
             
             effective_learning_rate_for_update = current_base_learning_rate 
             noise_scale = (2 * effective_learning_rate_for_update * t)**0.5
+            # Reseed Langevin RNG per epoch for deterministic, epoch-dependent noise
+            langevin_gen.manual_seed(LANGEVIN_SEED + epoch)
             
             if epoch == 0 or initialized == False:
 
@@ -578,7 +634,7 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     for i, param in enumerate(model.parameters()):
                         if param.grad is not None:
-                            noise_buffer.resize_(param.shape).normal_(0, noise_scale)
+                            noise_buffer.resize_(param.shape).normal_(0, noise_scale, generator=langevin_gen)
                             param.add_(noise_buffer)
                             param.add_(param.data, alpha=-(weight_decay[i]).item() * effective_learning_rate_for_update)
                             if param.grad is not None:

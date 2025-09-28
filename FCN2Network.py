@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from opt_einsum import contract
+from opt_einsum import contract, contract_path
 
 import standard_hyperparams as hp
 from typing import Tuple, Optional, Callable, Dict
@@ -130,3 +130,74 @@ class FCN_2_Ensemble(nn.Module):
             self.W0, X,
             backend='torch'
         )
+
+class FCN2NetworkEnsembleErf(nn.Module):
+    def __init__(self, d, n1, P, ens=1, weight_initialization_variance=(1.0, 1.0), device=DEVICE):
+        super().__init__()
+        self.arch = [d, n1]
+        self.d = d
+        self.n1 = n1
+        self.ens = ens
+        self.num_samples = P
+        self.device = device
+
+        self.W0 = nn.Parameter(
+            torch.normal(mean=0.0, std=torch.full((ens, n1, d), weight_initialization_variance[0] ** 0.5)).to(device),
+            requires_grad=True
+        )
+        self.A = nn.Parameter(
+            torch.normal(mean=0.0, std=torch.full((ens, n1), weight_initialization_variance[1] ** 0.5)).to(device),
+            requires_grad=True
+        )
+
+        self.forward_path_h0 = None
+        self.forward_path_f = None
+        if self.num_samples is not None:
+            self._precompute_einsum_paths_h0(self.num_samples)
+            self._precompute_einsum_paths_f(self.num_samples)
+
+    def _precompute_einsum_paths_h0(self, num_samples):
+        eq = 'qkl,ul->uqk'
+        shapes = [
+            (self.ens, self.n1, self.d),
+            (num_samples, self.d)
+        ]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        path, _ = contract_path(eq, *dummy_tensors)
+        self.forward_path_h0 = path
+
+    def _precompute_einsum_paths_f(self, num_samples):
+        eq = 'qk,uqk->uq'
+        shapes = [
+            (self.ens, self.n1),
+            (num_samples, self.ens, self.n1)
+        ]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        path, _ = contract_path(eq, *dummy_tensors)
+        self.forward_path_f = path
+
+    def h_activation(self, X):
+        h0 = contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+            backend='torch'
+        )
+        return torch.erf(h0)
+
+    def forward(self, X):
+        h0 = contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+            backend='torch'
+        )
+        a0 = torch.erf(h0)
+        f = contract(
+            'qk,uqk->uq',
+            self.A, a0,
+            optimize=self.forward_path_f if self.forward_path_f is not None else None,
+            backend='torch'
+        ).unsqueeze(1)
+        return f
+
