@@ -185,8 +185,7 @@ class FCN3NetworkEnsembleErf(nn.Module):
         lJ =  J_k / (self.ens * self.n1 * X.shape[0]);
         return lJ
     def H_eig(self,X, Y, std=False):
-
-
+        print("STD IS: ", std)
         if std is False:
             h1 = self.h1_preactivation(X)
 
@@ -199,11 +198,14 @@ class FCN3NetworkEnsembleErf(nn.Module):
             h1 = self.h1_preactivation(X)
 
             h1_kernel = contract('ul, uqk,  vqk, vl->kql', Y, h1, h1, Y, backend='torch') / contract('ul, ul->l', Y, Y) / X.shape[0]
-            print(h1_kernel.shape)
 
-            ls = torch.mean(h1_kernel, dim=(0,1))
-            std = torch.std(h1_kernel, dim=(0,1))
-            return ls, std
+
+            h1_kernelp = contract('ul, uqk,  vqk, vl->l', Y, h1, h1, Y, backend='torch') / contract('ul, ul->l', Y, Y) 
+
+
+            ret =  h1_kernelp / (self.ens * self.n1 * X.shape[0])
+            std = torch.std(h1_kernel, dim=0).mean(dim=0) 
+            return ret, std
 
     def forward(self, X):
         """

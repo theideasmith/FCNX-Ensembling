@@ -7,10 +7,10 @@ from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Parameters
-n = 1000*3
+n = 1000
 chi = 1.0
 kappa = 1.0
-d = 625*1e2
+d = 25
 b = 4 / (3 * np.pi)
 epsilon = 0.03
 delta = 1
@@ -87,7 +87,7 @@ def equations(vars, chi, P):
     lWT = 1 / (d + delta * b * lV1 / n)
     lWP = (1/d)
     TrSigma = lWT + lWP * (d - 1)
-    EChh = lH1 + lH3 + ((8) / (np.pi * (1 + 2 * TrSigma)**3) * (213*lWT**3 + 9*lWT)) * (d-1) + (4 / (np.pi * (1 + 2 * TrSigma)) * lWT) * (d - 1)
+    EChh = lH1 + lH3 + (4 / (np.pi * (1 + 2 * TrSigma)) * (15*lWT**3 - 18*lWT**2 + 10*lWT)) * (d-1) + (4 / (np.pi * (1 + 2 * TrSigma)) * lWT) * (d - 1)
     gammaYh2 = (4 / np.pi) * 1 / (1 + 2 * EChh)
     lK1 = gammaYh2 * lH1
     eq1 = lT1 - (-chi**2 / (kappa / P + lK1)**2 * delta)
@@ -98,7 +98,7 @@ def equations(vars, chi, P):
     eq5 = lT3 - (-chi**2 / (kappa / P + lK3)**2 * delta)
     eq6 = lV3 - (1 / lJ3**2 * lH3 - 1 / lJ3)
     eq7 = lH3 - (1 / (lJ3**(-1) + gammaYh2 * lT3 * epsilon**2 / (n * chi)))
-    eq8 = lJ3 - ((8 ) / (np.pi * (1 + 2 * TrSigma)**3) * (213*lWT**3 + 9*lWT))
+    eq8 = lJ3 - ((4 ) / (np.pi * (1 + 2 * TrSigma)) * (15*lWT**3 - 18*lWT**2 + 10*lWT))
     return [
         np.real(eq1), np.imag(eq1),
         np.real(eq2), np.imag(eq2),
@@ -208,8 +208,16 @@ with Progress(
             lK3 = gammaYh2 * lH3
             lK1_eigs.append(lK1)
             lK3_eigs.append(lK3)
+            # print(f"Solution lK1: {lK1}, lK3: {lK3}")
+            # print(f"Solution lH1: {lH1}, lJ1: {lJ1}, lH3: {lH3}, lJ3: {lJ3}")
+
         mean_lK1 = np.mean(lK1_eigs) if len(lK1_eigs) > 0 else float('nan')
         mean_lK3 = np.mean(lK3_eigs) if len(lK3_eigs) > 0 else float('nan')
+        # Printing stddev and mean of lK1 and lK3
+        std_lK1 = np.std(lK1_eigs) if len(lK1_eigs) > 0 else float('nan')
+        std_lK3 = np.std(lK3_eigs) if len(lK3_eigs) > 0 else float('nan')
+        # print(f"P={P:.6g}: mean_lK1={mean_lK1:.6g} (std={std_lK1:.6g}), mean_lK3={mean_lK3:.6g} (std={std_lK3:.6g}), num_solutions={len(solutions)}")
+        # Compute ratios
         mean_ratio1 = mean_lK1 / (kappa / P + mean_lK1) if np.isfinite(mean_lK1) else float('nan')
         mean_ratio3 = mean_lK3 / (kappa / P + mean_lK3) if np.isfinite(mean_lK3) else float('nan')
         varsolutions.append(np.array(solutions).mean(axis=0).tolist())
