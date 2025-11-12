@@ -290,8 +290,9 @@ if __name__ == '__main__':
 
 
     for i in range(len(nets[:(7*3)])):
+        print(nets[i])
         print(f'Loading net {i} @ {nets[i]}')
-        n = torch.load(nets[i]).to(DEVICE)
+        n = torch.load(nets[i], weights_only=False).to(DEVICE)
         W1 = n.lin1.weight.detach().to(DEVICE)
         
         P = 30
