@@ -1,0 +1,13 @@
+Ps: [20]
+Ns: [400]
+Ds: [20]
+ens: 50
+
+chi: 'use_N_as_chi' # or a specific integer
+nepochs: 2000000
+
+ondata: true         # if false, pass --off_data
+savepath: /home/akiva/gpnettrain/fcn3_MF_P20D20N400
+script: 'net_einsum_parallel.py'
+lrfL: 1e-8 
+lr_schedule: True

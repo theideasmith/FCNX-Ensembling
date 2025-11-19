@@ -1,0 +1,13 @@
+Ps: [30]
+Ns: [50, 200, 600, 1000,2000]
+Ds: [3]
+ens: 10
+
+chi: 'use_N_as_chi' # or a specific integer
+nepochs:
+  if_chi_eq_1: 100000
+  otherwise: 30000000
+
+ondata: true         # if false, pass --off_data
+save_prefix: fcn2_FL_run
+script: 'net_einsum_parallel.py'

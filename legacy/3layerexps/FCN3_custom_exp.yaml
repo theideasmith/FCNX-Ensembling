@@ -1,0 +1,13 @@
+Ps: [400]
+Ns: [200]
+Ds: [50]
+ens: 10
+
+chi: 'use_N_as_chi'
+nepochs:
+  if_chi_eq_1: 500000
+  otherwise: 500000
+
+ondata: true         # if false, pass --off_data
+save_prefix: fcn3_custom_exp
+script: net_einsum_parallel.py 

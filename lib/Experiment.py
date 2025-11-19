@@ -1,0 +1,258 @@
+DATA_SEED = 613
+MODEL_SEED = 26
+LANGEVIN_SEED = 480
+import warnings
+import torch
+from juliacall import Main as jl
+import juliacall
+import os
+import numpy as np
+from dataclasses import dataclass, field
+import sys
+import scipy.stats as stats
+import matplotlib.pyplot as plt
+sys.path.insert(0, '/home/akiva/FCNX-Ensembling')
+torch.manual_seed(DATA_SEED)
+torch.set_default_dtype(torch.float64)
+DEVICE = torch.device('cuda:1')
+
+from FCN3Network import FCN3NetworkEnsembleErf
+
+def strip_orig_mod_prefix(state_dict):
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("_orig_mod."):
+            new_key = k[len("_orig_mod."):]
+        else:
+            new_key = k
+        new_state_dict[new_key] = v
+    return new_state_dict
+
+from dataclasses import dataclass
+from typing import List, Iterable
+
+@dataclass
+class Eigenvalues:
+    lJ1T: float
+    lJ3T: float
+    lH1T: float
+    lH3T: float
+    lJ1P: float
+    lJ3P: float
+    lH1P: float
+    lH3P: float
+    @classmethod
+    def from_list(cls, values: Iterable[float]) -> 'Eigenvalues':
+        return cls(
+            lJ1T=values[0],
+            lJ3T=values[1],
+            lH1T=values[2],
+            lH3T=values[3],
+            lJ1P=values[4],
+            lJ3P=values[5],
+            lH1P=values[6],
+            lH3P=values[7],
+        )
+    def to_list(self):
+        return [
+            self.lJ1T,
+            self.lJ3T,
+            self.lH1T,
+            self.lH3T,
+            self.lJ1P,
+            self.lJ3P,
+            self.lH1P,
+            self.lH3P,
+        ]
+
+@dataclass
+class Experiment:
+    file: str
+    N: int 
+    d: int
+    chi: float
+    P: int
+    ens: int
+    model: FCN3NetworkEnsembleErf = field(init=False)
+    He1: torch.Tensor = field(init=False)
+    He3: torch.Tensor = field(init=False)
+    device: torch.device = DEVICE
+    eps: float = 0.03
+    X: torch.Tensor  = field(init=False)
+
+
+    def large_dataset(self, p_large = 1000, device=DEVICE):
+        torch.manual_seed(DATA_SEED)
+        Xinf = torch.randn((p_large, self.d), dtype=torch.float64).to(device)
+        z = Xinf[:,:]
+        He1 = z
+        He3 = z**3 - 3.0 * z
+        Yinf = (He1, He3)
+        return Xinf,Yinf
+
+    def __post_init__(self):
+        # self.device = DEVICE
+        self.lambdas_H = None
+        torch.manual_seed(DATA_SEED)
+        self.X = torch.randn((self.P, self.d), dtype=torch.float64)
+        z = self.X[:,0]
+        self.He1 = z
+        self.He3 = z**3 - 3.0 * z
+        self.Y = (self.He1 + self.eps * self.He3).unsqueeze(-1)
+        self.model = self.networkWithDefaults()
+
+
+        jl.include('/home/akiva/FCNX-Ensembling/3layerexps/erfeigensolvers/FCS.jl')
+    def networkWithDefaults(self):
+        model = FCN3NetworkEnsembleErf(self.d, self.N, self.N,
+                        self.P,
+                            ens=self.ens,
+                            weight_initialization_variance=(1/self.d, 1.0/self.N, 1.0/(self.N*self.chi)))
+        return model
+
+    def load(self, compute_predictions = False):
+ 
+        self.model = self.networkWithDefaults()
+        self.model.to(self.device)
+        load_model_filename2 = os.path.join(self.file, 'model.pth')
+        # load_model_filename2 = os.path.join(file, 'model.pth')
+        state_dict = torch.load(load_model_filename2, map_location=self.device)
+
+        # Fix keys if needed
+        if any(k.startswith("_orig_mod.") for k in state_dict.keys()):
+            state_dict = strip_orig_mod_prefix(state_dict)
+        self.model.load_state_dict(state_dict)
+        print(f"Loaded model state_dict from {load_model_filename2}")
+        self.jl = None
+        if compute_predictions:
+            jl.include('/home/akiva/FCNX-Ensembling/3layerexps/erfeigensolvers/FCS.jl')
+
+        self.predictions = self.eig_predictions() if compute_predictions else None
+
+    
+    def eig_predictions(self):
+        try: 
+            d = float(self.d)
+            i0 = [1/d ** 0.5, 1/d ** (3/2), 1/d ** 0.5, 1/d ** (3/2)]
+            i0 = juliacall.convert( jl.Vector[jl.Float64], i0)
+            χ = self.chi
+            d = self.d
+            n = self.N
+            ϵ = self.eps
+            π = np.pi
+            δ = 1.0
+            P = self.P
+            lr =1e-6
+            Tf = 60_000
+
+            lT = jl.FCS.nlsolve_solver(
+                i0,
+                chi=χ, d=d, kappa=1.0, delta=δ,
+                epsilon=ϵ, n=n, b=4 / (3 * π),
+                P=P, lr=lr, max_iter=Tf, verbose=False, anneal=True
+            )
+
+            i0 = [1/d, 1/d**3, 1/d, 1/d**3]
+            i0 = juliacall.convert(jl.Vector[jl.Float64], i0)
+            lP  = jl.FCS.nlsolve_solver(
+                i0,
+                chi=χ, d=d, kappa=1.0, delta=0.0,
+                epsilon=ϵ, n=n, b=4 / (3 * π),
+                P=P, lr=lr, max_iter=Tf, verbose=False, anneal=True
+            )
+
+            return Eigenvalues(*lT, *lP)
+        except Exception as e:
+            print(e)
+
+    def diagonalize_H(self, X, k=None):
+        ls = self.model.H_eig_random_svd(X, k=k)
+        self.lambdas_H = ls
+        return ls
+
+    def plot_spectrum(self):        # ------------------------------------------------------------------
+        # 1. Choose colormap
+        # ------------------------------------------------------------------
+        cmap_name = "viridis"          # or "magma"
+        cmap = plt.get_cmap(cmap_name)
+        colors = cmap(np.linspace(0, 1, 4))
+        if self.predictions is None:
+            warnings.warn("Predictions not computed yet. Computing now...")
+            self.predictions = self.eig_predictions()
+
+        if self.lambdas_H is None:
+            warnings.warn("Eigenvalues not computed yet. Computing now...")
+            self.lambdas_H = self.diagonalize_H(self.X, k=1000)
+    
+        ls = self.lambdas_H
+        MF_eigenvalues = self.predictions
+        # ------------------------------------------------------------------
+        # 2. Move ls3 to CPU and convert to NumPy early
+        # ------------------------------------------------------------------
+        ls3 = ls  # assuming ls is your eigenvalue tensor
+        ls3_np = ls3.detach().cpu().numpy()
+
+        # ------------------------------------------------------------------
+        # 3. Create boolean masks → **convert to NumPy immediately**
+        # ------------------------------------------------------------------
+        idx_big_np = (ls3_np > 0.1)
+        idx_mid_np = (ls3_np <= 0.1) & (ls3_np > 1e-3)
+        idx_small_np = (ls3_np <= 1e-4)
+
+        # Count sizes
+        n_big = np.sum(idx_big_np)
+        n_mid = np.sum(idx_mid_np)
+        n_small = np.sum(idx_small_np)
+
+        # ------------------------------------------------------------------
+        # 4. Build bar positions (NumPy)
+        # ------------------------------------------------------------------
+        pos_big = np.arange(0, n_big)
+        pos_mid = np.arange(n_big, n_big + n_mid)
+        pos_small = np.arange(n_big + n_mid, n_big + n_mid + n_small)
+
+        # ------------------------------------------------------------------
+        # 5. Horizontal target lines
+        # ------------------------------------------------------------------
+        plt.axhline(y=MF_eigenvalues.lH1T,
+                    color=colors[0], linestyle='--', label='$\mathbb{E}\;[\lambda^{H1}_T]$')
+        plt.axhline(y=MF_eigenvalues.lH1P,
+                    color=colors[1], linestyle='-',  label='$\mathbb{E}\;[\lambda^{H1}_P]$')
+        plt.axhline(y=MF_eigenvalues.lH3T,
+                    color=colors[2], linestyle='--', label='$\mathbb{E}\;[\lambda^{H3}_T]$')
+        plt.axhline(y=MF_eigenvalues.lH3P,
+                    color=colors[3], linestyle='-',  label='$\mathbb{E}\;[\lambda^{H3}_P]$')
+
+        # ------------------------------------------------------------------
+        # 6. Bar plots – **all NumPy**
+        # ------------------------------------------------------------------
+        if n_big > 0:
+            plt.bar(pos_big, ls3_np[idx_big_np],
+                    color=colors[0], label='$\lambda^{H1}_T$')
+
+        if n_mid > 0:
+            plt.bar(pos_mid, ls3_np[idx_mid_np],
+                    color=colors[1], label='$\lambda^{H1}_P$')
+
+        if n_small > 0:
+            small_vals = ls3_np[idx_small_np]
+            small_pos = pos_small
+
+            plt.bar([small_pos[0]], [small_vals[0]],
+                    color=colors[2], label='$\lambda^{H3}_T$')
+
+            if n_small > 1:
+                plt.bar(small_pos[1:], small_vals[1:],
+                        color=colors[3], label='$\lambda^{H3}_P$')
+
+        # ------------------------------------------------------------------
+        # 7. Finalize
+        # ------------------------------------------------------------------
+        plt.title(f"FCN3-Erf on y = He1 + 0.0 He3 Eigenspectrum")
+        plt.yscale('log')
+
+        plt.xlabel("Eigenvalue Index")
+        plt.ylabel("Magnitude (log scale)")
+        plt.legend(bbox_to_anchor=(1.05, 1))
+        plt.tight_layout()
+        plt.show()
