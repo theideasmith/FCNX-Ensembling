@@ -1,5 +1,9 @@
 {
     "files.exclude": {
         ".*": true
-    }
-} 
+    },
+    "python.analysis.extraPaths": [
+        "./lib"
+    ],
+    "editor.tabCompletion": "on"
+}

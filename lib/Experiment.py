@@ -2,9 +2,7 @@ DATA_SEED = 613
 MODEL_SEED = 26
 LANGEVIN_SEED = 480
 import warnings
-import torch
-from juliacall import Main as jl
-import juliacall
+
 import os
 import numpy as np
 from dataclasses import dataclass, field
@@ -12,6 +10,10 @@ import sys
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 sys.path.insert(0, '/home/akiva/FCNX-Ensembling')
+
+import juliacall
+from juliacall import Main as jl
+import torch
 torch.manual_seed(DATA_SEED)
 torch.set_default_dtype(torch.float64)
 DEVICE = torch.device('cuda:1')
@@ -81,13 +83,15 @@ class Experiment:
     X: torch.Tensor  = field(init=False)
 
 
-    def large_dataset(self, p_large = 1000, device=DEVICE):
+    def large_dataset(self, p_large = 1000, flat=False):
         torch.manual_seed(DATA_SEED)
-        Xinf = torch.randn((p_large, self.d), dtype=torch.float64).to(device)
+        Xinf = torch.randn((p_large, self.d), dtype=torch.float64).to(self.device)
         z = Xinf[:,:]
         He1 = z
-        He3 = z**3 - 3.0 * z
+        He3 = 1/6 * (z**3 - 3.0 * z)
         Yinf = (He1, He3)
+        if flat:
+            return Xinf, He1, He3
         return Xinf,Yinf
 
     def __post_init__(self):
@@ -101,8 +105,19 @@ class Experiment:
         self.Y = (self.He1 + self.eps * self.He3).unsqueeze(-1)
         self.model = self.networkWithDefaults()
 
+        # Ensure the freshly created model lives on the experiment device
+        try:
+            self.model.to(self.device)
+            # also set a `.device` attribute on the model if consumers expect it
+            try:
+                setattr(self.model, 'device', self.device)
+            except Exception:
+                pass
+        except Exception:
+            # best-effort; continue if device move fails
+            pass
 
-        jl.include('/home/akiva/FCNX-Ensembling/3layerexps/erfeigensolvers/FCS.jl')
+        jl.include('/home/akiva/FCNX-Ensembling/julia_lib/FCS.jl')
     def networkWithDefaults(self):
         model = FCN3NetworkEnsembleErf(self.d, self.N, self.N,
                         self.P,
@@ -117,15 +132,51 @@ class Experiment:
         load_model_filename2 = os.path.join(self.file, 'model.pth')
         # load_model_filename2 = os.path.join(file, 'model.pth')
         state_dict = torch.load(load_model_filename2, map_location=self.device)
-
         # Fix keys if needed
         if any(k.startswith("_orig_mod.") for k in state_dict.keys()):
             state_dict = strip_orig_mod_prefix(state_dict)
+
+        # If the saved state has an `A` parameter whose first dimension
+        # indicates ensemble size, and it differs from the pre-initialized
+        # `ens`, re-initialize the model to match the saved ensemble size.
+        try:
+            a_key = None
+            for k in state_dict.keys():
+                # match keys like 'A', 'module.A', or 'someprefix.A'
+                if k == 'A' or k.endswith('.A') or k.split('.')[-1] == 'A':
+                    a_key = k
+                    break
+
+            if a_key is not None:
+                loaded_A = state_dict[a_key]
+                if isinstance(loaded_A, torch.Tensor) and loaded_A.dim() >= 1:
+                    loaded_ens = int(loaded_A.shape[0])
+                    if loaded_ens != int(self.ens):
+                        print(f"Reinitializing model: loaded ensemble size {loaded_ens} != preinitialized ens {self.ens}")
+                        # update the Experiment ens and rebuild the model
+                        self.ens = loaded_ens
+                        self.model = self.networkWithDefaults()
+                        self.model.to(self.device)
+        except Exception as _e:
+            # If anything goes wrong here, continue and let load_state_dict try
+            print(f"Warning while aligning ensemble size from state_dict: {_e}")
+
         self.model.load_state_dict(state_dict)
+
+        # After loading weights, ensure the model is on the desired device and
+        # that consumers (e.g. H_eig_random_svd) can access `model.device`.
+        try:
+            self.model.to(self.device)
+        except Exception:
+            pass
+        try:
+            setattr(self.model, 'device', self.device)
+        except Exception:
+            pass
         print(f"Loaded model state_dict from {load_model_filename2}")
         self.jl = None
         if compute_predictions:
-            jl.include('/home/akiva/FCNX-Ensembling/3layerexps/erfeigensolvers/FCS.jl')
+            jl.include('/home/akiva/FCNX-Ensembling/julia_lib/FCS.jl')
 
         self.predictions = self.eig_predictions() if compute_predictions else None
 
@@ -166,7 +217,25 @@ class Experiment:
             print(e)
 
     def diagonalize_H(self, X, k=None):
-        ls = self.model.H_eig_random_svd(X, k=k)
+        # Ensure model and input are on the same device before calling SVD routines
+        try:
+            self.model.to(self.device)
+        except Exception:
+            pass
+        try:
+            setattr(self.model, 'device', self.device)
+        except Exception:
+            pass
+
+        X_dev = X
+        try:
+            if isinstance(X, torch.Tensor):
+                X_dev = X.to(self.device)
+        except Exception:
+            # If moving fails, fall back to original X
+            X_dev = X
+
+        ls = self.model.H_eig_random_svd(X_dev, k=k)
         self.lambdas_H = ls
         return ls
 

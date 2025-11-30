@@ -461,6 +461,8 @@ if __name__ == '__main__':
                         help='Small coefficient for He3 component in target')
     parser.add_argument('--batch_size', type=int, default=None,
                         help='Batch size for training (default: P)')
+    parser.add_argument('--device', type=str, default=None,
+                        help="Torch device string, e.g. 'cuda:1' or 'cpu'. If omitted, code uses 'cuda:1' when available otherwise 'cpu'.")
     args = parser.parse_args()
 
     global  debug
@@ -523,7 +525,29 @@ if __name__ == '__main__':
 
     # Set the default dtype to float64
     torch.set_default_dtype(torch.float64)
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    # Device selection: prefer user-specified device if provided.
+    # If the user requests a CUDA device but CUDA is unavailable, fall back to CPU.
+
+
+    ###################################################################################
+    ##.    &*&   Device Selection.              &*&.
+    ###################################################################################
+    if getattr(args, 'device', None):
+        try:
+            requested = str(args.device)
+            # Normalize input like 'cuda' -> 'cuda:0' if necessary
+            if requested == 'cuda':
+                requested = 'cuda:0'
+            device = torch.device(requested)
+            if 'cuda' in requested and not torch.cuda.is_available():
+                print(f"Requested device {requested}, but CUDA is not available. Falling back to CPU.")
+                device = torch.device('cpu')
+        except Exception as e:
+            print(f"Invalid device '{args.device}' provided: {e}. Using default device selection.")
+            device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     # Resume decides whether to load from existing checkpoint
     resume = False
