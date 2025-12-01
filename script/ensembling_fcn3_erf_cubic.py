@@ -1,9 +1,27 @@
-from torch.utils.data import TensorDataset, DataLoader, random_split
 import sys
 sys.path.insert(0, '/home/akiva/FCNX-Ensembling/lib')
+# Experiment helper (provides MF predictions via Julia FCS)
+# Set Julia environment variables before importing Experiment/juliacall so
+# multiple Python processes don't trigger concurrent Julia precompilation.
+import os
+try:
+    from Experiment import Experiment
+except Exception as e:
 
-from google.oauth2.service_account import Credentials
-import gspread
+    Experiment = None
+from torch.utils.data import TensorDataset, DataLoader, random_split
+
+# Google Sheets client imports are optional — guard them so the script
+# can run without `google` / `gspread` installed.
+try:
+    from google.oauth2.service_account import Credentials
+    import gspread
+    _google_imports_ok = True
+except Exception:
+    Credentials = None
+    gspread = None
+    _google_imports_ok = False
+    print("Warning: 'google' or 'gspread' packages not installed — Google Sheets logging will be disabled.")
 import torch._dynamo as dynamo
 
 import signal
@@ -38,10 +56,11 @@ from FCN3Network import FCN3NetworkEnsembleErf
 from GPKit import gpr_dot_product_explicit
 
 
+
 ##################################################
 ### &*&   GOOGLE SHEETS LOGGING SETUP.   &*&
 ##################################################
-GOOGLE_SHEETS_ENABLED = True 
+GOOGLE_SHEETS_ENABLED = _google_imports_ok
 GOOGLE_SHEETS_CREDENTIALS_FILE = '/home/akiva/google_api_sheets_service_account.json'
 GOOGLE_SHEET_NAME = 'FCN3TrainingProgress' 
 
@@ -463,6 +482,8 @@ if __name__ == '__main__':
                         help='Batch size for training (default: P)')
     parser.add_argument('--device', type=str, default=None,
                         help="Torch device string, e.g. 'cuda:1' or 'cpu'. If omitted, code uses 'cuda:1' when available otherwise 'cpu'.")
+    parser.add_argument('--headless', action='store_true',
+                        help='Run without interactive progress bars / plotting; print summary every ~10k epochs')
     args = parser.parse_args()
 
     global  debug
@@ -512,7 +533,16 @@ if __name__ == '__main__':
     save_interval = 100_000
     eigenvalue_log_interval = 10_000
     gsheets_log_interval = 10_000
-    tqdm_log_interval = 100
+    tqdm_log_interval = 1000
+
+    # If headless was requested via CLI, reduce frequent interactive updates
+    headless = getattr(args, 'headless', False)
+    if headless:
+        # align log intervals to ~10k for less verbose output
+        log_interval = min(log_interval, 10_000)
+        eigenvalue_log_interval = 10_000
+        gsheets_log_interval = 10_000
+        tqdm_log_interval = max(tqdm_log_interval, 10_000)
 
     # Set seeds as constants
     DATA_SEED = 613
@@ -557,7 +587,7 @@ if __name__ == '__main__':
     if not debug:
         if args.modeldesc is not None:
             modeldesc = os.path.normpath(args.modeldesc)
-            save_dir = os.path.join("/home/akiva/fcn3s", modeldesc)
+            save_dir = os.path.join("/home/akiva/exp/fcn3erf", modeldesc)
             runs_dir = os.path.join(save_dir, "runs")
             os.makedirs(runs_dir, exist_ok=True)
             resume = True
@@ -748,11 +778,44 @@ if __name__ == '__main__':
         print('Failed to compute initial eigenvalues:',  e)
         pass
 
-    with tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch) as pbar:
-        global training_pbar
+# Compute MF predictions once (expensive) and reuse during training if available
+preds = None
+if Experiment is not None:
+    try:
+        exp = Experiment(save_dir, hidden_size, input_size, chi, num_samples, ens)
+        preds = exp.eig_predictions()
+        print("MF predictions computed and cached in 'preds'.")
+        # Fancy listing of predictions with nice styled header
+        print("="*40)
+        print(f"{'Mean-Field Eigenvalue Predictions':^40}")
+        print("="*40)
+        for key in ['lH1T', 'lH1P', 'lH3T', 'lH3P', 'lK1T', 'lK1P', 'lK3T', 'lK3P']:
+            if hasattr(preds, key):
+                value = getattr(preds, key)
+                print(f"{key:>10}: {value:.6g}")
+        print("="*40)
+    except Exception as _e:
+        print(f"[Warning] Could not compute MF predictions at startup: {_e}")
+
+    # Use a dummy progress bar in headless mode to avoid interactive updates
+    if headless:
+        class _DummyPbar:
+            def update(self, n=1):
+                return
+
+            def set_postfix(self, *args, **kwargs):
+                return
+
+            def close(self):
+                return
+
+        pbar = _DummyPbar()
+        training_pbar = pbar
+    else:
+        pbar = tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch)
         training_pbar = pbar
 
-        while epoch < epochs:
+    while epoch < epochs:
 
             model.zero_grad()
             effective_learning_rate_for_update = lrA
@@ -783,12 +846,20 @@ if __name__ == '__main__':
                 if not torch.isfinite(loss):
                     print(f"Warning: Invalid loss at epoch {epoch}: {loss.item()}")
 
-                pbar.update(1)
+                # advance progress (no-op in headless mode)
+                try:
+                    pbar.update(1)
+                except Exception:
+                    pass
                 # Update progress bar with time info
-                pbar.set_postfix({
-                    "MSE": f"{avg_loss:.6f}",
-                    "Lr": f"{current_base_learning_rate:.2e}",
-                })
+                # update postfix if available (no-op in headless)
+                try:
+                    pbar.set_postfix({
+                        "MSE": f"{avg_loss:.6f}",
+                        "Lr": f"{current_base_learning_rate:.2e}",
+                    })
+                except Exception:
+                    pass
 
                 epoch += 1
 
@@ -804,7 +875,11 @@ if __name__ == '__main__':
                 print(f" File: {fname}")
                 print(f" Line: {line_number}")
 
-                pbar.update(1)
+                try:
+                    pbar.update(1)
+                except Exception:
+                    pass
+                
                 epoch += 1
                 continue
 
@@ -819,11 +894,41 @@ if __name__ == '__main__':
             if ((epoch) % eigenvalue_log_interval == 0 or epoch == 0) and not args.debug:
                 try:
                     lH1, lH3, lK1, lK3 = gen_eigenvalues_for_logging(
-                            model, X_inf, Y1_inf, Y3_inf)
+                        model, X_inf, Y1_inf, Y3_inf)
                     eigenvalues_data = sift_eigenvalues_for_logging(
-                            lH1, lH3, lK1, lK3, kappa, num_samples)
+                        lH1, lH3, lK1, lK3, kappa, num_samples)
                     scalarsH1, scalarsH3, scalarsK1, scalarsK3, muK1, muK3 = eigenvalues_data
+
+                    # Log the raw eigenvalue scalars to TensorBoard
                     log_eigenvalues_to_tensorboard(writer_cm, epoch, *eigenvalues_data)
+
+                    # If precomputed MF predictions are available, add horizontal prediction series to TensorBoard
+                    if preds is not None:
+                        try:
+                            # He1 predictions
+                            sH1 = dict(scalarsH1)
+                            sH1['mf_target'] = float(getattr(preds, 'lH1T', float('nan')))
+                            sH1['mf_perp'] = float(getattr(preds, 'lH1P', float('nan')))
+                            writer_cm.add_scalars('Eigenvalues/He1', sH1, epoch)
+
+                            # He3 predictions
+                            sH3 = dict(scalarsH3)
+                            sH3['mf_target'] = float(getattr(preds, 'lH3T', float('nan')))
+                            sH3['mf_perp'] = float(getattr(preds, 'lH3P', float('nan')))
+                            writer_cm.add_scalars('Eigenvalues/He3', sH3, epoch)
+
+                            # K_He1 / K_He3: use computed lK predictions if available
+                            sK1 = dict(scalarsK1)
+                            sK1['mf_target'] = float(getattr(preds, 'lK1T', getattr(preds, 'lJ1T', float('nan'))))
+                            sK1['mf_perp'] = float(getattr(preds, 'lK1P', getattr(preds, 'lJ1P', float('nan'))))
+                            writer_cm.add_scalars('Eigenvalues/K_He1', sK1, epoch)
+
+                            sK3 = dict(scalarsK3)
+                            sK3['mf_target'] = float(getattr(preds, 'lK3T', getattr(preds, 'lJ3T', float('nan'))))
+                            sK3['mf_perp'] = float(getattr(preds, 'lK3P', getattr(preds, 'lJ3P', float('nan'))))
+                            writer_cm.add_scalars('Eigenvalues/K_He3', sK3, epoch)
+                        except Exception as _e:
+                            print(f"[Warning] Could not log MF prediction lines to TensorBoard: {_e}")
 
                     eigenvalues = {
                         'He1': scalarsH1,
@@ -898,3 +1003,8 @@ if __name__ == '__main__':
         except Exception as e:
             print(
                 f"Error updating Google Sheets status at end of training: {e}")
+    # ensure progress bar cleaned up
+    try:
+        pbar.close()
+    except Exception:
+        pass

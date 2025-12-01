@@ -4,7 +4,7 @@ module FCS
 export residuals, gradient_descent_solver, compute_lK_ratio, sweep_learnabilities, nlsolve_solver
 
 
-
+using Pkg
 using ForwardDiff
 using LinearAlgebra
 using Plots  # for plotting
@@ -24,7 +24,7 @@ using LaTeXStrings
 
 is_physical(sol) = all(sol .> 0)
 using Base: @kwdef
-
+Pkg.instantiate()
 
 
 
@@ -171,10 +171,10 @@ function residuals(x, P, chi, d, kappa, delta, epsilon, n, b)
     n2 = n
     a = 1.0 / 6
     lWP =  1.0 / d
-    lV1 = - 1 * ( lH1 / lJ1^2 - 1 / lJ1)
-    lV3 =  - 1 * ( (lH3 / lJ3^2 - 1 / lJ3) )
+    lV1 =    -  ( lH1 / lJ1^2 - 1.0 / lJ1)
+    lV3 =    - ( (lH3 / lJ3^2 - 1.0 / lJ3) )
 
-    C = d +(1/2)*delta * b * n2 * lV1 / n1
+    C = d   + delta * b * n2 * lV1 / n1
 
     K0 = C
 

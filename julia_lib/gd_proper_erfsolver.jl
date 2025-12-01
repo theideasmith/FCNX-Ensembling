@@ -183,4 +183,3 @@ println("Ratio of readout: ")
 println("lK1T / lK1P: $(lK1T/lK1P)")
 println("lK3T / lK3P: $(lK3T/lK3P)")
 
-

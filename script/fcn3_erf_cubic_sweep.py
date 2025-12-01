@@ -35,10 +35,13 @@ import sys
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-
+_script_dir = Path(__file__).resolve().parent
+_lib_dir = _script_dir.parent / 'lib'
+sys.path.insert(0, str(_lib_dir))
+sys.path.insert(0, str(_script_dir))
 # Import centralized experiment collections
 try:
-    from script.experiment_collections import erf_cubic_P_SWEEP
+    raise Exception# from experiment_collections import erf_cubic_P_SWEEP
 except Exception:
     # Fallback: if import fails, define an empty list so script still runs
     erf_cubic_P_SWEEP = []
@@ -98,7 +101,8 @@ def build_command(modeldesc, device, extra_args=None):
 
     if extra_args:
         cmd += extra_args
-
+    print(cmd)
+    breakpoint()
     return cmd
 
 

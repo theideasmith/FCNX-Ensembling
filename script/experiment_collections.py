@@ -16,7 +16,16 @@ erf_cubic_P_SWEEP = [
     'erf_cubic_eps_0.03_P_1000_D_40_N_250_epochs_20000000_lrA_1.00e-09_time_20251125_140822',
 ]
 
+erf_cubic_P_SWEEP_RERUN = [
+    'P_400',
+    'P_200',
+    'P_40',
+    'P_1000',
+    'P_20'
+]
+
 # Example: you can add more named groups for different sweeps.
 EXPERIMENT_GROUPS = {
     'erf_cubic_P_SWEEP': erf_cubic_P_SWEEP,
+    'erf_cubic_P_SWEEP_RERUN': erf_cubic_P_SWEEP_RERUN,
 }

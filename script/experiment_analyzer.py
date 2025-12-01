@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 _script_dir = Path(__file__).resolve().parent
 _lib_dir = _script_dir.parent / 'lib'
 sys.path.insert(0, str(_lib_dir))
-
+sys.path.insert(0, str(_script_dir))
 # Import the Experiment class from the repo's helper module
 from Experiment import Experiment
 import torch
@@ -43,7 +43,7 @@ import torch
 # hardcoded list if import fails (keeps behaviour safe if the module is not
 # available in some environments).
 try:
-    from script.experiment_collections import erf_cubic_P_SWEEP as _DEFAULT_EXPERIMENTS
+    from experiment_collections import erf_cubic_P_SWEEP as _DEFAULT_EXPERIMENTS
 except Exception:
     _DEFAULT_EXPERIMENTS = [
         'erf_cubic_eps_0.03_P_400_D_40_N_250_epochs_20000000_lrA_2.50e-09_time_20251125_140822',
@@ -216,9 +216,9 @@ class ExperimentAnalyzer:
         plt.figure(figsize=(8, 6))
         plt.plot(Ps, top_vals, marker='o', linestyle='-', label='empirical top eig')
         plt.plot(Ps, lH1T, marker='x', linestyle='--', label='MF lH1T')
-        plt.plot(Ps, lH1P, marker='s', linestyle='--', label='MF lH1P')
+        # plt.plot(Ps, lH1P, marker='s', linestyle='--', label='MF lH1P')
 
-        plt.xscale('log')
+        # plt.xscale('log')
         plt.yscale('log')
         plt.xlabel('P (log scale)')
         plt.ylabel('Top eigenvalue (log scale)')

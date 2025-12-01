@@ -4,12 +4,17 @@ LANGEVIN_SEED = 480
 import warnings
 
 import os
+# Set the JULIA_PYTHONCALL_EXE environment variable before importing juliacall
+
 import numpy as np
 from dataclasses import dataclass, field
 import sys
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 sys.path.insert(0, '/home/akiva/FCNX-Ensembling')
+import os
+os.environ["PYTHONCALL_JULIA_PYTHON"] = "yes"
+
 
 import juliacall
 from juliacall import Main as jl
@@ -31,7 +36,7 @@ def strip_orig_mod_prefix(state_dict):
     return new_state_dict
 
 from dataclasses import dataclass
-from typing import List, Iterable
+from typing import List, Iterable, Optional
 
 @dataclass
 class Eigenvalues:
@@ -43,6 +48,11 @@ class Eigenvalues:
     lJ3P: float
     lH1P: float
     lH3P: float
+    # Readout / kernel eigenvalue predictions (optional — may be computed later)
+    lK1T: Optional[float] = None
+    lK3T: Optional[float] = None
+    lK1P: Optional[float] = None
+    lK3P: Optional[float] = None
     @classmethod
     def from_list(cls, values: Iterable[float]) -> 'Eigenvalues':
         return cls(
@@ -195,10 +205,10 @@ class Experiment:
             P = self.P
             lr =1e-6
             Tf = 60_000
-
+            kappa = 1.0
             lT = jl.FCS.nlsolve_solver(
                 i0,
-                chi=χ, d=d, kappa=1.0, delta=δ,
+                chi=χ, d=d, kappa=kappa, delta=δ,
                 epsilon=ϵ, n=n, b=4 / (3 * π),
                 P=P, lr=lr, max_iter=Tf, verbose=False, anneal=True
             )
@@ -212,7 +222,30 @@ class Experiment:
                 P=P, lr=lr, max_iter=Tf, verbose=False, anneal=True
             )
 
-            return Eigenvalues(*lT, *lP)
+            preds = Eigenvalues(*lT, *lP)
+
+            # Try to compute readout/kernel eigenvalue predictions via Julia FCS
+            try:
+                lK_T = jl.FCS.compute_lK(lT, P, n,  χ, d, δ , kappa, ϵ, 4/(3*π))
+                lK_T_py = [float(x) for x in lK_T]
+                if len(lK_T_py) >= 1:
+                    preds.lK1T = lK_T_py[0]
+                if len(lK_T_py) >= 2:
+                    preds.lK3T = lK_T_py[1]
+            except Exception as _e:
+                print(f"Warning: compute_lK (T) failed: {_e}")
+
+            try:
+                lK_P = jl.FCS.compute_lK(lP, P, n,  χ, d, 0.0 , kappa, ϵ, 4/(3*π))
+                lK_P_py = [float(x) for x in lK_P]
+                if len(lK_P_py) >= 1:
+                    preds.lK1P = lK_P_py[0]
+                if len(lK_P_py) >= 2:
+                    preds.lK3P = lK_P_py[1]
+            except Exception as _e:
+                print(f"Warning: compute_lK (P) failed: {_e}")
+
+            return preds
         except Exception as e:
             print(e)
 
