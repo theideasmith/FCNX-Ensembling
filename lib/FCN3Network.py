@@ -96,18 +96,18 @@ class FCN3NetworkEnsembleErf(nn.Module):
         self.num_samples = P
         self.device = device
         self.W0 = nn.Parameter(torch.normal(mean=0.0,  std=torch.full((ens, n1, d), weight_initialization_variance[0]**0.5)).to(device),
-                               requires_grad=True).to(torch.float64)  # requires_grad moved here
+                       requires_grad=True).to(torch.float32)  # requires_grad moved here
 
         # self._h1_buffer = nn.Parameter(torch.zeros((P, ensembles, n1)).to(device), requires_grad=False)
         # self._h2_buffer = nn.Parameter(torch.zeros((P, ensembles, n2)).to(device), requires_grad=False)
         # self._f_buffer = nn.Parameter(torch.zeros((P,ensembles)).to(device), requires_grad=False)
 
         self.W1 = nn.Parameter(torch.normal(mean=0.0,
-                                            std=torch.full((ens, n2, n1), weight_initialization_variance[1]**0.5)).to(device),
-                               requires_grad=True).to(torch.float64)  # requires_grad moved here
+                            std=torch.full((ens, n2, n1), weight_initialization_variance[1]**0.5)).to(device),
+                       requires_grad=True).to(torch.float32)  # requires_grad moved here
         self.A = nn.Parameter(torch.normal(mean=0.0,
-                                           std=torch.full((ens, n2), weight_initialization_variance[2]**0.5)).to(device),
-                              requires_grad=True).to(torch.float64)  # requires_grad moved here
+                           std=torch.full((ens, n2), weight_initialization_variance[2]**0.5)).to(device),
+                      requires_grad=True).to(torch.float32)  # requires_grad moved here
         if self.num_samples is not None:
             self._precompute_einsum_paths_h1(self.num_samples)
             self._precompute_einsum_paths_h0(self.num_samples)
@@ -120,7 +120,7 @@ class FCN3NetworkEnsembleErf(nn.Module):
             (num_samples, self.ens, self.n2)
         ]
         dummy_tensors = [torch.empty(
-            s, device=self.device, dtype=torch.float64) for s in shapes]
+            s, device=self.device, dtype=torch.float32) for s in shapes]
         path, _ = contract_path(eq, *dummy_tensors)
         self.forward_path_f = path
 
@@ -131,7 +131,7 @@ class FCN3NetworkEnsembleErf(nn.Module):
             (num_samples, self.ens, self.n1)
         ]
         dummy_tensors = [torch.empty(
-            s, device=self.device, dtype=torch.float64) for s in shapes]
+            s, device=self.device, dtype=torch.float32) for s in shapes]
         path, _ = contract_path(eq, *dummy_tensors)
         self.forward_path_h1 = path
 
@@ -142,7 +142,7 @@ class FCN3NetworkEnsembleErf(nn.Module):
             (num_samples, self.d)
         ]
         dummy_tensors = [torch.empty(
-            s, device=self.device, dtype=torch.float64) for s in shapes]
+            s, device=self.device, dtype=torch.float32) for s in shapes]
         path, _ = contract_path(eq, *dummy_tensors)
         self.forward_path_h0 = path
 
@@ -202,11 +202,11 @@ class FCN3NetworkEnsembleErf(nn.Module):
                 with timed("Random Omega generation"):
                     Omega = torch.randn((X.shape[0], l),
                                         device=self.device,
-                                        dtype=torch.float64)
+                                        dtype=torch.float32)
 
                 res = torch.zeros((X.shape[0], l),
                                 device=self.device,
-                                dtype=torch.float64)
+                                dtype=torch.float32)
 
                 # ----- Build `res` (the random-projection matrix) ----------------------
                 chunk_size = 4096          # 2048 * 2; feel free to tune
@@ -229,7 +229,7 @@ class FCN3NetworkEnsembleErf(nn.Module):
 
                 Z = torch.zeros((X.shape[0], l),
                                 device=self.device,
-                                dtype=torch.float64)
+                                dtype=torch.float32)
 
                 # ----- Build `Z` (kernel projected onto Q) ------------------------------
                 with timed(f"Z computation (chunks of {chunk_size})"):
@@ -320,6 +320,9 @@ class FCN3NetworkEnsembleErf(nn.Module):
     def H_random_QB(self, X, k = 100, p = 25):
         print("Computing H_random_QB on device: ", self.device)
 
+
+        xtype = torch.float32 if X.dtype == torch.float32 else torch.float64
+
         # Returns a low rank QB decomposition of A 
         # using Halko et. al. 2011's random SVD algorithm
         with torch.no_grad():
@@ -330,12 +333,11 @@ class FCN3NetworkEnsembleErf(nn.Module):
             with timed("Random Omega generation"):
                 Omega = torch.randn((X.shape[0], l),
                                     device=self.device,
-                                    dtype=torch.float64)
+                                    dtype=xtype)
 
             res = torch.zeros((X.shape[0], l),
                             device=self.device,
-                            dtype=torch.float64)
-
+                            dtype=xtype)
             # ----- Build `res` (the random-projection matrix) ----------------------
             chunk_size = 4096          # 2048 * 2; feel free to tune
             N = X.shape[0]
@@ -357,7 +359,7 @@ class FCN3NetworkEnsembleErf(nn.Module):
 
             Z = torch.zeros((X.shape[0], l),
                             device=self.device,
-                            dtype=torch.float64)
+                            dtype=xtype)
 
             # ----- Build `Z` (kernel projected onto Q) ------------------------------
             with timed(f"Z computation (chunks of {chunk_size})"):

@@ -11,3 +11,9 @@ plots/*
 plots/
 FCN3Exps/**.log
 
+
+
+# Ignore NumPy compressed arrays and Python cache directories
+*.npz
+__pycache__/
+

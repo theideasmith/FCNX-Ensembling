@@ -186,7 +186,7 @@ def delete_gsheets_row_by_foldername(folder_name):
         print(f'Google Sheets row delete error: {e}')
 
 # Set the default dtype to float64
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 
 # Custom loss function (slightly faster than MSE)
 def custom_mse_loss(outputs, targets):
@@ -252,7 +252,7 @@ if __name__ == '__main__':
     global current_base_learning_rate
     current_base_learning_rate = lrA
     # Set the default dtype to float64
-    torch.set_default_dtype(torch.float64)
+    torch.set_default_dtype(torch.float32)
 
     if not debug:
         if args.modeldesc is not None:
@@ -385,7 +385,7 @@ if __name__ == '__main__':
     # Seed for data
     torch.manual_seed(DATA_SEED)
     # Create data on GPU directly and pin memory
-    X = torch.randn((num_samples, input_size), dtype=torch.float64, device=device)
+    X = torch.randn((num_samples, input_size), dtype=torch.float32, device=device)
     Y = X[:, 0].unsqueeze(-1)
 
     # Seed for model
@@ -410,10 +410,10 @@ if __name__ == '__main__':
     losses = []
     
     # Move weight decay to GPU - THIS IS CRITICAL FOR PERFORMANCE
-    weight_decay = torch.tensor([input_size, hidden_size, hidden_size*chi], dtype=torch.float64, device=device) * t
+    weight_decay = torch.tensor([input_size, hidden_size, hidden_size*chi], dtype=torch.float32, device=device) * t
 
     # Pre-allocate noise buffer for Langevin dynamics
-    noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
+    noise_buffer = torch.empty(1, device=device, dtype=torch.float32)
     
     # Resume logic
     epoch = 0

@@ -1,4 +1,39 @@
+# ============================================================================
 
+#  FCS.jl — Fixed-point Consistency Solver for FCN3 (erf activations)
+# ============================================================================
+# Purpose:
+#   Numerical solvers and helpers that compute mean-field / fixed-point
+#   predictions used by the Python `Experiment` wrapper. This module exposes
+#   routines to solve the nonlinear FCS equations (via `NLsolve` or a simple
+#   gradient-descent fallback), to compute kernel-derived eigenvalues and
+#   learnability metrics, and to sweep parameter ranges.
+#
+# Exports (most important):
+#   - residuals
+#   - gradient_descent_solver
+#   - compute_lK_ratio
+#   - sweep_learnabilities
+#   - nlsolve_solver
+#   - solve_FCN3_Erf
+#   - populate_solution
+#
+# Quick example (from Julia REPL):
+#   using Pkg; Pkg.instantiate()
+#   using FCS
+#   params = FCS.ProblemParams(d=50.0f0, κ=1.0f0, ϵ=0.03f0, P=4000.0f0, n=200.0f0, χ=5.0f0)
+#   guess = [1.0, 1.0, 1.0, 1.0]
+#   sol = FCS.solve_FCN3_Erf(params, guess; verbose=true)
+#
+# Dependencies:
+#   ForwardDiff, NLsolve, LinearAlgebra, Plots (optional), Colors
+#
+# Metadata:
+#   Project: FCNX-Ensembling
+#   Path:    julia_lib/FCS.jl
+#   Author:  repo maintainers
+#   Date:    2025-12-02
+#
 module FCS
 
 export residuals, gradient_descent_solver, compute_lK_ratio, sweep_learnabilities, nlsolve_solver
@@ -171,8 +206,15 @@ function residuals(x, P, chi, d, kappa, delta, epsilon, n, b)
     n2 = n
     a = 1.0 / 6
     lWP =  1.0 / d
-    lV1 =    -  ( lH1 / lJ1^2 - 1.0 / lJ1)
-    lV3 =    - ( (lH3 / lJ3^2 - 1.0 / lJ3) )
+
+    # Conjugate inter-layer discrepancies by the inverse kernels
+    # J : Downstream ↦ Upstream
+    # H : Upstream ↦ Preactivation
+    # J^-1 : Preimage of H ↦ Preimage of J
+    # V: Discrepancy between H1 and J1 in the preimage of J1
+    # FCS is the equations of state for FCN3 with erf activations
+    lV1 =    -  lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)
+    lV3 =    - lJ3^(-1) * (lH3  - lJ3) * lJ3^(-1)
 
     C = d   + delta * b * n2 * lV1 / n1
 

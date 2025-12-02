@@ -195,7 +195,7 @@ def delete_gsheets_row_by_foldername(folder_name):
         print(f'Google Sheets row delete error: {e}')
 
 # Set the default dtype to float64
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 
 # Custom loss function (slightly faster than MSE)
 def custom_mse_loss(outputs, targets):

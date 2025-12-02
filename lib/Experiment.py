@@ -20,7 +20,7 @@ import juliacall
 from juliacall import Main as jl
 import torch
 torch.manual_seed(DATA_SEED)
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 DEVICE = torch.device('cuda:1')
 
 from FCN3Network import FCN3NetworkEnsembleErf
@@ -95,7 +95,7 @@ class Experiment:
 
     def large_dataset(self, p_large = 1000, flat=False):
         torch.manual_seed(DATA_SEED)
-        Xinf = torch.randn((p_large, self.d), dtype=torch.float64).to(self.device)
+        Xinf = torch.randn((p_large, self.d), dtype=torch.float32).to(self.device)
         z = Xinf[:,:]
         He1 = z
         He3 = 1/6 * (z**3 - 3.0 * z)
@@ -108,7 +108,7 @@ class Experiment:
         # self.device = DEVICE
         self.lambdas_H = None
         torch.manual_seed(DATA_SEED)
-        self.X = torch.randn((self.P, self.d), dtype=torch.float64)
+        self.X = torch.randn((self.P, self.d), dtype=torch.float32)
         z = self.X[:,0]
         self.He1 = z
         self.He3 = z**3 - 3.0 * z

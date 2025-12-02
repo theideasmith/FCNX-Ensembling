@@ -521,8 +521,8 @@ if __name__ == '__main__':
     global current_base_learning_rate
     current_base_learning_rate = lrA
 
-    # Set the default dtype to float64
-    torch.set_default_dtype(torch.float64)
+    # Set the default dtype to float32
+    torch.set_default_dtype(torch.float32)
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Resume decides whether to load from existing checkpoint
@@ -593,7 +593,7 @@ if __name__ == '__main__':
     ################################################
     torch.manual_seed(DATA_SEED)
     X = torch.randn((num_samples, input_size),
-                    dtype=torch.float64, device=device)
+                    dtype=torch.float32, device=device)
 
     # Target: y(x) = He1(w·x) + eps * He3(w·x), probabilists' Hermite with w = e1
     z = X[:, 0]  # w = e1 along w0 direction
@@ -602,7 +602,7 @@ if __name__ == '__main__':
     Y = (He1 + eps * He3).unsqueeze(-1)
 
     torch.manual_seed(DATA_SEED)
-    X_inf = torch.randn((2000, input_size), dtype=torch.float64, device=device)
+    X_inf = torch.randn((2000, input_size), dtype=torch.float32, device=device)
     Y1_inf = X_inf  # He1 along each coordinate
     Y3_inf = eps * (X_inf**3 - 3.0 * X_inf)  # He3 along each coordinate
 
@@ -702,10 +702,10 @@ if __name__ == '__main__':
     ## &*& Initializing Langevin dynamics parameters. &*&
     ###############################################################
     weight_decay = torch.tensor(
-        [input_size, hidden_size, hidden_size*chi], dtype=torch.float64, device=device) * t
+        [input_size, hidden_size, hidden_size*chi], dtype=torch.float32, device=device) * t
 
     # Pre-allocate noise buffer for Langevin dynamics
-    noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
+    noise_buffer = torch.empty(1, device=device, dtype=torch.float32)
     # Dedicated RNG for Langevin noise to ensure deterministic, epoch-indexed randomness
     langevin_gen = torch.Generator(device=device)
 

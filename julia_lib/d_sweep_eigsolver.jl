@@ -280,7 +280,7 @@ default(titlefont=font(18), guidefont=font(16), tickfont=font(14), legendfontsiz
 
 # Single combined figure for all eigenvalue traces
 # Increase left margin so y-labels are not clipped when saving PNGs
-plt_all = plot(yscale=:log10, xlabel=latexstring("d"), ylabel=latexstring("\\lambda"), legend=:outerright, size=(1400,900))
+plt_all = plot(yscale = :log10, xscale=:log10, xlabel=latexstring("d"), ylabel=latexstring("\\lambda"), legend=:outerright, size=(1400,900))
 
 # helper to create LaTeX labels with interpolation
 function latex_label(op, mode_sym, mode_idx, P_desc)

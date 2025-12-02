@@ -484,6 +484,11 @@ if __name__ == '__main__':
                         help="Torch device string, e.g. 'cuda:1' or 'cpu'. If omitted, code uses 'cuda:1' when available otherwise 'cpu'.")
     parser.add_argument('--headless', action='store_true',
                         help='Run without interactive progress bars / plotting; print summary every ~10k epochs')
+    # Default timestamped is false
+    parser.add_argument('--timestamped', type=bool, default=False,
+                        help='Whether to append timestamp to modeldesc (default: False)')
+    parser.add_argument('--experiment_dirname', type=str, default='ensembling_fcn3_erf_cubic',
+                        help='Base directory name for experiments (default: ensembling_fcn3_erf_cubic)')
     args = parser.parse_args()
 
     global  debug
@@ -505,7 +510,7 @@ if __name__ == '__main__':
     ################################################################
     # &*&   Main hyperparameters from arguments.        &*&
     ################################################################
-
+    
     epochs = args.epochs
     modeldesc = ''
     save_dir = getattr(args, 'modeldesc', '')
@@ -522,7 +527,7 @@ if __name__ == '__main__':
     t0 = 2 * k
     t = t0 / chi  # Temperature for Langevin (used in noise)
     eps = float(getattr(args, 'eps', 0.03))
-
+    ghost = False  # Whether running in ghost mode (no saving/logging)
     # --- Learning Rate Schedule Parameters ---
     alphaT = max(0.0, min(1.0, getattr(args, 'alphaT', 0.7)))
     T = int(epochs * alphaT)
@@ -531,10 +536,12 @@ if __name__ == '__main__':
     # Log intervals
     log_interval = 15_000
     save_interval = 100_000
-    eigenvalue_log_interval = 10_000
-    gsheets_log_interval = 10_000
-    tqdm_log_interval = 10_000
+    eigenvalue_log_interval = 100_000
+    gsheets_log_interval = 100_000
+    tqdm_log_interval = 100_000
 
+    timestamped = getattr(args, 'timestamped', False)
+    experiment_dirname = getattr(args, 'experiment_dirname', 'ensembling_fcn3_erf_cubic')   
     # If headless was requested via CLI, reduce frequent interactive updates
     headless = getattr(args, 'headless', False)
     if headless:
@@ -554,7 +561,7 @@ if __name__ == '__main__':
     current_base_learning_rate = lrA
 
     # Set the default dtype to float64
-    torch.set_default_dtype(torch.float64)
+    torch.set_default_dtype(torch.float32)
 
     # Device selection: prefer user-specified device if provided.
     # If the user requests a CUDA device but CUDA is unavailable, fall back to CPU.
@@ -584,7 +591,7 @@ if __name__ == '__main__':
 
     # Conditionally set up logging and saving directories
     # based on whether in debug mode
-    if not debug:
+    if not debug and not ghost:
         if args.modeldesc is not None:
             modeldesc = os.path.normpath(args.modeldesc)
             save_dir = os.path.join("/home/akiva/exp/fcn3erf", modeldesc)
@@ -592,14 +599,22 @@ if __name__ == '__main__':
             os.makedirs(runs_dir, exist_ok=True)
             resume = True
         else:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lrA_{lrA:.2e}_time_{timestamp}"
-            save_dir = os.path.join("/home/akiva/exp/fcn3erf", modeldesc)
+            if timestamped == True:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lr_{args.lrA:.2e}_time_{timestamp}"
+            else:
+                modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lr_{args.lrA:.2e}"
+            save_dir = os.path.join("/home/akiva/exp/", experiment_dirname, modeldesc)
             os.makedirs(save_dir, exist_ok=True)
             runs_dir = os.path.join(save_dir, "runs")
             os.makedirs(runs_dir, exist_ok=True)
             resume = False
-
+        config_path = os.path.join(save_dir, 'config.json')
+        # Save the configuration to config.json
+        with open(config_path, 'w') as f:
+            # Use vars(args) to get a dictionary of all arguments
+            json.dump(vars(args), f, indent=4) 
+        print(f"Saved configuration to {config_path}")
         # Initialize TensorBoard writer
         writer_cm = SummaryWriter(log_dir=runs_dir)
         state_path = os.path.join(save_dir, 'state.json')
@@ -647,7 +662,7 @@ if __name__ == '__main__':
     ################################################
     torch.manual_seed(DATA_SEED)
     X = torch.randn((num_samples, input_size),
-                    dtype=torch.float64, device=device)
+                    dtype=torch.float32, device=device)
 
     # Target: y(x) = He1(w·x) + eps * He3(w·x), probabilists' Hermite with w = e1
     z = X[:, 0]  # w = e1 along w0 direction
@@ -656,7 +671,7 @@ if __name__ == '__main__':
     Y = (He1 + eps * He3).unsqueeze(-1)
 
     torch.manual_seed(DATA_SEED)
-    X_inf = torch.randn((2000, input_size), dtype=torch.float64, device=device)
+    X_inf = torch.randn((2000, input_size), dtype=torch.float32, device=device)
     Y1_inf = X_inf  # He1 along each coordinate
     Y3_inf = eps * (X_inf**3 - 3.0 * X_inf)  # He3 along each coordinate
 
@@ -756,10 +771,10 @@ if __name__ == '__main__':
     ## &*& Initializing Langevin dynamics parameters. &*&
     ###############################################################
     weight_decay = torch.tensor(
-        [input_size, hidden_size, hidden_size*chi], dtype=torch.float64, device=device) * t
+        [input_size, hidden_size, hidden_size*chi], dtype=torch.float32, device=device) * t
 
     # Pre-allocate noise buffer for Langevin dynamics
-    noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
+    noise_buffer = torch.empty(1, device=device, dtype=torch.float32)
     # Dedicated RNG for Langevin noise to ensure deterministic, epoch-indexed randomness
     langevin_gen = torch.Generator(device=device)
 
@@ -883,7 +898,7 @@ if Experiment is not None:
                 epoch += 1
                 continue
 
-            if (epoch) % log_interval == 0 or epoch == 0:
+            if (epoch) % log_interval == 0 or epoch == 0 and not ghost:
                 with open(state_path, 'w') as f:
                     json.dump({'epoch': epoch}, f)
                     writer_cm.add_scalar('Loss', avg_loss, epoch)
@@ -891,7 +906,7 @@ if Experiment is not None:
                         'Learning Rate', current_base_learning_rate, epoch)
 
             eigenvalues = {}
-            if ((epoch) % eigenvalue_log_interval == 0 or epoch == 0) and not args.debug:
+            if ((epoch) % eigenvalue_log_interval == 0 or epoch == 0) and not args.debug and not ghost:
                 try:
                     lH1, lH3, lK1, lK3 = gen_eigenvalues_for_logging(
                         model, X_inf, Y1_inf, Y3_inf)
@@ -944,7 +959,7 @@ if Experiment is not None:
                     eigenvalues = None
             
 
-            if (epoch) % gsheets_log_interval == 0 or epoch == 0:   
+            if (epoch) % gsheets_log_interval == 0 or epoch == 0 and not ghost:   
                 try:
                     log_to_gsheets(
                         epoch=epoch,
@@ -974,35 +989,36 @@ if Experiment is not None:
                 except Exception as save_exc:
                     print(f"[Warning] Error saving model or losses at epoch {epoch}: {save_exc}")
 
-    # Close TensorBoard writer
-    if writer_cm is not None:
-        writer_cm.close()
-    elif debug and writer_cm is not None:
-        writer_cm.close()
-    if debug:
-        try:
-            delete_gsheets_row_by_foldername(modeldesc)
-        except Exception as e:
-            print(f"Error deleting Google Sheets row for debug: {e}")
-    else:
-        # Set status to COMPLETE in Google Sheets at end of training
-        try:
-            log_to_gsheets(
-                epoch=epoch,
-                gpr_alignment=None,
-                eigenvalues=None,
-                folder_name=modeldesc,
-                input_size=input_size,
-                hidden_size=hidden_size,
-                ensemble_size=ens,
-                chi=chi,
-                learning_rate=current_base_learning_rate,
-                status='COMPLETE',
-                current_loss=avg_loss
-            )
-        except Exception as e:
-            print(
-                f"Error updating Google Sheets status at end of training: {e}")
+    if not ghost: 
+        # Close TensorBoard writer
+        if writer_cm is not None:
+            writer_cm.close()
+        elif debug and writer_cm is not None:
+            writer_cm.close()
+        if debug:
+            try:
+                delete_gsheets_row_by_foldername(modeldesc)
+            except Exception as e:
+                print(f"Error deleting Google Sheets row for debug: {e}")
+        else:
+            # Set status to COMPLETE in Google Sheets at end of training
+            try:
+                log_to_gsheets(
+                    epoch=epoch,
+                    gpr_alignment=None,
+                    eigenvalues=None,
+                    folder_name=modeldesc,
+                    input_size=input_size,
+                    hidden_size=hidden_size,
+                    ensemble_size=ens,
+                    chi=chi,
+                    learning_rate=current_base_learning_rate,
+                    status='COMPLETE',
+                    current_loss=avg_loss
+                )
+            except Exception as e:
+                print(
+                    f"Error updating Google Sheets status at end of training: {e}")
     # ensure progress bar cleaned up
     try:
         pbar.close()
