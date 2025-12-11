@@ -30,22 +30,41 @@ def timed(msg: str, print_it: bool = True):
 
 class FCN3NetworkEnsembleLinear(nn.Module):
 
-    def __init__(self, d, n1, n2, P, ensembles=1, weight_initialization_variance=(1.0, 1.0, 1.0)):
-        super().__init__()
+    def __init__(self, d, n1, n2, P, ensembles=1, weight_initialization_variance=(1.0, 1.0, 1.0), device=hp.DEVICE):
 
+        super().__init__()
         self.arch = [d, n1, n2]
         self.d = d
         self.n1 = n1
         self.n2 = n2
-        self.W0 = nn.Parameter(torch.normal(mean=0.0,
-                                            std=torch.full((ensembles, n1, d), weight_initialization_variance[0]**0.5)),
-                               requires_grad=True)  # requires_grad moved here
-        self.W1 = nn.Parameter(torch.normal(mean=0.0,
-                                            std=torch.full((ensembles, n2, n1), weight_initialization_variance[1]**0.5)),
-                               requires_grad=True)  # requires_grad moved here
-        self.A = nn.Parameter(torch.normal(mean=0.0,
-                                           std=torch.full((ensembles, n2), weight_initialization_variance[2]**0.5)),
-                              requires_grad=True)  # requires_grad moved here
+        self.ens = ensembles
+        self.ensembles = self.ens
+        self.num_samples = P
+        self.device = device
+
+        v0, v1, v2 = weight_initialization_variance
+        std0 = v0 ** 0.5
+        std1 = v1 ** 0.5
+        std2 = v2 ** 0.5
+
+        self.W0 = nn.Parameter(torch.empty(ensembles, n1, d, device=device).normal_(0.0, std0))
+        self.W1 = nn.Parameter(torch.empty(ensembles, n2, n1, device=device).normal_(0.0, std1))
+        self.A  = nn.Parameter(torch.empty(ensembles, n2, device=device).normal_(0.0, std2))
+
+    def h1_preactivation(self, X):
+
+        """Linear preactivation for h1 layer (no activation function)"""
+        h0 = contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            backend='torch'
+        )
+        h1_pre = contract(
+            'qjk,uqj->uqk', 
+            self.W1, h0,
+            backend='torch'
+        )
+        return h1_pre
 
     def h1_activation(self, X):
         return contract(
@@ -61,6 +80,115 @@ class FCN3NetworkEnsembleLinear(nn.Module):
             backend='torch'
         )
 
+    def H_random_QB(self, X, k=100, p=25):
+        """Low rank QB decomposition using random SVD (Halko et al. 2011)"""
+        print("Computing H_random_QB on device: ", self.device)
+        
+        xtype = torch.float32 if X.dtype == torch.float32 else torch.float64
+
+        with torch.no_grad():
+            l = k + p
+            h1 = self.h1_preactivation(X)  # (N, ens, n1)
+            
+            # Random projections
+            with timed("Random Omega generation"):
+                Omega = torch.randn((X.shape[0], l),
+                                    device=self.device,
+                                    dtype=xtype)
+
+            res = torch.zeros((X.shape[0], l),
+                            device=self.device,
+                            dtype=xtype)
+            
+            # Build res (random-projection matrix)
+            chunk_size = 4096
+            N = X.shape[0]
+
+            with timed(f"res computation (chunks of {chunk_size})"):
+                for start in range(0, N, chunk_size):
+                    end = min(start + chunk_size, N)
+                    batch_h1 = h1[start:end]
+
+                    with timed(f"  res chunk [{start}:{end}]"):
+                        res[start:end] = torch.einsum(
+                            'bqk,Nqk,Nl->bl',
+                            batch_h1, h1, Omega
+                        ) / (self.ens * self.n1)
+
+            with timed("QR factorisation"):
+                Q, _ = torch.linalg.qr(res)
+
+            Z = torch.zeros((X.shape[0], l),
+                            device=self.device,
+                            dtype=xtype)
+
+            # Build Z (kernel projected onto Q)
+            with timed(f"Z computation (chunks of {chunk_size})"):
+                for start in range(0, N, chunk_size):
+                    end = min(start + chunk_size, N)
+                    batch_h1 = h1[start:end]
+
+                    with timed(f"  Z chunk [{start}:{end}]"):
+                        K_uv = torch.einsum(
+                            'bqk,Nqk->bN',
+                            batch_h1, h1
+                        ) / (self.ens * self.n1)
+
+                        Z[start:end] = torch.matmul(K_uv, Q)
+
+            return Q, Z
+
+    def H_eig(self, X, Y, std=False):
+        """Compute eigenvalues of H kernel"""
+        with torch.no_grad():
+            f_inf = self.h1_preactivation(X)
+
+            hh_inf_i = torch.einsum('uim,vim->uvi', f_inf, f_inf) / (self.n1 * X.shape[0])
+            hh_inf = torch.sum(hh_inf_i, axis=2) / self.ens
+
+            norm = torch.einsum('ij,ij->j', Y.squeeze(), Y.squeeze()) / X.shape[0]
+
+            Ls = torch.einsum('uj,uv,vj->j', Y.squeeze(),
+                            hh_inf, Y.squeeze()) / X.shape[0]
+
+            lsT = Ls / norm
+
+            if std:
+                return lsT, torch.std(lsT)
+            return lsT
+    def J_eig(self, X, Y, std=False):
+        """Compute eigenvalues of H kernel"""
+        with torch.no_grad():
+            f_inf = self.h0_activation(X)
+
+            hh_inf_i = torch.einsum('uim,vim->uvi', f_inf, f_inf) / (self.n1 * X.shape[0])
+            hh_inf = torch.sum(hh_inf_i, axis=2) / self.ens
+
+            norm = torch.einsum('ij,ij->j', Y.squeeze(), Y.squeeze()) / X.shape[0]
+
+            Ls = torch.einsum('uj,uv,vj->j', Y.squeeze(),
+                            hh_inf, Y.squeeze()) / X.shape[0]
+
+            lsT = Ls / norm
+
+            if std:
+                return lsT, torch.std(lsT)
+            return lsT
+    def K_eig(self, X, Y, a=1.0):
+        """Compute eigenvalues of K kernel"""
+        P = Y.squeeze().shape[0]
+        y = Y.squeeze()
+        q = self.ens
+        
+        # Linear activation (no nonlinearity)
+        f = self.h1_activation(X)
+        K = torch.einsum('uqi,vqi->uv', f, f).squeeze() / (q * P * self.n1)
+        IyI2 = torch.einsum('ij,ij->j', Y.squeeze(), Y.squeeze()) / P
+
+        λKs = torch.einsum('uj,uv,vj->j', y, K, y) / IyI2
+
+        return λKs
+
     def forward(self, X):
         """
 
@@ -72,12 +200,12 @@ class FCN3NetworkEnsembleLinear(nn.Module):
         C2_uij = W2_ijk*C1_uik
         C3_ui = A_ij*C2_uij
         """
-        print(X.shape)
+
         A = self.A.clone()
         W1 = self.W1.clone()
         W0 = self.W0.clone()
         return contract(
-            'ij,ijk,ikl,unl->ui',
+            'ij,ijk,ikl,ul->ui',
             A, W1, W0, X,
             backend='torch'
         )
@@ -541,7 +669,39 @@ class FCN3NetworkEnsembleErf(nn.Module):
 
         return f
 
+    def forward_no_unsqueeze(self, X):
+        """
+        WITHOUT THE UNSQUEEZE
+        Efficiently computes the outputs of a three layer network
+        using opt_einsum
 
+        f : P*d -> P*e*1
+        C1_ui = W1_ijk*x_uk
+        C2_uij = W2_ijk*C1_uik
+        C3_ui = A_ij*C2_uij
+        """
+
+        h0 = torch.erf(contract(
+            'qkl,ul->uqk',
+            self.W0, X,
+            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+            backend='torch'
+        ))
+
+        h1 = torch.erf(contract(
+            'qjk,uqj->uqk', self.W1, h0,
+            optimize=self.forward_path_h1 if self.forward_path_h1 is not None else None,
+            backend='torch'
+        ))
+
+        f = contract(
+            'qk,uqk->uq',
+            self.A, h1,
+            optimize=self.forward_path_f if self.forward_path_f is not None else None,
+            backend='torch'
+        ).unsqueeze(1)
+
+        return f
 class FCN3Network(nn.Module):
     """
     A base class for a three-layer fully connected neural network.

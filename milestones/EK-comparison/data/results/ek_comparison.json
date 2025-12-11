@@ -1,0 +1,54 @@
+{
+  "2": {
+    "P": 3,
+    "ek_prediction_factor": 0.5,
+    "ek_loss": {
+      "bias": 0.25,
+      "variance": 0.08333333333333333,
+      "loss": 0.6666666666666666,
+      "lH": 0.5
+    },
+    "empirical_loss_mean": 0.6536467918418348,
+    "empirical_loss_std": 0.7279682432371168,
+    "num_samples": 250
+  },
+  "5": {
+    "P": 8,
+    "ek_prediction_factor": 0.28571428571428575,
+    "ek_loss": {
+      "bias": 0.5102040816326531,
+      "variance": 0.01785714285714286,
+      "loss": 1.056122448979592,
+      "lH": 0.2
+    },
+    "empirical_loss_mean": 2.0349607983231546,
+    "empirical_loss_std": 1.1698750814907515,
+    "num_samples": 250
+  },
+  "8": {
+    "P": 12,
+    "ek_prediction_factor": 0.2,
+    "ek_loss": {
+      "bias": 0.6400000000000001,
+      "variance": 0.008333333333333333,
+      "loss": 1.2966666666666669,
+      "lH": 0.125
+    },
+    "empirical_loss_mean": 3.2934877948760986,
+    "empirical_loss_std": 1.683219082782637,
+    "num_samples": 250
+  },
+  "11": {
+    "P": 16,
+    "ek_prediction_factor": 0.15384615384615385,
+    "ek_loss": {
+      "bias": 0.7159763313609467,
+      "variance": 0.004807692307692308,
+      "loss": 1.441568047337278,
+      "lH": 0.09090909090909091
+    },
+    "empirical_loss_mean": 4.435090312004089,
+    "empirical_loss_std": 1.7378548143889936,
+    "num_samples": 250
+  }
+}

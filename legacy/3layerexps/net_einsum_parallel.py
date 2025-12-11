@@ -41,13 +41,6 @@ from opt_einsum import contract
 
 
 
-import torchvision
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-from torchvision.utils import make_grid
-from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader, TensorDataset
-
 #from sklearn.metrics import mean_squared_error
 
 import numpy as np
@@ -244,22 +237,12 @@ def log_matrix_to_tensorboard(
 
 INIT_SEED = 222
 
-import GPUtil
-def get_torch_gpu_device_id():
-    try:
-        gpus = GPUtil.getGPUs()
-        if not gpus:
-            return None
-        
-        lowest_load_gpu = min(gpus, key=lambda gpu: gpu.load)
-        return lowest_load_gpu.id
-    except Exception:
-        return None
 
-gpu_id = get_torch_gpu_device_id()
-device = torch.device('cpu')
-if gpu_id is not None:
-    device = torch.device(f'cuda:{gpu_id}')
+device = torch.device('cuda:1')
+# gpu_id = get_torch_gpu_device_id()
+# device = torch.device('cpu')
+# if gpu_id is not None:
+#     device = torch.device(f'cuda:{gpu_id}')
 print(f"Using device: {device}")
 DEVICE = device
 

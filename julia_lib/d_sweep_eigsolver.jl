@@ -8,20 +8,20 @@ using LaTeXStrings
 using Measures
 using Printf
 
-# Try to enable a LaTeX-capable backend (PGFPlotsX) for high-quality LaTeX rendering.
-# If PGFPlotsX is not installed or LaTeX isn't available on the system, we'll fall back
-# to the default Plots backend but warn the user that LaTeX labels may not fully render.
-try
-    @eval begin
-        using PGFPlotsX
-        pgfplotsx()
-        println("Using PGFPlotsX backend for LaTeX rendering (requires LaTeX installed)")
-    end
-catch _
-    println("PGFPlotsX backend not available — LaTeX rendering may be limited. To enable, run:")
-    println("  julia -e 'using Pkg; Pkg.add(\"PGFPlotsX\")'")
-    println("and ensure a LaTeX distribution is installed (pdflatex).")
-end
+# # Try to enable a LaTeX-capable backend (PGFPlotsX) for high-quality LaTeX rendering.
+# # If PGFPlotsX is not installed or LaTeX isn't available on the system, we'll fall back
+# # to the default Plots backend but warn the user that LaTeX labels may not fully render.
+# try
+#     @eval begin
+#         using PGFPlotsX
+#         pgfplotsx()
+#         println("Using PGFPlotsX backend for LaTeX rendering (requires LaTeX installed)")
+#     end
+# catch _
+#     println("PGFPlotsX backend not available — LaTeX rendering may be limited. To enable, run:")
+#     println("  julia -e 'using Pkg; Pkg.add(\"PGFPlotsX\")'")
+#     println("and ensure a LaTeX distribution is installed (pdflatex).")
+# end
 
 include("./FCS.jl")
 using .FCS
@@ -45,10 +45,10 @@ using .FCS
 #########################################################
 
 ## User-editable sweep parameters
-P_factor = 4                 # P = P_factor * d
+P_factor = 5                 # P = P_factor * d
 κ = 1.0                      # kappa (noise)
 ϵ = 0.03                     # epsilon in target
-n_factor = 10                # n = n_factor * d
+n_factor = 4.0                # n = n_factor * d
 δ_target = 1.0               # delta for the target equations
 δ_perp = 0.0                 # delta for the perpendicular equations
 b = 4 / (3 * π)
@@ -56,7 +56,7 @@ lr = 1e-5
 Tf = 2_000_000               # max iterations for solver
 
 # Sweep range for d (input dimension)
-d_values = collect(10:10:1000)  # change as desired
+d_values = 10 .^(collect(log10(1):0.1:log10(1000)))  # change as desired
 
 # Output folder for plots
 plot_dir = joinpath(@__DIR__, "..", "plots", "d_sweep")
@@ -106,7 +106,7 @@ lJ3_P_power = fill(NaN, ND)
 lK1_P_power = fill(NaN, ND)
 lK3_P_power = fill(NaN, ND)
 
-if isfile(results_file) 
+if false #isfile(results_file) 
     println("Loading existing results from: $results_file")
     results = deserialize(open(results_file))
 
@@ -116,13 +116,16 @@ if isfile(results_file)
     end
 else
     for (i, d) in enumerate(d_values)
-        P_scale = P_factor * d
-        P_power = 2 * d^1.5
+        P_scale = 10 * d
+        P_power = d^1.3
 
-        P_list = [P_scale, P_power]
+        P_list = [P_scale]
         n = n_factor * d
-        χ = n
-        println("Solving for d=$d (n=$n) — will try P variants: $(P_list)")
+        n1 = n
+        n2 = n
+        
+        χ = n2
+        println("Solving for d=$d (n1=$n1, n2=$n2) — will try P variants: $(P_list)")
         # initial guess heuristics (scale with d)
         i0_target = [1 / sqrt(d), 1 / d^(3/2), 1 / sqrt(d), 1 / d^(3/2)]
         i0_perp = [4 / (3 * pi) * 1 / d, 1 / d^3, 4 / (3 * pi) * 1 / d, 1 / d^3]
@@ -135,8 +138,8 @@ else
             try
                 exp_sol_T = FCS.nlsolve_solver(i0_target;
                     chi=χ, d=d, kappa=κ, delta=δ_target,
-                    epsilon=ϵ, n=n, b=b,
-                    P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true, anneal_steps=30_000)
+                    epsilon=ϵ, n1=n, n2=n, b=b,
+                    P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true, anneal_steps=10_000)
 
                 if exp_sol_T === nothing
                     println("    Target solve returned nothing for d=$d, variant=$(variant)")
@@ -156,7 +159,7 @@ else
                     end
 
                     # compute learnabilities (ratio readout)
-                    l1, l3 = FCS.compute_lK_ratio(exp_sol_T, P, n, χ, d, δ_target, κ, ϵ, b)
+                    l1, l3 = FCS.compute_lK_ratio(exp_sol_T, P, n1, n2, χ, d, δ_target, κ, ϵ, b)
                     if variant == :scale
                         mu1_T_scale[i] = l1
                         mu3_T_scale[i] = l3
@@ -167,7 +170,7 @@ else
 
                     # readout eigenvalues
                     try
-                        k1, k3 = FCS.compute_lK(exp_sol_T, P, n, χ, d, δ_target, κ, ϵ, b)
+                        k1, k3 = FCS.compute_lK(exp_sol_T, P, n1, n2, χ, d, δ_target, κ, ϵ, b)
                         if variant == :scale
                             lK1_T_scale[i] = k1
                             lK3_T_scale[i] = k3
@@ -187,8 +190,8 @@ else
             try
                 exp_sol_P = FCS.nlsolve_solver(i0_perp;
                     chi=χ, d=d, kappa=κ, delta=δ_perp,
-                    epsilon=ϵ, n=n, b=b,
-                    P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true)
+                    epsilon=ϵ, n1=n, n2=n, b=b,
+                    P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true, anneal_steps=10_000)
 
                 if exp_sol_P === nothing
                     println("    Perp solve returned nothing for d=$d, variant=$(variant)")
@@ -206,7 +209,7 @@ else
                         lH3_P_power[i] = lH3
                     end
 
-                    l1p, l3p = FCS.compute_lK_ratio(exp_sol_P, P, n, χ, d, δ_perp, κ, ϵ, b)
+                    l1p, l3p = FCS.compute_lK_ratio(exp_sol_P, P, n1, n2, χ, d, δ_perp, κ, ϵ, b)
                     if variant == :scale
                         mu1_P_scale[i] = l1p
                         mu3_P_scale[i] = l3p
@@ -216,7 +219,7 @@ else
                     end
 
                     try
-                        k1p, k3p = FCS.compute_lK(exp_sol_P, P, n, χ, d, δ_perp, κ, ϵ, b)
+                        k1p, k3p = FCS.compute_lK(exp_sol_P, P, n1, n2, χ, d, δ_perp, κ, ϵ, b)
                         if variant == :scale
                             lK1_P_scale[i] = k1p
                             lK3_P_scale[i] = k3p
@@ -280,6 +283,7 @@ default(titlefont=font(18), guidefont=font(16), tickfont=font(14), legendfontsiz
 
 # Single combined figure for all eigenvalue traces
 # Increase left margin so y-labels are not clipped when saving PNGs
+# Legend at bottom left
 plt_all = plot(yscale = :log10, xscale=:log10, xlabel=latexstring("d"), ylabel=latexstring("\\lambda"), legend=:outerright, size=(1400,900))
 
 # helper to create LaTeX labels with interpolation
@@ -292,7 +296,7 @@ end
 
 P_scale_desc =  string("P \\sim $(P_factor)\\,d")
 P_power_factor = 2
-P_power_desc = string("P \\sim $(P_power_factor)\\,d^{3/2}")
+P_power_desc = string("P \\sim $(P_power_factor)\\,d^{3}")
 
 # Title / scaling text to include in plot titles (use LaTeXStrings for rendering)
 n_scaling_text = string("n = $(n_factor)\\,d")
@@ -356,7 +360,7 @@ ops_map = Dict(
 
 P_scale_label = latexstring("P \\sim $(P_factor)\\,d")
 
-P_power_label = latexstring("P \\sim $(P_power_factor)\\,d^{3/2}")
+P_power_label = latexstring("P \\sim $(P_power_factor)\\,d^{3}")
 
 # Fit helper: fit y = A * d^s in log10 space (returns (s, intercept)) and predicted values for grid
 function fit_powerlaw(d, y)
@@ -393,24 +397,27 @@ for (opname, tup) in ops_map
     title!(plt[1], latexstring(P_scale_label) * ", " * latexstring(n_scaling_text) * ", " * latexstring(chi_scaling_text))
 
     # fits (scale): target
-    ft = fit_powerlaw(d_values, t_scale)
+    ft = fit_powerlaw(d_values[10:end], t_scale[10:end])
     if ft !== nothing
             (s, intercept, ypred) = ft
-            plot!(plt[1], d_values, ypred; label=string("fit star: " * latexstring("d^{", round(s,digits=3), "}")), linestyle=:dot, color=:black, alpha=0.6)
+            plot!(plt[1], d_values[10:end], ypred; label=string("fit star: " * latexstring("d^{", round(s,digits=3), "}")), linestyle=:dot, color=:black, alpha=0.6)
             # annotate slope shifted left to avoid overlap (25% position)
             xann = d_values[Int(round(0.25*end))]
             yann = 10^(intercept + s * log10(xann))
             annotate!(plt[1], xann, yann, text("s=$(round(s,digits=3))", 18, :right))
     end
     # fits (scale): perp
-    fp = fit_powerlaw(d_values, p_scale)
+    fp = fit_powerlaw(d_values[10:end], p_scale[10:end])
     if fp !== nothing
             (s2, intercept2, ypred2) = fp
-            plot!(plt[1], d_values, ypred2; label=string("fit perp: " * latexstring("d^{", round(s2,digits=3), "}")), linestyle=:dot, color=:gray, alpha=0.6)
+            plot!(plt[1], d_values[10:end], ypred2; label=string("fit perp: " * latexstring("d^{", round(s2,digits=3), "}")), linestyle=:dot, color=:gray, alpha=0.6)
             xann = d_values[Int(round(0.15*end))]
             yann = 10^(intercept2 + s2 * log10(xann))
             annotate!(plt[1], xann, yann, text("s=$(round(s2,digits=3))", 18, :right))
     end
+
+        # Place legend inside the left subplot at the bottom-left with smaller font
+        plot!(plt[1], legend = :bottomleft, legendfontsize = 10)
 
     # Right: power (P ~ 2 * d^{3/2})
     lab_star_p = latexstring(string(ylatex) * "^{\\ast}") * " Target"
@@ -439,6 +446,9 @@ for (opname, tup) in ops_map
             yann = 10^(intercept4 + s4 * log10(xann))
             annotate!(plt[2], xann, yann, text("s=$(round(s4,digits=3))", 18, :right))
     end
+
+        # Place legend inside the right subplot at the bottom-left with smaller font
+        plot!(plt[2], legend = :bottomleft, legendfontsize = 10)
 
     outname = joinpath(plot_dir, string(opname, "_eigenvalues_Pscale_vs_Ppower.png"))
     println("Saving -> $outname")

@@ -47,7 +47,7 @@ N_FACTOR = 4  # n = n_factor * d
 ENS = 5
 
 # Large dataset size
-P_LARGE = 4000
+P_LARGE = 5000
 
 # QB parameters (default oversampling)
 P_OVERSAMPLE = 50
@@ -56,17 +56,16 @@ P_OVERSAMPLE = 50
 # `/home/akiva/exp/fcn3erf`, list them here (the script will parse D/N/P from
 # the filename). When provided, the script will iterate these files instead
 # of performing a simple d-sweep.
-EXPERIMENT_DIR = '/home/akiva/exp/fcn3erf'
-EXPERIMENT_FILES = [
-    'erf_cubic_eps_0.03_P_225_D_45_N_180_epochs_20000000_lrA_4.44e-09_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_475_D_95_N_380_epochs_20000000_lrA_2.11e-09_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_100_D_20_N_80_epochs_20000000_lrA_1.00e-08_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_350_D_70_N_280_epochs_20000000_lrA_2.86e-09_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_975_D_195_N_780_epochs_20000000_lrA_1.03e-09_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_850_D_170_N_680_epochs_20000000_lrA_1.18e-09_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_725_D_145_N_580_epochs_20000000_lrA_1.38e-09_time_20251201_220935',
-    'erf_cubic_eps_0.03_P_600_D_120_N_480_epochs_20000000_lrA_1.67e-09_time_20251201_220935',
-]
+EXPERIMENT_DIR = '/home/akiva/exp/'
+# EXPERIMENT_FILES = [
+#         'erf_cubic_eps_0.03_P_50_D_10_N_40_epochs_20000000_lr_5.00e-05',
+#         'erf_cubic_eps_0.03_P_10_D_2_N_8_epochs_20000000_lr_1.00e-05',
+#         'erf_cubic_eps_0.03_P_20_D_4_N_16_epochs_20000000_lr_2.00e-05',
+#         'erf_cubic_eps_0.03_P_30_D_6_N_24_epochs_20000000_lr_3.00e-05',
+#         'erf_cubic_eps_0.03_P_40_D_8_N_32_epochs_20000000_lr_4.00e-05'
+# ]
+
+EXPERIMENT_FILES = os.listdir(os.path.join(EXPERIMENT_DIR,'d_sweep_correct_50to150d'))
 
 # OUT_DIR is created per-run inside `run_analysis` so the folder can include
 # the d-range in its name (project-level `plots/d_sweep_d<min>_to_d<max>`).
@@ -188,7 +187,7 @@ def run_analysis(d_values=None, use_cuda=USE_CUDA, use_cache: bool = False):
 
         # Compute QB decomposition of H (randomized)
         # Set per-experiment rank parameter k; increased per request to 5 * d
-        k = 5 * d
+        k = 3000
         npz_path = os.path.join(out_dir, f'd_{d}_sandwich_eigs.npz')
         # Default: recompute each experiment and then cache results.
         # Only load from cache when `use_cache` is True (CLI flag `--use-cache`).
@@ -207,7 +206,7 @@ def run_analysis(d_values=None, use_cuda=USE_CUDA, use_cache: bool = False):
                 print(f'Loaded precomputed eigenvalues from {npz_path}')
             except Exception as e:
                 print('Failed to load existing npz, will recompute:', e)
-
+        compute_now = True
         if compute_now:
             print(f'Computing randomized QB (H_random_QB) with k={k} — this may take a while')
             try:
@@ -242,8 +241,10 @@ def run_analysis(d_values=None, use_cuda=USE_CUDA, use_cache: bool = False):
 
                 M3 = torch.matmul(torch.matmul(Y3_norm.t(), U_mat), torch.matmul(Sdiag, torch.matmul(U_mat.t(), Y3_norm)))
                 sandwiches3 = torch.diagonal(M3) / float(Xinf.shape[0])
-
-                sandwiches1_np = sandwiches1.detach().cpu().numpy()
+                
+                # sandwiches1_np = sandwiches1.detach().cpu().numpy()
+                breakpoint()
+                sandwiches1_np = exp.model.H_eig(Xinf, Y1_inf).detach().cpu().numpy()
                 sandwiches3_np = sandwiches3.detach().cpu().numpy()
 
             # Save computed eigenvalues for future runs
@@ -285,7 +286,7 @@ def run_analysis(d_values=None, use_cuda=USE_CUDA, use_cache: bool = False):
                         pass
             ax.set_title(f'd={d} He1 sandwich eigenvalues')
             ax.set_yscale('log')
-
+            ax.legend()
             # He3 plot
             ax = axes[1]
             sorted_vals3 = np.sort(sandwiches3_np)[::-1]
@@ -302,19 +303,18 @@ def run_analysis(d_values=None, use_cuda=USE_CUDA, use_cache: bool = False):
                         pass
             ax.set_title(f'd={d} He3 sandwich eigenvalues')
             ax.set_yscale('log')
-
             for ax in axes:
                 ax.set_xlabel('mode index')
                 ax.set_ylabel('value')
                 ax.legend()
-
+            plt.legend()
             plt.tight_layout()
             outfn = os.path.join(out_dir, f'd_{d}_sandwich_eigenvalues.png')
             plt.savefig(outfn, dpi=300)
             plt.close(fig)
-            print('Saved plot to', outfn)
+
         except Exception as e:
-            print('Plotting failed:', e)
+            print('Could not generate sandwich eigenvalues plot:', e)
 
         records.append({
             'd': d,
@@ -457,7 +457,8 @@ def aggregate_and_plot_scaling(records, out_dir):
         ss_tot1 = np.sum((y1 - np.mean(y1)) ** 2)
         r21 = 1.0 - ss_res1 / ss_tot1 if ss_tot1 != 0 else np.nan
         slope1 = float(p1[0])
-        ax.plot(ds_arr[mask1], h1_arr[mask1], 'o-', color='C0', label='H1 Leading')
+        # experimental measurements: scatter only (no connecting line)
+        ax.scatter(ds_arr[mask1], h1_arr[mask1], marker='o', color='C0', label='H1 Leading')
         # plot fit line (exponentiated)
         xs = np.linspace(ds_arr[mask1].min(), ds_arr[mask1].max(), 200)
         ax.plot(xs, np.exp(np.polyval(p1, np.log(xs))), '--', color='C0', alpha=0.7,
@@ -475,7 +476,8 @@ def aggregate_and_plot_scaling(records, out_dir):
         ss_tot3 = np.sum((y3 - np.mean(y3)) ** 2)
         r23 = 1.0 - ss_res3 / ss_tot3 if ss_tot3 != 0 else np.nan
         slope3 = float(p3[0])
-        ax.plot(ds_arr[mask3], h3_arr[mask3], 's-', color='C1', label='H3 Leading')
+        # experimental measurements: scatter only (no connecting line)
+        ax.scatter(ds_arr[mask3], h3_arr[mask3], marker='s', color='C1', label='H3 Leading')
         xs = np.linspace(ds_arr[mask3].min(), ds_arr[mask3].max(), 200)
         ax.plot(xs, np.exp(np.polyval(p3, np.log(xs))), '--', color='C1', alpha=0.7,
                 label=f'H3 fit: slope={slope3:.3f}, $R^2$={r23:.3f}')
@@ -489,7 +491,8 @@ def aggregate_and_plot_scaling(records, out_dir):
         p1r = np.polyfit(x1r, y1r, 1)
         slope1r = float(p1r[0])
         xs_r = np.linspace(ds_arr[mask1_rem].min(), ds_arr[mask1_rem].max(), 200)
-        ax.plot(ds_arr[mask1_rem], rem1_arr[mask1_rem], 'o--', color='C0', alpha=0.6, label='H1 rem mean')
+        # rem means: scatter only for measurements, line for fit
+        ax.scatter(ds_arr[mask1_rem], rem1_arr[mask1_rem], marker='o', color='C0', alpha=0.6, label='H1 rem mean')
         ax.plot(xs_r, np.exp(np.polyval(p1r, np.log(xs_r))), '-', color='C0', alpha=0.4,
                 label=f'H1 rem fit: slope={slope1r:.3f}')
         # fill between mean +/- std
@@ -509,7 +512,7 @@ def aggregate_and_plot_scaling(records, out_dir):
         p3r = np.polyfit(x3r, y3r, 1)
         slope3r = float(p3r[0])
         xs_r3 = np.linspace(ds_arr[mask3_rem].min(), ds_arr[mask3_rem].max(), 200)
-        ax.plot(ds_arr[mask3_rem], rem3_arr[mask3_rem], 's--', color='C1', alpha=0.6, label='H3 rem mean')
+        ax.scatter(ds_arr[mask3_rem], rem3_arr[mask3_rem], marker='s', color='C1', alpha=0.6, label='H3 rem mean')
         ax.plot(xs_r3, np.exp(np.polyval(p3r, np.log(xs_r3))), '-', color='C1', alpha=0.4,
                 label=f'H3 rem fit: slope={slope3r:.3f}')
         try:
@@ -527,35 +530,90 @@ def aggregate_and_plot_scaling(records, out_dir):
     ax.set_ylabel('leading sandwich eigenvalue')
     ax.set_title('Scaling of leading sandwich eigenvalue vs d (log-log)')
     ax.set_title('Scaling of sandwich eigenvalues vs d (log-log)')
-    # Place legend underneath the main plot
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.18), ncol=3)
-    # Plot prediction points (if available)
+
+    # Plot prediction points and add log-log best-fit lines for predictions
+    plotted_handles = []
+    plotted_labels = []
+
+    # Add log-log best-fit lines for per-record eigenvalue predictions (so scaling is visible)
     try:
-        # H1 predictions
+        # masks for per-record predictions (these align with ds_arr)
         mask_pred_h1T = (pred_h1T_arr > 0) & np.isfinite(pred_h1T_arr)
         mask_pred_h1P = (pred_h1P_arr > 0) & np.isfinite(pred_h1P_arr)
-        if np.any(mask_pred_h1T):
-            ax.scatter(ds_arr[mask_pred_h1T], pred_h1T_arr[mask_pred_h1T],
-                    marker='X', color='k', label='H1 Pred Target')
-        if np.any(mask_pred_h1P):
-            ax.scatter(ds_arr[mask_pred_h1P], pred_h1P_arr[mask_pred_h1P],
-                    marker='^', color='k', label='H1 Pred Perp')
-
-        # H3 predictions
         mask_pred_h3T = (pred_h3T_arr > 0) & np.isfinite(pred_h3T_arr)
         mask_pred_h3P = (pred_h3P_arr > 0) & np.isfinite(pred_h3P_arr)
-        if np.any(mask_pred_h3T):
-            ax.scatter(ds_arr[mask_pred_h3T], pred_h3T_arr[mask_pred_h3T],
-                    marker='X', color='gray', label='H3 Pred Target')
-        if np.any(mask_pred_h3P):
-            ax.scatter(ds_arr[mask_pred_h3P], pred_h3P_arr[mask_pred_h3P],
-                    marker='^', color='gray', label='H3 Pred Perp')
+
+        # colors for prediction fits
+        col_h1 = '#6a0dad'  # strong purple for H1
+        col_h3 = '#d62728'  # red for H3
+
+        # H1 prediction fit (target)
+        if np.sum(mask_pred_h1T) >= 2:
+            xp = np.log(ds_arr[mask_pred_h1T])
+            yp = np.log(pred_h1T_arr[mask_pred_h1T])
+            pp = np.polyfit(xp, yp, 1)
+            xs_pf = np.linspace(ds_arr[mask_pred_h1T].min(), ds_arr[mask_pred_h1T].max(), 200)
+            h_fit, = ax.plot(xs_pf, np.exp(np.polyval(pp, np.log(xs_pf))), '-', color=col_h1, linewidth=1.0, alpha=0.9)
+            plotted_handles.append(h_fit)
+            plotted_labels.append(f'H1 Pred fit: slope={pp[0]:.3f}')
+
+        # H1 prediction fit (perp)
+        if np.sum(mask_pred_h1P) >= 2:
+            xp = np.log(ds_arr[mask_pred_h1P])
+            yp = np.log(pred_h1P_arr[mask_pred_h1P])
+            pp = np.polyfit(xp, yp, 1)
+            xs_pf = np.linspace(ds_arr[mask_pred_h1P].min(), ds_arr[mask_pred_h1P].max(), 200)
+            h_fit, = ax.plot(xs_pf, np.exp(np.polyval(pp, np.log(xs_pf))), '--', color=col_h1, linewidth=1.0, alpha=0.9)
+            plotted_handles.append(h_fit)
+            plotted_labels.append(f'H1 Pred Perp fit: slope={pp[0]:.3f}')
+
+        # H3 prediction fit (target)
+        if np.sum(mask_pred_h3T) >= 2:
+            xp = np.log(ds_arr[mask_pred_h3T])
+            yp = np.log(pred_h3T_arr[mask_pred_h3T])
+            pp = np.polyfit(xp, yp, 1)
+            xs_pf = np.linspace(ds_arr[mask_pred_h3T].min(), ds_arr[mask_pred_h3T].max(), 200)
+            h_fit, = ax.plot(xs_pf, np.exp(np.polyval(pp, np.log(xs_pf))), '-', color=col_h3, linewidth=1.0, alpha=0.9)
+            plotted_handles.append(h_fit)
+            plotted_labels.append(f'H3 Pred fit: slope={pp[0]:.3f}')
+
+        # H3 prediction fit (perp)
+        if np.sum(mask_pred_h3P) >= 2:
+            xp = np.log(ds_arr[mask_pred_h3P])
+            yp = np.log(pred_h3P_arr[mask_pred_h3P])
+            pp = np.polyfit(xp, yp, 1)
+            xs_pf = np.linspace(ds_arr[mask_pred_h3P].min(), ds_arr[mask_pred_h3P].max(), 200)
+            h_fit, = ax.plot(xs_pf, np.exp(np.polyval(pp, np.log(xs_pf))), '--', color=col_h3, linewidth=1.0, alpha=0.9)
+            plotted_handles.append(h_fit)
+            plotted_labels.append(f'H3 Pred Perp fit: slope={pp[0]:.3f}')
     except Exception:
         pass
-
-    ax.legend()
+   
     plt.tight_layout()
-
+    # Build a combined legend containing experimental axis artists and plotted prediction artists
+    try:
+        handles_ax, labels_ax = ax.get_legend_handles_labels()
+        combined = []
+        seen = set()
+        for h, l in zip(handles_ax, labels_ax):
+            if l not in seen:
+                combined.append((h, l))
+                seen.add(l)
+        for h, l in zip(plotted_handles, plotted_labels):
+            if l not in seen:
+                combined.append((h, l))
+                seen.add(l)
+        if combined:
+            handles_u, labels_u = zip(*combined)
+            fig.subplots_adjust(right=0.78)
+            fig.legend(handles_u, labels_u, loc='center left', bbox_to_anchor=(0.98, 0.5), ncol=1, fontsize=8, frameon=False)
+        else:
+            ax.legend(loc='best')
+    except Exception:
+        try:
+            ax.legend(loc='best')
+        except Exception:
+            pass
     outfn = os.path.join(out_dir, 'scaling_fit.png')
     plt.tight_layout()
     outfn = os.path.join(out_dir, 'scaling_fit.png')

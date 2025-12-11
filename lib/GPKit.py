@@ -156,3 +156,44 @@ def gpr_dot_product_explicit(train_x, train_y, test_x, sigma_0_sq):
     mu_pred = K_xstar_x @ K_xx_inv @ train_y
 
     return mu_pred
+
+
+def gpr_dot_product_variance(train_x, test_x, sigma_0_sq):
+    """
+    Computes the GPR posterior predictive variance diagonal.
+    
+    Variance: K(x*, x*) - K(x*, X_train) @ (K(X_train, X_train) + σ²I)^{-1} @ K(X_train, x*)
+    
+    Args:
+        train_x (torch.Tensor): N_train x D tensor of training input features.
+        test_x (torch.Tensor): N_test x D tensor of test input features.
+        sigma_0_sq (float or torch.Tensor): The sigma_0^2 hyperparameter for the DotProduct kernel.
+    
+    Returns:
+        torch.Tensor: N_test tensor of variance diagonal elements.
+    """
+    sigma_0_sq = torch.tensor(sigma_0_sq, dtype=torch.float32, device=train_x.device)
+    
+    def dot_product_kernel_torch(X1, X2):
+        a = X1 / X1.shape[1]**0.5
+        b = X2 / X2.shape[1]**0.5
+        return a @ b.T
+    
+    # K(X_train, X_train) + σ²I
+    K_train = dot_product_kernel_torch(train_x, train_x) + sigma_0_sq * torch.eye(train_x.shape[0], device=train_x.device)
+    
+    # K(x*, X_train)
+    K_test_train = dot_product_kernel_torch(test_x, train_x)
+    
+    
+    try:
+        K_train_inv = torch.linalg.inv(K_train)
+    except torch.linalg.LinAlgError as e:
+        print(f"Error: K_train is singular or ill-conditioned: {e}")
+        raise
+    
+    # Compute K(x*, X_train) @ K_train_inv @ K(X_train, x*)
+    # Diagonal: sum_k (K_test_train @ K_train_inv)[i,k] * K_test_train[i,k]
+    K_test_train_Kinv = K_test_train @ K_train_inv
+    
+    return K_test_train_Kinv.diagonal() / K_test_train.shape[1]  # Normalize by input dimension

@@ -57,15 +57,14 @@ EXPERIMENT_FILES = [
 
 n_factor = 4
 epochs = 20_000_000
-lrA = 1e-6
+lrA = 1.5e-5
 # devices
 START_DEVICE = "cuda:0"
 FALLBACK_DEVICE = "cuda:1"
 # Sweep defaults
-DEFAULT_START = 10
-DEFAULT_STOP = 80
+DEFAULT_START = 20
+DEFAULT_STOP = 65
 DEFAULT_POINTS = 10
-
 
 def build_command(d, device, extra_args=None, headless=False):
     P = 5 * d
@@ -78,12 +77,13 @@ def build_command(d, device, extra_args=None, headless=False):
         "--P", str(P),
         "--chi", str(chi),
         "--N", str(n),
+        '--kappa', str(1.0),
         "--epochs", str(epochs),
-        "--lrA", str(lrA * P),
+        "--lrA", str(lrA),
         "--device", str(device),
         "--eps", str(0.03),
         "--ens", str(5),
-        '--experiment_dirname', 'd_sweep_fcn3_P4d',
+        '--experiment_dirname', store_location,
     ]
     if headless:
         cmd += ["--headless"]
@@ -191,20 +191,19 @@ def main():
     parser.add_argument("--stop", type=int, default=DEFAULT_STOP, help="stop d (inclusive)")
     parser.add_argument("--points", type=int, default=DEFAULT_POINTS, help="number of log-spaced d values (default 10)")
     parser.add_argument("--step", type=int, default=None, help="(deprecated) d step — if provided it will override logspacing")
+    parser.add_argument("--store-location",type=str, default='d_sweep_fcn3_P5d_N4d', help="Experiment directory name to use for storing results (default: d_sweep_fcn3_P5d_N4d)")
     parser.add_argument("--extra-args", nargs="*", default=None)
     args = parser.parse_args()
 
-    # Compute d values: by default use log-spaced values (args.points)
-    if args.step is not None:
-        # backward-compatible: explicit step provided — use linear range
-        d_values = list(range(args.start, args.stop + 1, args.step))
-    else:
-        # log-spaced integer d values
-        ds = np.unique(np.round(np.logspace(np.log10(args.start), np.log10(args.stop), num=args.points))).astype(int)
-        d_values = ds.tolist()
+    global store_location
+    store_location = args.store_location
+    # log-spaced integer d values
+    ds = np.unique(np.round(np.logspace(np.log10(args.start), np.log10(args.stop), num=args.points))).astype(int)[::-1]
+    d_values = ds.tolist()
+    
     workers = args.workers
     dry_run = args.dry_run
-    extra_args = args.extra_args
+    extra_args = args.extra_args 
     headless = args.headless
 
     print(f"d-sweep: P=4*d, n={n_factor}*d, chi=n; d_values={d_values}")
@@ -217,63 +216,90 @@ def main():
     try:
         if EXPERIMENT_FILES and all((EXPERIMENT_DIR / f).exists() for f in EXPERIMENT_FILES):
             print("All EXPERIMENT_FILES found under", EXPERIMENT_DIR)
-            # Launch one process per modeldesc
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futures = [ex.submit(run_modeldesc_job, f, START_DEVICE, dry_run, extra_args, headless) for f in EXPERIMENT_FILES]
-                for fut in as_completed(futures):
-                    modeldesc, rc, log_path, attempted = fut.result()
+            # Launch one process per modeldesc but schedule them round-robin across
+            # available GPUs so that only one network runs per GPU at a time.
+            devices = [START_DEVICE]
+            if FALLBACK_DEVICE and FALLBACK_DEVICE != START_DEVICE:
+                devices.append(FALLBACK_DEVICE)
+
+            executors = {dev: ThreadPoolExecutor(max_workers=1) for dev in devices}
+            futures = {}
+            try:
+                # Submit modeldesc jobs round-robin across devices
+                for i, modeldesc in enumerate(EXPERIMENT_FILES):
+                    dev = devices[i % len(devices)]
+                    fut = executors[dev].submit(run_modeldesc_job, modeldesc, dev, dry_run, extra_args, headless)
+                    futures[fut] = (modeldesc, dev)
+
+                # Collect results as they finish
+                for fut in as_completed(list(futures.keys())):
+                    modeldesc_submitted, dev_used = futures.pop(fut)
+                    try:
+                        modeldesc, rc, log_path, attempted = fut.result()
+                    except Exception as e:
+                        modeldesc = modeldesc_submitted
+                        rc = -1
+                        safe_name = modeldesc.replace('/', '_')
+                        log_path = LOG_DIR / f"d_sweep_modeldesc_{safe_name}.log"
+                        attempted = []
+                        print(f"Job for modeldesc={modeldesc} on {dev_used} raised exception: {e}")
+
                     if dry_run:
                         print(f"modeldesc={modeldesc}: {attempted}")
                     else:
                         status = "OK" if rc == 0 else f"FAILED (rc={rc})"
-                        print(f"modeldesc={modeldesc}: {status}; log: {log_path}")
+                        print(f"modeldesc={modeldesc}: {status}; log: {log_path} (device={dev_used})")
                         run_results.append((modeldesc, rc, log_path, attempted))
+            finally:
+                for ex in executors.values():
+                    ex.shutdown(wait=True)
         else:
             if EXPERIMENT_FILES:
                 missing = [f for f in EXPERIMENT_FILES if not (EXPERIMENT_DIR / f).exists()]
                 if missing:
                     print("Some EXPERIMENT_FILES were not found under EXPERIMENT_DIR; falling back to numeric d-sweep. Missing:", missing)
-            # Numeric d-sweep: existing behavior
-                # Numeric d-sweep: run one job per GPU concurrently by creating a
-                # single-worker ThreadPoolExecutor for each GPU and submitting jobs
-                # in round-robin fashion. This ensures only one network trains on a
-                # GPU at a time and utilizes both GPUs (START_DEVICE and FALLBACK_DEVICE).
-                devices = [START_DEVICE]
-                if FALLBACK_DEVICE and FALLBACK_DEVICE != START_DEVICE:
-                    devices.append(FALLBACK_DEVICE)
+        # Numeric d-sweep: existing behavior
+            # Numeric d-sweep: run one job per GPU concurrently by creating a
+            # single-worker ThreadPoolExecutor for each GPU and submitting jobs
+            # in round-robin fashion. This ensures only one network trains on a
+            # GPU at a time and utilizes both GPUs (START_DEVICE and FALLBACK_DEVICE).
+            devices = [START_DEVICE]
+            if FALLBACK_DEVICE and FALLBACK_DEVICE != START_DEVICE:
+                devices.append(FALLBACK_DEVICE)
 
-                executors = {dev: ThreadPoolExecutor(max_workers=1) for dev in devices}
-                futures = {}
-                try:
-                    # Submit jobs round-robin across devices
-                    for i, d in enumerate(d_values):
-                        dev = devices[i % len(devices)]
-                        fut = executors[dev].submit(run_job, d, dev, dry_run, extra_args, headless)
-                        futures[fut] = (d, dev)
+            executors = {dev: ThreadPoolExecutor(max_workers=1) for dev in devices}
+            futures = {}
+            try:
+                # Submit jobs round-robin across devices
+                for i, d in enumerate(d_values):
+                    dev = devices[i % len(devices)]
+                    print(f"Submitting d={d} to device {dev}...")
+                    fut = executors[dev].submit(run_job, d, dev, dry_run, extra_args, headless)
+                    futures[fut] = (d, dev)
 
-                    # Wait for jobs to finish and collect results
-                    for fut in as_completed(list(futures.keys())):
-                        d_submitted, dev_used = futures.pop(fut)
-                        try:
-                            d, rc, log_path, attempted = fut.result()
-                        except Exception as e:
-                            # Executor-level exception
-                            d = d_submitted
-                            rc = -1
-                            log_path = LOG_DIR / f'd_sweep_d_{d}.log'
-                            attempted = []
-                            print(f"Job for d={d} on {dev_used} raised exception: {e}")
+                # Wait for jobs to finish and collect results
+                for fut in as_completed(list(futures.keys())):
+                    d_submitted, dev_used = futures.pop(fut)
+                    try:
+                        d, rc, log_path, attempted = fut.result()
+                    except Exception as e:
+                        # Executor-level exception
+                        d = d_submitted
+                        rc = -1
+                        log_path = LOG_DIR / f'd_sweep_d_{d}.log'
+                        attempted = []
+                        print(f"Job for d={d} on {dev_used} raised exception: {e}")
 
-                        if dry_run:
-                            print(f"d={d}: {attempted}")
-                        else:
-                            status = "OK" if rc == 0 else f"FAILED (rc={rc})"
-                            print(f"d={d}: {status}; log: {log_path} (device={dev_used})")
-                            run_results.append((d, rc, log_path, attempted))
-                finally:
-                    # Shutdown per-device executors
-                    for ex in executors.values():
-                        ex.shutdown(wait=True)
+                    if dry_run:
+                        print(f"d={d}: {attempted}")
+                    else:
+                        status = "OK" if rc == 0 else f"FAILED (rc={rc})"
+                        print(f"d={d}: {status}; log: {log_path} (device={dev_used})")
+                        run_results.append((d, rc, log_path, attempted))
+            finally:
+                # Shutdown per-device executors
+                for ex in executors.values():
+                    ex.shutdown(wait=True)
     except KeyboardInterrupt:
         # Runner interrupted by user — try to cancel outstanding work and
         # remove any per-d log files created by this sweep to avoid partial logs.

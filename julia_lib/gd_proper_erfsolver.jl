@@ -63,17 +63,18 @@ precision = 8
 
 sf = x -> x #sigfig(x; n=precision)
 
-d = 40
+d = 10.0
 κ = 1.0
 ϵ = 0.03
-P = 250
-n = 400
-χ = 50
+P = 5*d / 4
+n1 = 4 * d
+n2 = n1
+χ = n1
 δ=1.0
 b = 4/(3*π)
 sf(1 / 40^3)
 
-params = FCS.ProblemParams(d, κ, ϵ, P, n, χ, b)
+params = FCS.ProblemParams(d, κ, ϵ, P, n1, n2, χ, b)
 
 
 Tf = 6_000_000
@@ -83,10 +84,10 @@ i0 = [4 / (3 * pi) * 1 / d^0.5, 1 / d^(3 / 2), 4 / (3 * pi) * 1 / d^0.5, 1 / d^(
 exp_sol = FCS.nlsolve_solver(
     i0,
     chi=χ, d=d, kappa=1.0, delta=δ,
-    epsilon=ϵ, n=n, b=4 / (3 * π),
+    epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
     P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true, anneal_steps=30_000
 )
-l1, l3 = FCS.compute_lK_ratio(exp_sol, P, n, χ, d, δ, κ, ϵ, 4 / (3 * π))
+l1, l3 = FCS.compute_lK_ratio(exp_sol, P, n1, n2, χ, d, δ, κ, ϵ, 4 / (3 * π))
 
 
 println("#####################################################################")
@@ -112,8 +113,8 @@ lH1
 (lH1 / lJ1^2)
 lV1 = (lH1 / lJ1^2 - 1 / lJ1)
 lV3 = ((lH3 / lJ3^2 - 1 / lJ3))
-delta * b * (lV1) / n
-lWT = 1 / (d + delta * b * (lV1) / n)
+delta * b * n2 * (lV1) / n1
+lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
 @printf("lWT: %.*g\n", 7, lWT)
 
 println("lJ1/lWT: $(lJ1/(b*lWT))")
@@ -124,7 +125,7 @@ println("Learnabilities")
 println("mu1 = $(sf(l1))")
 println("mu3 = $(sf(l3))")
 
-lK1T, lK3T = FCS.compute_lK(exp_sol, P, n, χ, d, δ, κ, ϵ, 4 / (3 * π))
+lK1T, lK3T = FCS.compute_lK(exp_sol, P, n1, n2, χ, d, δ, κ, ϵ, 4 / (3 * π))
 
 println("Readout Eigenvalues: ")
 println("lK1: $lK1T")
@@ -138,10 +139,10 @@ i0 = [4 / (3 * pi) * 1 / d, 1 / d^(3), 4 / (3 * pi) * 1 / d, 1 / d^(3)]
 exp_sol = FCS.nlsolve_solver(
     i0,
     chi=χ, d=d, kappa=1.0, delta=δ,
-    epsilon=ϵ, n=n, b=4 / (3 * π),
+    epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
     P=P, lr=lr, max_iter=Tf, anneal=true
 )
-l1, l3 = FCS.compute_lK_ratio(exp_sol, P, n, χ, d, δ, κ, ϵ, 4 / (3 * π))
+l1, l3 = FCS.compute_lK_ratio(exp_sol, P, n1, n2, χ, d, δ, κ, ϵ, 4 / (3 * π))
 
 println("----------")
 println("Perpendicular Eigenvalues")
@@ -165,13 +166,13 @@ lH1
 (lH1 / lJ1^2)
 lV1 = (lH1 / lJ1^2 - 1 / lJ1)
 lV3 = ((lH3 / lJ3^2 - 1 / lJ3))
-delta * b * (lV1) / n
-lWT = 1 / (d + delta * b * (lV1) / n)
+delta * b * n2 * (lV1) / n1
+lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
 @printf("lWT: %.*g\n", 7, lWT)
 println("lJ1/lWT: $(lJ1/(b*lWT))")
 println("lJ3/lWT^3: $(lJ3/(15*16/(27*π) * lWT^3))")
 
-lK1P, lK3P = FCS.compute_lK(exp_sol, P, n, χ, d, δ, κ, ϵ, 4 / (3 * π))
+lK1P, lK3P = FCS.compute_lK(exp_sol, P, n1, n2, χ, d, δ, κ, ϵ, 4 / (3 * π))
 println("----------")
 
 println("Readout Eigenvalues: ")

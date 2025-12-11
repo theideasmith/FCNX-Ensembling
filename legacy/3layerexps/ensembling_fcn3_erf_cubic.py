@@ -274,7 +274,7 @@ def delete_gsheets_row_by_foldername(folder_name):
 # Custom loss function (slightly faster than MSE)
 def custom_mse_loss(outputs, targets):
     diff = outputs - targets
-    return 0.5 * torch.sum(diff * diff)
+    return torch.sum(diff * diff)
 
 
 def atomic_save_model(model, save_path):

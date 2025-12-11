@@ -68,7 +68,8 @@ Pkg.instantiate()
     κ::Float32
     ϵ::Float32
     P::Float32
-    n::Float32
+    n1::Float32
+    n2::Float32
     χ::Float32
     b::Float32  = 4/(3*π)
 end 
@@ -92,42 +93,42 @@ end
 
 # basic helpers
 function lV(sol::Solution)
-    lV1 = sol.lH1 / sol.lJ1^2 - 1 / sol.lJ1
-    lV3 = sol.lH3 / sol.lJ3^2 - 1 / sol.lJ3
+    lV1 = - (sol.lH1 / sol.lJ1^2 - 1 / sol.lJ1)
+    lV3 = - (sol.lH3 / sol.lJ3^2 - 1 / sol.lJ3)
     return lV1, lV3
 end
 
 lWP(d::Real) = 1 / d
 
-function lWT(sol::Solution; n::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
+function lWT(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
     lV1, _ = lV(sol)
-    return 1 / (d + delta * b * lV1 / n)
+    return 1 / (d + delta * b * n2  * lV1 / n1)
 end
 
-function TrSigma(sol::Solution; n::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
-    return lWT(sol; n=n, d=d, delta=delta, b=b) + lWP(d) * (d - 1)
+function TrSigma(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
+    return lWT(sol; n1=n1, n2=n2, d=d, delta=delta, b=b) + lWP(d) * (d - 1)
 end
 
-function EChh(sol::Solution; n::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
-    ts = TrSigma(sol; n=n, d=d, delta=delta, b=b)
+function EChh(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
+    ts = TrSigma(sol; n1=n1, n2=n2, d=d, delta=delta, b=b)
     lp = lWP(d)
     return sol.lH1 + sol.lH3 +
         (16 / (π * (1 + 2 * ts)^3) * (15 * lp^3)) * (d - 1) +
         (4 / (π * (1 + 2 * ts)) * lp) * (d - 1)
 end
 
-gammaYh2(sol::Solution; n::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π)) =
-    (4 / π) / (1 + 2 * EChh(sol; n=n, d=d, delta=delta, b=b))
+gammaYh2(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π)) =
+    (4 / π) / (1 + 2 * EChh(sol; n1=n1, n2=n2, d=d, delta=delta, b=b))
 
 # compute lK values
-function lK(sol::Solution, P; n::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=4/(3π))
-    gy = gammaYh2(sol; n=n, d=d, delta=delta, b=b)
+function lK(sol::Solution, P; n1::Real=1.0, n2::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=4/(3π))
+    gy = gammaYh2(sol; n1=n1, n2=n2, d=d, delta=delta, b=b)
     return gy * sol.lH1, gy * sol.lH3
 end
 
 # compute lT values (uses same formula as residuals)
-function lT(sol::Solution, P; n::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=4/(3π))
-    lK1, lK3 = lK(sol, P; n=n, chi=chi, d=d, delta=delta, kappa=kappa, epsilon=epsilon, b=b)
+function lT(sol::Solution, P; n1::Real=1.0, n2::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=4/(3π))
+    lK1, lK3 = lK(sol, P; n1=n1, n2=n2, chi=chi, d=d, delta=delta, kappa=kappa, epsilon=epsilon, b=b)
     t1 = -chi^2 / (kappa / P + lK1)^2 * delta
     t3 = -chi^2 / (kappa / P + lK3)^2 * delta
     return t1, t3
@@ -137,21 +138,21 @@ end
 to_vector(sol::Solution) = [sol.lJ1, sol.lJ3, sol.lH1, sol.lH3]
 
 function get_eigenvalues(i0,
-    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n=1.0, b=1.0,
+    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
     P=nothing)
     Tf = 6_000_000
     lr = 1e-4
     return gradient_descent_solver(
         i0,
         chi=chi, d=d, kappa=1.0, delta=delta,
-        epsilon=ϵ, n=n, b=4 / (3 * π),
+        epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
         P=P, lr=lr, max_iter=Tf, verbose=true
     )
 end
 
 function nlsolve_solver(initial_guess;
     anneal= false,
-    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n=1.0, b=1.0,
+    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
     P=nothing,anneal_steps = 30000,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
     x = copy(initial_guess)
@@ -161,7 +162,7 @@ function nlsolve_solver(initial_guess;
 
 
     function res_func!(F, x, c)
-        F[:] = residuals(x, P, c, d, kappa, delta, epsilon, n, b)
+        F[:] = residuals(x, P, c, d, kappa, delta, epsilon, n1, n2, b)
     end
 
     result = nothing
@@ -200,23 +201,22 @@ end
 # Residual function
 # -------------------------
 # Given a guess x = [lH1, lJ1, lH3, lJ3], returns the residuals of the 4 equations
-function residuals(x, P, chi, d, kappa, delta, epsilon, n, b)
+function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
     lJ1, lJ3, lH1, lH3 = x  # current variables
-    n1 = n
-    n2 = n
-    a = 1.0 / 6
+    n1 = n1
+    n2 = n2
     lWP =  1.0 / d
-
+    
     # Conjugate inter-layer discrepancies by the inverse kernels
     # J : Downstream ↦ Upstream
     # H : Upstream ↦ Preactivation
     # J^-1 : Preimage of H ↦ Preimage of J
     # V: Discrepancy between H1 and J1 in the preimage of J1
     # FCS is the equations of state for FCN3 with erf activations
-    lV1 =    -  lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)
+    lV1 =    - lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)
     lV3 =    - lJ3^(-1) * (lH3  - lJ3) * lJ3^(-1)
 
-    C = d   + delta * b * n2 * lV1 / n1
+    C = d   + delta * b * (n2 / n1) * lV1 
 
     K0 = C
 
@@ -247,7 +247,7 @@ end
 # Gradient Descent Solver
 # -------------------------
 function gradient_descent_solver(initial_guess;
-    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n=1.0, b=1.0,
+    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
     P=nothing,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
 
@@ -259,13 +259,13 @@ function gradient_descent_solver(initial_guess;
 
     for iter in 1:max_iter
         # Compute residuals
-        res = residuals(x, P, chi, d, kappa, delta, epsilon, n, b)
+        res = residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
 
         # Loss = sum of squares
         loss = sum(res .^ 2) + sum(x .^ 2)
 
         # Gradient of loss wrt x
-        grad = ForwardDiff.gradient(x -> sum(residuals(x, P, chi, d, kappa, delta, epsilon, n, b) .^ 2), x)
+        grad = ForwardDiff.gradient(x -> sum(residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b) .^ 2), x)
 
         # Update step
         x -= lr * grad
@@ -290,14 +290,14 @@ function gradient_descent_solver(initial_guess;
 end
 
 
-function compute_lK_ratio(sol, P, n, chi, d, delta, kappa, epsilon, b)
+function compute_lK_ratio(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)
     if sol === nothing
         return (NaN, NaN)
     end
     lJ1, lJ3, lH1, lH3 = sol
-    lV1 = (lH1 / lJ1^2 - 1 / lJ1)
-    lV3 = (lH3 / lJ3^2 - 1 / lJ3)
-    lWT = 1 / (d + delta * b * (lV1) / n)
+    lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
+    lV3 = -(lH3 / lJ3^2 - 1 / lJ3)
+    lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
     lWP = 1 / d
 
     TrSigma = lWT + lWP * (d - 1)
@@ -311,13 +311,14 @@ function compute_lK_ratio(sol, P, n, chi, d, delta, kappa, epsilon, b)
 end
 
 
-function compute_lK(sol, P,n, chi, d, delta, kappa, epsilon, b)
+
+function compute_lK(sol, P,n1, n2, chi, d, delta, kappa, epsilon, b)
 
 
 lJ1, lJ3, lH1, lH3 = sol
-lV1 = (lH1 / lJ1^2 - 1 / lJ1)
-lV3 = (lH3 / lJ3^2 - 1 / lJ3)
-lWT = 1 / (d + delta * b * (lV1) / n)
+lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
+lV3 = -(lH3 / lJ3^2 - 1 / lJ3)
+lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
 lWP = 1 / d
 
 TrSigma = lWT + lWP * (d - 1)
@@ -333,8 +334,8 @@ return lK1, lK3
 end
 
 function populate_solution(sol::Solution, params::ProblemParams)
-    lK1, lK3 = lK(sol, params.P; n=params.n, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
-    t1, t3 = lT(sol, params.P; n=params.n, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
+    lK1, lK3 = lK(sol, params.P; n1=params.n1, n2=params.n2, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
+    t1, t3 = lT(sol, params.P; n1=params.n1, n2=params.n2, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
     v1, v3 = lV(sol)
 
     sol.lK1 = lK1
@@ -358,7 +359,8 @@ function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
         kappa=problem_params.κ,
         delta=problem_params.ϵ,
         epsilon=problem_params.ϵ,
-        n=problem_params.n,
+        n1=problem_params.n1,
+        n2=problem_params.n2,
         b=problem_params.b,
         P=problem_params.P,
         lr=lr,
@@ -383,11 +385,11 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
         sol = nlsolve_solver(
             x,
             chi=chi, d=d, kappa=kappa, delta=delta,
-            epsilon=epsilon, n=n, b=b,
+            epsilon=epsilon, n1=n1, n2=n2, b=b,
             P=P,lr=1e-5, max_iter=500000, anneal=true, verbose=false
         )
 
-        l1, l3 = compute_lK_ratio(sol, P, n, chi, d, delta, kappa, epsilon, b)
+        l1, l3 = compute_lK_ratio(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)
         push!(learnabilities_1, l1)
         push!(learnabilities_3, l3)
 
