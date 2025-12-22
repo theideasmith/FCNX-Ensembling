@@ -25,6 +25,30 @@ using Printf
 
 include("./FCS.jl")
 using .FCS
+function polyfit(d, y; skip_first=5)
+    mask = .!isnan.(y) .& isfinite.(y) .& (y .> 0)
+    if count(mask) < 3
+        return nothing
+    end
+    
+    # Skip first few points for better fits
+    mask[1:min(skip_first, length(mask))] .= false
+    
+    x = log10.(d[mask])
+    ylog = log10.(y[mask])
+    
+    if length(x) < 2
+        return nothing
+    end
+    
+    # Fit without intercept: minimize sum((ylog - s*x)^2)
+    # This gives s = sum(x * ylog) / sum(x^2)
+    s = sum(x .* ylog) / sum(x .^ 2)
+    
+    # predicted y on full d grid: y = d^s (no multiplicative constant in log space)
+    ypred = 10 .^ (s .* log10.(d))
+    return (s, ypred)
+end
 
 #########################################################
 # d-sweep eigensolver for fixed P

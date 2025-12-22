@@ -421,7 +421,7 @@ def main():
     parser.add_argument('--chi', type=float, default=1.0, help='Scale factor; effective temperature = temperature/chi')
     parser.add_argument('--device', type=str, default='cuda:1', help='Device')
     parser.add_argument('--dataset-seed', type=int, default=42, help='Random seed for dataset generation')
-    parser.add_argument('--ens', type=int, default=50, help='Ensemble size')
+    parser.add_argument('--ens', type=int, default=5, help='Ensemble size')
     args = parser.parse_args()
     
     print("="*60)

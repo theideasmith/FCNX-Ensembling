@@ -37,13 +37,13 @@ def custom_mse_loss(outputs, targets):
     diff = outputs - targets
     return torch.sum(diff * diff)
 
-def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str="cuda:1", writer=None):
+def train_and_track(d, P, N, epochs=50_000_000, log_interval=10_000, device_str="cuda:1", writer=None):
     """Train erf network and track eigenvalues over epochs."""
 
     chi = N  # Mean-field scaling
     kappa = 1.0 / chi
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
-    lr = 1e-6 / P
+    lr = 1e-65
     temperature = 2 * kappa
 
     run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi{N}"
@@ -256,7 +256,7 @@ def main():
                        help='Device to use (e.g., cuda:0, cuda:1, cpu)')
     args = parser.parse_args()
 
-    dims = [2, 6, 8, 10]
+    dims = [120, 200, 240]
 
     if args.d is None:
         procs = []
@@ -280,8 +280,8 @@ def main():
                 proc.wait()
     else:
         d = args.d
-        P = 3 * d
-        N = 50
+        P = 5 * d
+        N = 4 * d
         run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi{N}"
         writer = SummaryWriter(log_dir=str(Path(__file__).parent / "runs"))
         final_eigs, eigs_over_time = train_and_track(d, P, N, device_str=args.device, writer=writer)
