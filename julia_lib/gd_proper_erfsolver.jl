@@ -63,13 +63,13 @@ precision = 8
 
 sf = x -> x #sigfig(x; n=precision)
 
-d = 10.0
+d = 6.0
 κ = 1.0
 ϵ = 0.03
-P = 5*d / 4
-n1 = 4 * d
-n2 = n1
-χ = n1
+P = 3*d 
+n1 = 50
+n2 = 50
+χ = n2
 δ=1.0
 b = 4/(3*π)
 sf(1 / 40^3)

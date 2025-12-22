@@ -1,0 +1,10 @@
+🚀 Starting HMC (NUTS) with adaptive tuning and float64: (T=1.0)...
+Available keys in posterior_samples: ['A', 'W0', 'W1']
+
+Calculating and tracking eigenvalues for 5000 exact H_eig kernel samples...
+
+--- Final HMC Posterior Eigenvalue Analysis (H_eig Kernel) ---
+Mean Max Eigenvalue (lH): 0.376715
+Std Dev of Max Eigenvalue (across posterior): 0.074968
+Mean of remaining eigenvalues (Eig 1..P-1): 0.013719
+Std Dev of remaining eigenvalues: 0.047619

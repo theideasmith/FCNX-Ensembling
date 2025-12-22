@@ -6,9 +6,8 @@ import json
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from typing import Dict, Any
-
-from gpr_ek_comparison import generate_synthetic_data
 
 
 def load_results(filepath: Path) -> Dict[str, Any]:
@@ -21,16 +20,17 @@ def plot_gpr_vs_ek(results: Dict[str, Any], output_dir: Path):
     """Plot GPR loss vs EK predicted loss."""
     d_values = sorted([int(d) for d in results.keys()])
     ek_losses = [results[str(d)]['ek_loss'] for d in d_values]
-    gpr_losses = [results[str(d)]['gpr_loss'] for d in d_values]
+    gpr_means = [results[str(d)]['gpr_loss_mean'] for d in d_values]
+    gpr_stds = [results[str(d)]['gpr_loss_std'] for d in d_values]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Plot EK prediction
     ax.plot(d_values, ek_losses, 'o-', label='EK Prediction', linewidth=2, markersize=8, color='blue')
     
-    # Plot GPR
-    ax.plot(d_values, gpr_losses, 's-', label='GPR (Bias + Variance)', 
-            linewidth=2, markersize=8, color='red', alpha=0.7)
+    # Plot GPR mean with error bars
+    ax.errorbar(d_values, gpr_means, yerr=gpr_stds, fmt='s-', label='GPR (mean ± std)', 
+                linewidth=2, markersize=8, capsize=5, color='red', alpha=0.7)
     
     ax.set_xlabel('Input Dimension (d)', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
@@ -53,7 +53,7 @@ def plot_loss_ratio(results: Dict[str, Any], output_dir: Path):
     
     for d in d_values:
         ek = results[str(d)]['ek_loss']
-        gpr = results[str(d)]['gpr_loss']
+        gpr = results[str(d)]['gpr_loss_mean']
         ratio = gpr / ek if ek > 0 else np.nan
         ratios.append(ratio)
     
@@ -77,71 +77,51 @@ def plot_loss_ratio(results: Dict[str, Any], output_dir: Path):
 
 
 def plot_ek_components(results: Dict[str, Any], output_dir: Path):
-    """Plot EK and GPR bias and variance components."""
+    """Plot EK bias and variance components."""
     d_values = sorted([int(d) for d in results.keys()])
-    ek_biases = [results[str(d)]['ek_bias'] for d in d_values]
-    ek_variances = [results[str(d)]['ek_variance'] for d in d_values]
-    gpr_biases = [results[str(d)]['gpr_bias'] for d in d_values]
-    gpr_variances = [results[str(d)]['gpr_variance'] for d in d_values]
+    biases = [results[str(d)]['ek_bias'] for d in d_values]
+    variances = [results[str(d)]['ek_variance'] for d in d_values]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    ax.plot(d_values, ek_biases, 'o-', label='EK Bias', linewidth=2, markersize=8, color='purple')
-    ax.plot(d_values, ek_variances, 's-', label='EK Variance', linewidth=2, markersize=8, color='orange')
-    ax.plot(d_values, gpr_biases, 'o--', label='GPR Bias', linewidth=2, markersize=8, color='purple', alpha=0.6)
-    ax.plot(d_values, gpr_variances, 's--', label='GPR Variance', linewidth=2, markersize=8, color='orange', alpha=0.6)
+    ax.plot(d_values, biases, 'o-', label='Bias', linewidth=2, markersize=8, color='purple')
+    ax.plot(d_values, variances, 's-', label='Variance', linewidth=2, markersize=8, color='orange')
     
     ax.set_xlabel('Input Dimension (d)', fontsize=12)
     ax.set_ylabel('Component Value', fontsize=12)
-    ax.set_title('EK vs GPR Bias and Variance Components', fontsize=14, fontweight='bold')
+    ax.set_title('EK Bias and Variance Components', fontsize=14, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
     ax.set_xticks(d_values)
     ax.set_yscale('log')
     
     plt.tight_layout()
-    output_path = output_dir / 'ek_gpr_components.png'
+    output_path = output_dir / 'ek_components.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved: {output_path}")
     plt.close()
 
 
-def plot_bias_variance_comparison(results: Dict[str, Any], output_dir: Path):
-    """Plot separate comparison of bias and variance between EK and GPR."""
+def plot_gpr_distribution(results: Dict[str, Any], output_dir: Path):
+    """Plot distribution of GPR losses for each dimension."""
     d_values = sorted([int(d) for d in results.keys()])
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-    # Bias comparison
-    ek_biases = [results[str(d)]['ek_bias'] for d in d_values]
-    gpr_biases = [results[str(d)]['gpr_bias'] for d in d_values]
+    box_data = [np.array(results[str(d)]['gpr_losses']) for d in d_values]
+    bp = ax.boxplot(box_data, labels=d_values, patch_artist=True)
     
-    ax1.plot(d_values, ek_biases, 'o-', label='EK Bias', linewidth=2, markersize=8, color='blue')
-    ax1.plot(d_values, gpr_biases, 's-', label='GPR Bias', linewidth=2, markersize=8, color='red', alpha=0.7)
-    ax1.set_xlabel('Input Dimension (d)', fontsize=12)
-    ax1.set_ylabel('Bias', fontsize=12)
-    ax1.set_title('Bias Comparison', fontsize=14, fontweight='bold')
-    ax1.legend(fontsize=11)
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xticks(d_values)
-    ax1.set_yscale('log')
+    # Color boxes
+    for patch in bp['boxes']:
+        patch.set_facecolor('lightblue')
     
-    # Variance comparison
-    ek_variances = [results[str(d)]['ek_variance'] for d in d_values]
-    gpr_variances = [results[str(d)]['gpr_variance'] for d in d_values]
-    
-    ax2.plot(d_values, ek_variances, 'o-', label='EK Variance', linewidth=2, markersize=8, color='blue')
-    ax2.plot(d_values, gpr_variances, 's-', label='GPR Variance', linewidth=2, markersize=8, color='red', alpha=0.7)
-    ax2.set_xlabel('Input Dimension (d)', fontsize=12)
-    ax2.set_ylabel('Variance', fontsize=12)
-    ax2.set_title('Variance Comparison', fontsize=14, fontweight='bold')
-    ax2.legend(fontsize=11)
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xticks(d_values)
-    ax2.set_yscale('log')
+    ax.set_xlabel('Input Dimension (d)', fontsize=12)
+    ax.set_ylabel('GPR Loss', fontsize=12)
+    ax.set_title('Distribution of GPR Losses Across Datasets', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y')
     
     plt.tight_layout()
-    output_path = output_dir / 'bias_variance_comparison.png'
+    output_path = output_dir / 'gpr_loss_distribution.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved: {output_path}")
     plt.close()
@@ -155,7 +135,7 @@ def plot_summary_table(results: Dict[str, Any], output_dir: Path):
     for d in d_values:
         p = results[str(d)]['P']
         ek = results[str(d)]['ek_loss']
-        gpr = results[str(d)]['gpr_loss']
+        gpr = results[str(d)]['gpr_loss_mean']
         ratio = gpr / ek if ek > 0 else np.nan
         
         table_data.append([
@@ -202,6 +182,97 @@ def plot_summary_table(results: Dict[str, Any], output_dir: Path):
     plt.close()
 
 
+def plot_gpr_vs_ek_predictions(results: Dict[str, Any], output_dir: Path):
+    """Plot GPR predictions vs EK predictions: (1/d) / (1/d + kappa) * x[0]."""
+    d_values = sorted([int(d) for d in results.keys()])
+    
+    # Load first dataset predictions for each d
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+    axes = axes.flatten()
+    
+    for idx, d in enumerate(d_values[:9]):  # Plot up to 9 dimensions
+        ax = axes[idx]
+        
+        gpr_preds = results[str(d)].get('gpr_predictions', [])
+        ek_factor = results[str(d)].get('ek_prediction_factor', 0.0)
+        
+        if gpr_preds:
+            # Generate corresponding x[0] values (we need to regenerate first dataset)
+            P = results[str(d)]['P']
+            # Use same seed as in gpr_ek_comparison.py for first dataset
+            import torch
+            torch.manual_seed(1)  # seeds[0] + 0 * 1000 = 1
+            X = torch.randn(P, d)
+            x0_values = X[:, 0].numpy()
+            
+            # EK prediction: (1/d) / (1/d + kappa) * x[0]
+            ek_preds = ek_factor * x0_values
+            
+            # Take only training portion (80%)
+            split_idx = int(0.8 * P)
+            x0_train = x0_values[:split_idx]
+            ek_preds_train = ek_preds[:split_idx]
+            gpr_preds_array = np.array(gpr_preds[:split_idx])
+            
+            # Scatter plot
+            ax.scatter(ek_preds_train, gpr_preds_array, alpha=0.6, s=30)
+            
+            # Perfect prediction line
+            min_val = min(ek_preds_train.min(), gpr_preds_array.min())
+            max_val = max(ek_preds_train.max(), gpr_preds_array.max())
+            ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Match')
+            
+            ax.set_xlabel(f'EK Prediction', fontsize=10)
+            ax.set_ylabel(f'GPR Prediction', fontsize=10)
+            ax.set_title(f'd={d}, P={P}', fontsize=11, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend(fontsize=8)
+            
+            # Compute and display correlation
+            corr = np.corrcoef(ek_preds_train, gpr_preds_array)[0, 1]
+            ax.text(0.05, 0.95, f'ρ = {corr:.4f}', transform=ax.transAxes,
+                   fontsize=9, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Hide unused subplots
+    for idx in range(len(d_values), 9):
+        axes[idx].axis('off')
+    
+    plt.suptitle('GPR vs EK Prediction Factor Comparison\nEK: (1/d)/(1/d + κ) × x₀', 
+                 fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    output_path = output_dir / 'gpr_vs_ek_predictions.png'
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    print(f"Saved: {output_path}")
+    plt.close()
+
+
+def plot_prediction_factors(results: Dict[str, Any], output_dir: Path):
+    """Plot EK prediction factor (1/d)/(1/d + kappa) vs d."""
+    d_values = sorted([int(d) for d in results.keys()])
+    ek_factors = [results[str(d)].get('ek_prediction_factor', 0.0) for d in d_values]
+    theoretical = [1.0 / d for d in d_values]  # lH = 1/d
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.plot(d_values, ek_factors, 'o-', label='EK Prediction Factor: (1/d)/(1/d + κ)', 
+            linewidth=2, markersize=8, color='blue')
+    ax.plot(d_values, theoretical, 's--', label='Theoretical lH = 1/d', 
+            linewidth=2, markersize=8, color='green', alpha=0.7)
+    
+    ax.set_xlabel('Input Dimension (d)', fontsize=12)
+    ax.set_ylabel('Prediction Factor', fontsize=12)
+    ax.set_title('EK Prediction Factor vs Input Dimension', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(d_values)
+    
+    plt.tight_layout()
+    output_path = output_dir / 'ek_prediction_factor.png'
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    print(f"Saved: {output_path}")
+    plt.close()
+
+
 def main():
     base_dir = Path(__file__).resolve().parent
     results_dir = base_dir / "data" / "results_gpr"
@@ -223,7 +294,9 @@ def main():
     plot_gpr_vs_ek(results, plots_dir)
     plot_loss_ratio(results, plots_dir)
     plot_ek_components(results, plots_dir)
-    plot_bias_variance_comparison(results, plots_dir)
+    plot_gpr_distribution(results, plots_dir)
+    plot_gpr_vs_ek_predictions(results, plots_dir)
+    plot_prediction_factors(results, plots_dir)
     plot_summary_table(results, plots_dir)
     
     print(f"\nAll plots saved to {plots_dir}")

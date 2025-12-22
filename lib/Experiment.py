@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, '/home/akiva/FCNX-Ensembling')
 import os
 os.environ["PYTHONCALL_JULIA_PYTHON"] = "yes"
+import sys, os
+sys.path.append(os.path.dirname(__file__))
 
 
 import juliacall

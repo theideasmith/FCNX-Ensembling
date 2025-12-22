@@ -148,7 +148,7 @@ def main():
     
     for d in d_range:
         P = int(np.round(P_factor * d))
-        kappa_ek = 2.0 * d
+        kappa_ek = 2.0 
         ek_loss_dict = compute_ek_loss(d, P, kappa=kappa_ek, chi=chi)
         ek_loss = ek_loss_dict['loss']
         

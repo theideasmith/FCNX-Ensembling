@@ -154,13 +154,19 @@ def main():
         alignment_lHP = []
         r2_lHT = []
         r2_lHP = []
+        lH_empirical_series = []
+        mean_rest_series = []
+        std_rest_series = []
         
         for cp in checkpoints:
             epoch = cp["epoch"]
             eigenvalues = cp["eigenvalues"]
             
-            # Get max eigenvalue (lH)
-            lH_empirical = max(eigenvalues)
+            # Leading eigenvalue and stats of the remaining spectrum
+            lH_empirical = eigenvalues[0]
+            remaining = eigenvalues[1:]
+            mean_rest = float(np.mean(remaining)) if remaining else np.nan
+            std_rest = float(np.std(remaining)) if remaining else np.nan
             
             # For lHT alignment: use the theoretical lHT
             slope_T, r2_T, _ = compute_alignment([lHT], [lH_empirical])
@@ -173,6 +179,9 @@ def main():
             alignment_lHP.append(slope_P)
             r2_lHT.append(r2_T)
             r2_lHP.append(r2_P)
+            lH_empirical_series.append(lH_empirical)
+            mean_rest_series.append(mean_rest)
+            std_rest_series.append(std_rest)
             
             print(f"  Epoch {epoch:>8}: alignment_T={slope_T:.4f} (R²={r2_T:.4f}), " +
                   f"alignment_P={slope_P:.4f} (R²={r2_P:.4f})")
@@ -184,6 +193,11 @@ def main():
             "alignment_lHP": alignment_lHP,
             "r2_lHT": r2_lHT,
             "r2_lHP": r2_lHP,
+            "lH_empirical": lH_empirical_series,
+            "mean_rest": mean_rest_series,
+            "std_rest": std_rest_series,
+            "lHT": lHT,
+            "lHP": lHP,
         }
     
     # Create plots
@@ -244,6 +258,78 @@ def main():
     output_path = plots_dir / "alignment_over_epochs.png"
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     print(f"\nSaved plot to {output_path}")
+    plt.close()
+
+    # Eigenvalues over epochs with theoretical lines
+    fig_ev, ax_ev = plt.subplots(1, 1, figsize=(12, 6))
+
+    for idx, chi in enumerate(chi_values):
+        if chi not in alignment_data:
+            continue
+
+        data = alignment_data[chi]
+        epochs = data["epochs"]
+        if not epochs:
+            continue
+
+        lH_empirical = data["lH_empirical"]
+        mean_rest = data["mean_rest"]
+        std_rest = data["std_rest"]
+        ax_ev.plot(
+            epochs,
+            lH_empirical,
+            "o-",
+            label=f"χ={chi} empirical",
+            color=colors[idx],
+            linewidth=2,
+            markersize=6,
+        )
+
+        ax_ev.errorbar(
+            epochs,
+            mean_rest,
+            yerr=std_rest,
+            fmt="s-",
+            color=colors[idx],
+            alpha=0.7,
+            linewidth=1.5,
+            markersize=5,
+            label=f"χ={chi} mean(rest)",
+        )
+
+        xmin, xmax = min(epochs), max(epochs)
+        ax_ev.plot(
+            [xmin, xmax],
+            [data["lHT"], data["lHT"]],
+            linestyle="--",
+            color=colors[idx],
+            alpha=0.7,
+            label=f"χ={chi} theory (δ=1)",
+        )
+        ax_ev.plot(
+            [xmin, xmax],
+            [data["lHP"], data["lHP"]],
+            linestyle=":",
+            color=colors[idx],
+            alpha=0.7,
+            label=f"χ={chi} theory (δ=0)",
+        )
+
+        ax_ev.axvline(data["original_epochs"], color=colors[idx], linestyle="-", alpha=0.25)
+
+    ax_ev.set_xlabel("Epochs", fontsize=13)
+    ax_ev.set_ylabel("Eigenvalues", fontsize=13)
+    ax_ev.set_title("Eigenvalues vs Continued Training Epochs", fontsize=14, fontweight="bold")
+    ax_ev.grid(True, alpha=0.3)
+    ax_ev.set_xscale("log")
+    ax_ev.set_yscale("log")
+
+    ax_ev.legend(fontsize=10, loc="best", ncol=2)
+
+    plt.tight_layout()
+    eigen_output_path = plots_dir / "eigenvalues_over_epochs.png"
+    plt.savefig(eigen_output_path, dpi=300, bbox_inches="tight")
+    print(f"Saved eigenvalue plot to {eigen_output_path}")
     plt.close()
     
     # Print summary table

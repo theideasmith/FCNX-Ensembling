@@ -86,7 +86,7 @@ function residuals(x, P, chi, d, kappa, delta, n1, n2)
     
     # Compute intermediate values from the Mathematica equations
     # lHh == (1/lJ - (1/lJ)^2 lH)
-    lHh = (1/lJ - (1/lJ)^2 * lH)
+    lHh = lJ^(-1) * (lJ - lH) * lJ^(-1)
     
     # lK == (k/(P χ)) lH/(lH + k/P) - (lH/(lH + k/P))^2 * Δ
     k_over_P = kappa / P
@@ -181,6 +181,7 @@ function nlsolve_solver(initial_guess;
             catch e
                 print("THERE WAS AN ERROR")
                 showerror(stdout, e, catch_backtrace())
+                return nothing
             end
         end
     else 

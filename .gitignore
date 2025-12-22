@@ -1,3 +1,6 @@
+**/events.out.tfevents.*
+**.pkl
+**.json
 **.pt
 **.out
 **.log
@@ -17,7 +20,7 @@ plots/
 **/plots/**
 FCN3Exps/**.log
 **.npz
-
+**.mp4
 
 # Ignore NumPy compressed arrays and Python cache directories
 *.npz

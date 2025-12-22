@@ -73,7 +73,7 @@ for (i, d) in enumerate(d_values)
     P_linear = 4 * Float64(d)           # P ~ d
     P_sqrt = 5 * sqrt(Float64(d))       # P ~ sqrt(d)
     
-    n = n_factor * d
+    n = 50
     n1 = n
     n2 = n
     
@@ -284,7 +284,7 @@ plt_lJ = plot(xscale=:log10, yscale=:log10,
               xlabel=L"d", ylabel=L"\lambda_J",
               title="FCN3 Linear Preactivation Kernel Eigs, N = 5d",
               size=(1200, 800),
-              legend=:outerright,
+              legend=:bottomleft,
               left_margin=10mm)
 
 # P ~ d, chi=1.0

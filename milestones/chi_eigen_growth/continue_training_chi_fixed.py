@@ -116,10 +116,10 @@ def main():
     # Chi configs from chi_fixed_points.py
     chi_configs = [
         (1, 100_000),
-        (64, 500_000),
-        (128, 2_000_000),
-        (192, 4_000_000),
-        (256, 10_000_000),
+        (64, 2_000_000),
+        (128, 8_000_000),
+        (192, 15_000_000),
+        (256, 30_000_000),
     ]
 
     base_dir = Path(__file__).resolve().parent
@@ -153,7 +153,7 @@ def main():
         results = train_network_checkpoint(
             model, chi, X, y, device,
             num_checkpoints=num_checkpoints,
-            lr=1e-5,
+            lr=1e-7,
             temperature=2.0
         )
         

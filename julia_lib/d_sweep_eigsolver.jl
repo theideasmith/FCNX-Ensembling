@@ -45,7 +45,9 @@ using .FCS
 #########################################################
 
 ## User-editable sweep parameters
-P_factor = 5                 # P = P_factor * d
+P_factor = 3                 # P = P_factor * d
+P_power_factor = 2
+
 κ = 1.0                      # kappa (noise)
 ϵ = 0.03                     # epsilon in target
 n_factor = 4.0                # n = n_factor * d
@@ -56,7 +58,7 @@ lr = 1e-5
 Tf = 2_000_000               # max iterations for solver
 
 # Sweep range for d (input dimension)
-d_values = 10 .^(collect(log10(1):0.1:log10(1000)))  # change as desired
+d_values = 10 .^(collect(log10(10):0.05:log10(1000)))  # change as desired
 
 # Output folder for plots
 plot_dir = joinpath(@__DIR__, "..", "plots", "d_sweep")
@@ -116,10 +118,10 @@ if false #isfile(results_file)
     end
 else
     for (i, d) in enumerate(d_values)
-        P_scale = 10 * d
-        P_power = d^1.3
+        P_scale = 3 * d
+        P_power = P_power_factor * d^1.5
 
-        P_list = [P_scale]
+        P_list = [P_scale, P_power]
         n = n_factor * d
         n1 = n
         n2 = n
@@ -279,7 +281,7 @@ function savefig_with_meta(fig, fname)
     savefig(fig, outpath)
 end
 
-default(titlefont=font(18), guidefont=font(16), tickfont=font(14), legendfontsize=14)
+default(titlefont=font(18), guidefont=font(16), tickfont=font(14), legendfontsize=20)
 
 # Single combined figure for all eigenvalue traces
 # Increase left margin so y-labels are not clipped when saving PNGs
@@ -295,8 +297,7 @@ function latex_label(op, mode_sym, mode_idx, P_desc)
 end
 
 P_scale_desc =  string("P \\sim $(P_factor)\\,d")
-P_power_factor = 2
-P_power_desc = string("P \\sim $(P_power_factor)\\,d^{3}")
+P_power_desc = string("P \\sim $(P_power_factor)\\,d^{3/2}")
 
 # Title / scaling text to include in plot titles (use LaTeXStrings for rendering)
 n_scaling_text = string("n = $(n_factor)\\,d")
@@ -357,10 +358,10 @@ ops_map = Dict(
     "K1" => (lK1_T_scale, lK1_P_scale, lK1_T_power, lK1_P_power, string("\\lambda_{K}^{(1)}")),
     "K3" => (lK3_T_scale, lK3_P_scale, lK3_T_power, lK3_P_power, string("\\lambda_{K}^{(3)}"))
 )
-
+lH1_T_power
 P_scale_label = latexstring("P \\sim $(P_factor)\\,d")
 
-P_power_label = latexstring("P \\sim $(P_power_factor)\\,d^{3}")
+P_power_label = latexstring("P \\sim $(P_power_factor)\\,d^{3/2}")
 
 # Fit helper: fit y = A * d^s in log10 space (returns (s, intercept)) and predicted values for grid
 function fit_powerlaw(d, y)
@@ -383,7 +384,7 @@ for (opname, tup) in ops_map
 
     # two-panel subplot: left = P ~ d*scale, right = P ~ d^{3/2}
     # increase left margin to avoid clipping of y-label on the left subplot
-    plt = plot(layout = (2,1), size=(800,1500), left_margin = 30mm)
+    plt = plot(layout = (1,2), size=(1600,800), left_margin = 30mm)
     # overall super-title for the two-panel figure (LaTeX formatted)
     title!(plt, full_plot_name)
 
@@ -417,11 +418,12 @@ for (opname, tup) in ops_map
     end
 
         # Place legend inside the left subplot at the bottom-left with smaller font
-        plot!(plt[1], legend = :bottomleft, legendfontsize = 10)
+        plot!(plt[1], legend = :bottomleft, legendfontsize = 16)
 
     # Right: power (P ~ 2 * d^{3/2})
     lab_star_p = latexstring(string(ylatex) * "^{\\ast}") * " Target"
     lab_perp_p = latexstring(string(ylatex) * "^{\\perp}") * " Perp"
+
     plot!(plt[2], d_values, t_power; label=lab_star_p, marker=:star5, lw=2, xscale=:log10, yscale=:log10)
     plot!(plt[2], d_values, p_power; label=lab_perp_p, marker=:diamond, lw=2)
     xlabel!(plt[2], latexstring("d"))
@@ -448,7 +450,7 @@ for (opname, tup) in ops_map
     end
 
         # Place legend inside the right subplot at the bottom-left with smaller font
-        plot!(plt[2], legend = :bottomleft, legendfontsize = 10)
+        plot!(plt[2], legend = :bottomleft, legendfontsize = 16)
 
     outname = joinpath(plot_dir, string(opname, "_eigenvalues_Pscale_vs_Ppower.png"))
     println("Saving -> $outname")
