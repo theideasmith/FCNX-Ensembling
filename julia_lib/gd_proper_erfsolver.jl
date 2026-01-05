@@ -63,13 +63,13 @@ precision = 8
 
 sf = x -> x #sigfig(x; n=precision)
 
-d = 6.0
+d = 40
 κ = 1.0
 ϵ = 0.03
-P = 3*d 
-n1 = 50
-n2 = 50
-χ = n2
+P = 250
+n1 = 400
+n2 = 400
+χ = 50
 δ=1.0
 b = 4/(3*π)
 sf(1 / 40^3)
@@ -79,7 +79,7 @@ params = FCS.ProblemParams(d, κ, ϵ, P, n1, n2, χ, b)
 
 Tf = 6_000_000
 lr = 1e-6
-i0 = [4 / (3 * pi) * 1 / d^0.5, 1 / d^(3 / 2), 4 / (3 * pi) * 1 / d^0.5, 1 / d^(3 / 2)]
+i0 = [4 / (3 * pi) * 1 / d^0.5, 1 / d^(3 / 2), 4 / (3 * pi) * 1 / d^0.5, 1 / d^(3 / 2), 1/d]
 # i0 = fill(0.1, 4)
 exp_sol = FCS.nlsolve_solver(
     i0,
@@ -107,7 +107,7 @@ else
     println("lJ1: $(sf(lJ1)), lJ3: $(sf(lJ3)) ")
 end
 
-delta = 0.0
+delta = 1.0
 lH1
 1 / lJ1
 (lH1 / lJ1^2)
@@ -134,7 +134,7 @@ println("lK3: $lK3T")
 
 δ = 0.0
 
-i0 = [4 / (3 * pi) * 1 / d, 1 / d^(3), 4 / (3 * pi) * 1 / d, 1 / d^(3)]
+i0 = [4 / (3 * pi) * 1 / d, 1 / d^(3), 4 / (3 * pi) * 1 / d, 1 / d^(3), 1/d]
 
 exp_sol = FCS.nlsolve_solver(
     i0,

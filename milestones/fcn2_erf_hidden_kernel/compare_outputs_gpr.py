@@ -49,7 +49,7 @@ def arcsin_gpr_predict(X: torch.Tensor, Y: torch.Tensor, sigma0_sq: float) -> to
 def eval_dataset(model: FCN2NetworkActivationGeneric, P: int, d: int, sigma0_sq: float, seed: int):
     """Generate one dataset, run model and GPR, return numpy arrays."""
     torch.manual_seed(seed)
-    X = torch.randn(P, d, device=torch.device("cpu"))
+    X = torch.randn(P, d, device=torch.device("cuda:1")).to(torch.device('cpu'))
     Y = X[:, 0]
 
     with torch.no_grad():
@@ -127,12 +127,13 @@ def main():
     d = int(config["d"])
     P_cfg = int(config["P"])
     P = args.num_samples if args.num_samples is not None else P_cfg
-    sigma0_sq = args.sigma0 ** 2
+    sigma0_sq = args.sigma0 
 
     datasets = []
     seeds = []
     for i in range(args.num_datasets):
         ds_seed = args.seed + i
+        print("Generating dataset", i, "with seed", ds_seed)
         seeds.append(ds_seed)
         datasets.append(eval_dataset(model, P, d, sigma0_sq, seed=ds_seed))
 

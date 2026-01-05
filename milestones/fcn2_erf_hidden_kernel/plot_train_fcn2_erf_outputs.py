@@ -31,6 +31,8 @@ import torch
 torch.set_default_dtype(torch.float32)
 import subprocess
 import tempfile
+import traceback
+
 try:
     import imageio
     HAS_IMAGEIO = True
@@ -90,11 +92,12 @@ def _compute_julia_fcn2_erf_predictions(d: int, n1: int, P: int,
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
             out_path = Path(tf.name)
         cmd += ["--output", str(out_path)]
-
+        print("Running Julia command: ", " ".join(cmd))
         env = dict(**os.environ)
         # Some environments need DISPLAY unset for headless
         env.pop("DISPLAY", None)
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True, timeout=180)
+        print("Julia stdout:\n", res.stdout)
         if res.returncode != 0:
             print("Warning: Julia compute failed:\n", res.stderr)
             try:
@@ -106,17 +109,20 @@ def _compute_julia_fcn2_erf_predictions(d: int, n1: int, P: int,
         if not out_path.exists():
             print("Warning: Julia did not produce output JSON.")
             return None
-
+        
         import json
         with open(out_path, "r") as f:
             data = json.load(f)
         try:
             out_path.unlink(missing_ok=True)
-        except Exception:
+        except Exception as e:
+            print(f"Warning: could not delete temp file {out_path}: {e}")
             pass
+
         return data
     except Exception as e:
         print(f"Warning: failed to run Julia predictions: {e}")
+        traceback.print_exc()
         return None
 
 
@@ -250,7 +256,7 @@ def _parse_run_dir_params(run_dir: Path):
     name = run_dir.name
     params = {}
     # Simple integer params
-    for key in ["d", "P", "N"]:
+    for key in ["d", "P", "N","seed","T"]:
         m = re.search(rf"{key}(\d+)", name)
         if m:
             params[key] = int(m.group(1))
@@ -345,6 +351,7 @@ def plot_pred_vs_true(run_dir: Path, out_path: Path):
     cfg = _load_config(run_dir)
     if cfg is None:
         params = _parse_run_dir_params(run_dir)
+        print(params)
         if not all(k in params for k in ("d", "P", "N")):
             raise FileNotFoundError(
                 f"Missing config.json and could not parse d/P/N from run dir name: {run_dir.name}"
@@ -352,15 +359,19 @@ def plot_pred_vs_true(run_dir: Path, out_path: Path):
         d = int(params["d"])
         P = int(params["P"])
         N = int(params["N"])
+        temperature = float(params.get("temperature", 1.0))
+        seed = int(params.get("seed", 0))
         ens = 5  # default ensemble size used in training
     else:
         d = int(cfg["d"])
         P = int(cfg["P"])
         N = int(cfg["N"])
+        temperature = float(cfg.get("temperature", 1.0))
+        seed = int(cfg.get("seed", 0))
         ens = int(cfg.get("ens", 5))
 
     # Recreate dataset
-    torch.manual_seed(42)
+    torch.manual_seed(seed)
     X = torch.randn(3000, d)
     Y = X[:, 0].unsqueeze(-1)
 
@@ -391,19 +402,23 @@ def plot_pred_vs_true(run_dir: Path, out_path: Path):
 
     # Bar plot of eigenvalues with error bars from ensemble std
     result = model.H_eig(X, X, std=True)
+
     if isinstance(result, tuple):
         eigenvalues, eigenvalues_std = result
+        eigenvalues = eigenvalues #/ eigenvalues.sum()
+        eigenvalues_std = eigenvalues_std #/ eigenvalues.sum()
         eigenvalues = eigenvalues.cpu().numpy()
         eigenvalues_std = eigenvalues_std.cpu().numpy()
     else:
         eigenvalues = result.cpu().numpy()
+        eigenvalues = eigenvalues / eigenvalues.sum()
         eigenvalues_std = None
     
     # Sort by eigenvalue magnitude
     sort_idx = np.argsort(eigenvalues)[::-1]
     eigenvalues_sorted = eigenvalues[sort_idx]
     eigenvalues_std_sorted = eigenvalues_std[sort_idx] if eigenvalues_std is not None else None
-    
+    print("Largest (Target-normalized) eigenvalues: ", eigenvalues_sorted[:10])
     fig, ax = plt.subplots(figsize=(8, 5))
     x_pos = np.arange(1, eigenvalues_sorted.size + 1)
     if eigenvalues_std_sorted is not None:
@@ -422,19 +437,31 @@ def plot_pred_vs_true(run_dir: Path, out_path: Path):
     try:
         # chi defaults to n1 (N) in many of our scripts
         chi_val = float(N)
-        pred = _compute_julia_fcn2_erf_predictions(d=d, n1=N, P=P, chi=chi_val)
+        pred = _compute_julia_fcn2_erf_predictions(d=d, n1=N, P=P, chi=chi_val, kappa = temperature/ 2.0)
+
+        print(pred)
         if isinstance(pred, dict):
             lk = pred.get("lJ", None)   # delta=1.0
+
+
             lkp = pred.get("lJP", None) # delta=0.0
-            if isinstance(lk, (int, float)) and np.isfinite(lk):
-                ax.axhline(lk, color="k", linestyle="--", linewidth=1.2, alpha=0.9, label="Julia lk (δ=1)")
-            if isinstance(lkp, (int, float)) and np.isfinite(lkp):
-                ax.axhline(lkp, color="#444", linestyle=":", linewidth=1.2, alpha=0.9, label="Julia lk (δ=0)")
+
+            lk_total = lk + (d-1) * lkp
+
+            lk_norm = lk #/ lk_total if lk_total != 0 else None
+            lkp_norm = lkp #/ lk_total if lk_total != 0 else None
+
+            print(f"Julia predictions: lk (δ=1) = {lk}, lkp (δ=0) = {lkp}")
+            # if isinstance(lk, (int, float)) and np.isfinite(lk):
+            ax.axhline(lk, color="k", linestyle="--", linewidth=1.2, alpha=0.9, label="Julia lk (δ=1)")
+            # if isinstance(lkp, (int, float)) and np.isfinite(lkp):
+            ax.axhline(lkp, color="#444", linestyle=":", linewidth=1.2, alpha=0.9, label="Julia lk (δ=0)")
             # Show legend if any prediction lines added
             handles, labels = ax.get_legend_handles_labels()
             if labels:
                 ax.legend(loc="best")
     except Exception as e:
+        traceback.print_exc()
         print(f"Warning: could not overlay Julia predictions: {e}")
 
     fig.tight_layout()
@@ -448,6 +475,8 @@ def plot_pred_vs_true(run_dir: Path, out_path: Path):
         pass
     plt.close(fig)
 
+
+
     # Storing final eigenvalues in a JSON file
     eig_json_path = out_path.parent / "eigenvalues_final_model.json"
     print("Logging json to: ", eig_json_path)
@@ -456,6 +485,15 @@ def plot_pred_vs_true(run_dir: Path, out_path: Path):
                 for i, (ev, std_val) in enumerate(zip(eigenvalues_sorted, 
                                                         eigenvalues_std_sorted if eigenvalues_std_sorted is not None 
                                                         else [0.0]*len(eigenvalues_sorted)))}
+
+    eig_dict["julia_predictions"] = {
+        "lk_delta_1": float(lk_norm) if 'lk_norm' in locals() else None,
+        "lkp_delta_0": float(lkp_norm) if 'lkp_norm' in locals() else None,
+    }
+    eig_dict["ratio_theory_to_predictions"] = {
+        "lk_ratio": float(eigenvalues_sorted[0] / lk_norm) if 'lk_norm' in locals() and lk_norm not in (0, None) else None,
+        "lkp_ratio": float(eigenvalues_sorted[1:].mean() / lkp_norm) if 'lkp_norm' in locals() and lkp_norm not in (0, None) else None,
+    }
     with open(eig_json_path, "w") as f:
         json.dump(eig_dict, f, indent=4)
 

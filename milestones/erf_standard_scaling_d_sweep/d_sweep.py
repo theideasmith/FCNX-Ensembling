@@ -43,7 +43,7 @@ def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str
     chi = 1.0  # standard scaling
     kappa = 1.0
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
-    lr = 1e-5 / P
+    lr = 1e-6
     temperature = 2 * kappa
 
     run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi{int(chi)}"
@@ -57,7 +57,7 @@ def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str
     X = torch.randn(P, d, device=device)
     Y = X[:, 0].squeeze(-1).unsqueeze(-1)
 
-    model = FCN3NetworkEnsembleErf(d, N, N, P, ens=50,
+    model = FCN3NetworkEnsembleErf(d, N, N, P, ens=100,
                                    weight_initialization_variance=(1 / d, 1 / N, 1 / (N * chi))).to(device)
     model.train()
 
@@ -246,9 +246,9 @@ def main():
                        help='Device to use (e.g., cuda:0, cuda:1, cpu)')
     args = parser.parse_args()
 
-    dims = [2, 6, 8, 10]
-    N = 256
-    epochs = 100_000
+    dims = [20]
+    N = 2400
+    epochs = 1_000_000
     log_interval = 10_000
     runs_base = Path(__file__).parent / "runs"
     runs_base.mkdir(exist_ok=True, parents=True)
@@ -259,7 +259,7 @@ def main():
             sys.exit(1)
 
         d = args.d
-        P = 3 * d
+        P = 100
         print(f"\n{'='*60}")
         print(f"Starting training for d={d} on {args.device}")
         print(f"{'='*60}")

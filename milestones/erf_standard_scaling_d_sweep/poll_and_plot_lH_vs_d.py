@@ -18,7 +18,11 @@ from FCN3Network import FCN3NetworkEnsembleErf
 from Experiment import Experiment
 
 POLL_INTERVAL = 5.0
-DIMS_DEFAULT = [2, 6, 8, 10]
+# Consistent experiment parameters
+D_DEFAULT = 20
+P_DEFAULT = 100
+N_DEFAULT = 2400
+DIMS_DEFAULT = [D_DEFAULT]
 DEVICE_DEFAULT = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
@@ -44,10 +48,10 @@ def arcsin_gpr_predict(X, Y, sigma0_sq):
 def find_run_dirs(base: Path, dims: List[int]) -> List[Tuple[Path, Dict[str, int]]]:
     runs: List[Tuple[Path, Dict[str, int]]] = []
     for d in dims:
-        name = f"d{d}_P{3*d}_N256_chi1"
+        name = f"d{d}_P{P_DEFAULT}_N{N_DEFAULT}_chi1"
         p = base / name
         if p.is_dir():
-            runs.append((p, {"d": d, "P": 3 * d, "N": 256, "chi": 1}))
+            runs.append((p, {"d": d, "P": P_DEFAULT, "N": N_DEFAULT, "chi": 1}))
     runs.sort(key=lambda x: x[1]["d"])
     return runs
 
@@ -65,7 +69,7 @@ def load_model(run_dir: Path, cfg: Dict, device: torch.device) -> Optional[FCN3N
     chi = int(cfg.get("chi", 1))
 
     weight_var = (1.0 / d, 1.0 / N, 1.0 / (N * chi))
-    model = FCN3NetworkEnsembleErf(d=d, n1=N, n2=N, P=P, ens=50,
+    model = FCN3NetworkEnsembleErf(d=d, n1=N, n2=N, P=P, ens=100,
                                    weight_initialization_variance=weight_var).to(device)
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict)
@@ -98,8 +102,8 @@ def compute_empirical_lH(model: FCN3NetworkEnsembleErf, d: int, device: torch.de
 
 def compute_theoretical_lH(run_dir: Path, d: int, device: torch.device) -> Tuple[Optional[float], Optional[float]]:
     try:
-        P = 3 * d
-        N = 256
+        P = P_DEFAULT
+        N = N_DEFAULT
         chi = 1.0
         kappa = 1.0
         exp = Experiment(file=str(run_dir), N=N, d=d, chi=chi, P=P, ens=50, kappa=kappa, device=device)
@@ -120,8 +124,9 @@ def plot_gpr_vs_network(model: FCN3NetworkEnsembleErf, X: torch.Tensor, Y: torch
             sigma0_sq = 2 * kappa
             gpr_pred = arcsin_gpr_predict(X, Y, sigma0_sq).cpu().numpy().ravel()
             model_out_full = model.forward(X).detach().cpu().numpy()
+            print(model_out_full.shape)
             model_out = model_out_full.mean(axis=-1).ravel()
-            model_std = model_out_full.std(axis=-1).ravel()
+            model_std = model_out_full.std(axis=-1).ravel() / np.sqrt(model_out_full.shape[-1])
             
             fig, ax = plt.subplots(figsize=(8, 6))
             ax.errorbar(gpr_pred, model_out, yerr=model_std, fmt='o', markersize=6, alpha=0.6,
@@ -137,7 +142,7 @@ def plot_gpr_vs_network(model: FCN3NetworkEnsembleErf, X: torch.Tensor, Y: torch
             
             ax.set_xlabel("Arcsin GPR prediction")
             ax.set_ylabel("Network output (mean)")
-            ax.set_title(f"GPR vs Network (d={d}, P={3*d}, N=256, κ={kappa})")
+            ax.set_title(f"GPR vs Network (d={d}, P={P_DEFAULT}, N=2400, κ={kappa})")
             ax.legend()
             ax.grid(True, alpha=0.3)
             fig.tight_layout()
@@ -205,7 +210,7 @@ def update_plot(d_vals, emp_top, emp_top_err, emp_rest, emp_rest_err, th_top, th
 
     ax.set_xlabel("Dimension $d$ (log scale)")
     ax.set_ylabel("Eigenvalue (log scale)")
-    ax.set_title("Empirical ($\\lambda_H^{(*)}$) vs Theory ($\\lambda_H^{(\\perp)}$) — Erf Standard Scaling (chi=1)")
+    ax.set_title(f"Empirical ($\\lambda_H^{{(*)}}$) vs Theory ($\\lambda_H^{{(\\perp)}}$) — Erf Standard Scaling (chi=1), P={P_DEFAULT}, N={N_DEFAULT}")
     ax.grid(True, which='both', alpha=0.3)
     ax.legend(loc='lower left', fontsize=9)
 
@@ -242,17 +247,18 @@ def poll_and_plot_once(base_dir: Path, device: torch.device, dims: List[int]):
 
         # Generate training data (standard Gaussian) and target (x0 + eps*He3(x0))
         d = cfg["d"]
-        P = cfg["P"]
+        P = P_DEFAULT
+        N = N_DEFAULT
         eps = 0.03
         torch.manual_seed(42)  # Use same seed for consistency
         X = torch.randn(P, d, device=device)
         x0 = X[:, 0]
         def hermite3(x):
             return (x**3 - 3.0 * x) / np.sqrt(6.0)
-        Y = x0 + eps * hermite3(x0)
-        
+        Y = x0 #+ eps * hermite3(x0)
+
         kappa = 1.0
-        gpr_plot_path = plots_dir / f"gpr_vs_network_d{d}_n_{cfg['N']}.png"
+        gpr_plot_path = plots_dir / f"gpr_vs_network_d{d}_n_{N}.png"
         plot_gpr_vs_network(model, X, Y, d, kappa, gpr_plot_path, device)
 
         d_list.append(cfg["d"])

@@ -56,8 +56,8 @@ def _pred_record(epoch, targets, outputs):
 
 
 def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
-               device_str="cuda:1", lr=1e-5, temperature=0.02, chi=1.0,
-               run_dir=None, writer=None, dataset_seed=42):
+               device_str="cuda:1", base_lr=1e-5, temperature=0.02, chi=1.0,
+               run_dir=None, writer=None, dataset_seed=42, activation="erf"):
     """Train 2-layer erf network and track H eigenvalues.
     
     Args:
@@ -82,12 +82,17 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     
     # Setup directory
     if run_dir is None:
-        run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi_{chi}_lr_{lr}_T_{temperature}_seed_{dataset_seed}"
+        run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi_{chi}_lr_{base_lr}_T_{temperature}_seed_{dataset_seed}"
     run_dir.mkdir(exist_ok=True, parents=True)
     
     print(f"\nTraining 2-layer erf network:")
     print(f"  d={d}, P={P}, N={N}")
-    effective_temperature = temperature / chi
+
+
+    effective_temperature = temperature / chi 
+    lr = base_lr / P 
+
+
     print(f"  lr={lr:.6e}, T={temperature:.6f}, chi={chi:.6f}, T_eff={effective_temperature:.6f}")
     print(f"  Output: {run_dir}")
     print(f"  Device: {device}")
@@ -101,8 +106,8 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     ens = ens  # ensemble size
     model = FCN2NetworkActivationGeneric(
         d, N, P, ens=ens,
-        activation="erf",
-        weight_initialization_variance=(1/d, 1/N)
+        activation=activation,
+        weight_initialization_variance=(1/d, 1/(N * chi))
     ).to(device)
     
     # Try to load existing checkpoint
@@ -171,14 +176,12 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     wd_W0 = d * effective_temperature
     wd_A = N * effective_temperature * chi
     
-    # Langevin noise scale
-    noise_scale = np.sqrt(2.0 * lr * effective_temperature)
 
     # Log predictions every N epochs
     pred_log_interval = 10000
     
     # Large eval set for eigenvalues
-    Xinf = torch.randn(10000, d, device=device)
+    Xinf = torch.randn(3000, d, device=device)
     
     # Compute initial eigenvalues
     if start_epoch == 0 and 0 not in eigenvalues_over_time:
@@ -219,19 +222,20 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     # Training loop
     for epoch in range(start_epoch, epochs + 1):
         if epoch > 0:
-            # if epoch > 2 * 1e6:
-            #     lr = lr / 3.0
-            # if epoch > 3 * 1e6:
-            #     lr = lr / 8.0
+            if epoch > epochs * 0.75:
+                lr = base_lr / (3 * P)
+
             torch.manual_seed(epoch)
-            
+            # Langevin noise scale
+            noise_scale = np.sqrt(2.0 * lr * effective_temperature)
+
             # Forward pass
             output = model(X)  # (P, ens)
             
             # Loss per ensemble
             diff = output - Y  # (P, ens)
             per_ensemble_loss = torch.sum(diff * diff, dim=0)  # (ens,)
-            loss = per_ensemble_loss.sum()
+            loss = per_ensemble_loss.sum() 
             
             loss_avg = loss.item() / ens
             loss_std = per_ensemble_loss.std().item()
@@ -239,7 +243,7 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
             # Log to TensorBoard
             if writer is not None:
                 writer.add_scalar('loss/sum_total', loss.item(), epoch)
-            
+                writer.add_scalar('learning_rate/lr', lr, epoch)
             # Backward
             model.zero_grad()
             loss.backward()
@@ -280,13 +284,13 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
                     
                     # Log to TensorBoard
                     if writer is not None:
-                        # Individual eigenvalues
-                        eigenvalue_dict = {f'eig_{i}': float(eigenvalues[i]) 
-                                         for i in range(len(eigenvalues))}
-                        writer.add_scalars('eigenvalues/all', eigenvalue_dict, epoch)
+                        # # Individual eigenvalues
+                        # eigenvalue_dict = {f'eig_{i}': float(eigenvalues[i]) 
+                        #                  for i in range(len(eigenvalues))}
+                        # writer.add_scalars('eigenvalues/all', eigenvalue_dict, epoch)
                         
                         # Eigenvalue statistics
-                        writer.add_scalar('eigenvalues/mean', float(eigenvalues.mean()), epoch)
+                        writer.add_scalar('eigenvalues/perp_mean', float(eigenvalues[1:].mean()), epoch)
                         writer.add_scalar('eigenvalues/max', float(eigenvalues.max()), epoch)
                         writer.add_scalar('eigenvalues/min', float(eigenvalues.min()), epoch)
                         writer.add_scalar('eigenvalues/std', float(eigenvalues.std()), epoch)
@@ -421,7 +425,7 @@ def main():
     parser.add_argument('--chi', type=float, default=1.0, help='Scale factor; effective temperature = temperature/chi')
     parser.add_argument('--device', type=str, default='cuda:1', help='Device')
     parser.add_argument('--dataset-seed', type=int, default=42, help='Random seed for dataset generation')
-    parser.add_argument('--ens', type=int, default=5, help='Ensemble size')
+    parser.add_argument('--ens', type=int, default=10, help='Ensemble size')
     args = parser.parse_args()
     
     print("="*60)
@@ -429,7 +433,7 @@ def main():
     print("="*60)
     
     # Setup TensorBoard
-    tensorboard_dir = Path(__file__).parent / "runs" / f"d{args.d}_P{args.P}_N{args.N}_chi_{args.chi}"
+    tensorboard_dir = Path(__file__).parent / "runs" / f"d{args.d}_P{args.P}_N{args.N}_chi_{args.chi}_seed_{args.dataset_seed}_lr_{args.lr}_T_{args.temperature}"
     writer = SummaryWriter(log_dir=str(tensorboard_dir))
     print(f"TensorBoard logging to: {tensorboard_dir}")
     
@@ -437,7 +441,7 @@ def main():
     final_eigs, eigs_over_time, run_dir = train_fcn2(
         d=args.d, P=args.P, N=args.N,
         epochs=args.epochs, log_interval=args.log_interval,
-        device_str=args.device, lr=args.lr, temperature=args.temperature, chi=args.chi,
+        device_str=args.device, base_lr=args.lr, temperature=args.temperature, chi=args.chi,
         writer=writer, dataset_seed=args.dataset_seed, ens=args.ens
     )
     

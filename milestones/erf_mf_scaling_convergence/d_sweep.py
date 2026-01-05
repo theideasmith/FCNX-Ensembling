@@ -43,7 +43,7 @@ def train_and_track(d, P, N, epochs=50_000_000, log_interval=10_000, device_str=
     chi = N  # Mean-field scaling
     kappa = 1.0 / chi
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
-    lr = 1e-65
+    lr = 1e-6
     temperature = 2 * kappa
 
     run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi{N}"

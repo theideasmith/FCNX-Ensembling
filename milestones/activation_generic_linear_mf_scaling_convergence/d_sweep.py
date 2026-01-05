@@ -46,7 +46,7 @@ def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str
     chi = N  # Mean-field scaling
     kappa = 1.0 / chi
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
-    lr = 1e-5 / P 
+    lr = 1e-5  
     temperature = 2 * kappa
     
     # Setup output directory for this run
@@ -130,7 +130,7 @@ def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str
     
     for epoch in range(start_epoch, epochs + 1):  # Resume from start_epoch
         # Forward pass (skip for epoch 0)
-        if epoch > 0:
+        if epoch >= 0:
             output = model(X)  # shape: (P, ensemble)
             # Compute per-ensemble losses
             diff = output - Y  # (P, ensemble)
@@ -198,7 +198,7 @@ def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str
                 except:
                     eigenvalues_exist = False
                 
-                if epoch > 0:
+                if epoch >= 0:
                     losses[epoch] = float(loss_avg)
                     loss_stds[epoch] = float(loss_std)
                     
@@ -308,33 +308,33 @@ def plot_predictions_vs_empirical(d, P, N, run_dir):
             print(f"  No empirical eigenvalues available for plotting")
             return None
         
-        # Create plot
-        fig, ax = plt.subplots(figsize=(10, 6))
+        # # Create plot
+        # fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Plot empirical eigenvalues as bars
-        ax.bar(range(len(empirical_eigs)), empirical_eigs, alpha=0.6, 
-               color='steelblue', label='Empirical Eigenvalues')
+        # # Plot empirical eigenvalues as bars
+        # ax.bar(range(len(empirical_eigs)), empirical_eigs, alpha=0.6, 
+        #        color='steelblue', label='Empirical Eigenvalues')
         
-        # Plot theoretical predictions as horizontal lines
-        # lH1T and lH3T (training regime)
-        if hasattr(preds, 'lH1T') and preds.lH1T is not None:
-            ax.axhline(y=preds.lH1T, color='red', linestyle='-', linewidth=2.5, 
-                      label=f'lH1T (pred) = {preds.lH1T:.4f}')
+        # # Plot theoretical predictions as horizontal lines
+        # # lH1T and lH3T (training regime)
+        # if hasattr(preds, 'lHT') and preds.lHT is not None:
+        #     ax.axhline(y=preds.lHT, color='red', linestyle='-', linewidth=2.5, 
+        #               label=f'lH1T (pred) = {preds.lH1T:.4f}')
         
-        # lH1P and lH3P (population regime)
-        if hasattr(preds, 'lH1P') and preds.lH1P is not None:
-            ax.axhline(y=preds.lH1P, color='purple', linestyle='-', linewidth=2.5, 
-                      label=f'lH1P (pred) = {preds.lH1P:.4f}')
+        # # lH1P and lH3P (population regime)
+        # if hasattr(preds, 'lH1P') and preds.lHP is not None:
+        #     ax.axhline(y=preds.lHP, color='purple', linestyle='-', linewidth=2.5, 
+        #               label=f'lH1P (pred) = {preds.lHP:.4f}')
         
-        ax.set_xlabel("Eigenvalue Index", fontsize=12)
-        ax.set_ylabel("Eigenvalue", fontsize=12)
-        ax.set_title(f"Empirical vs Predicted Eigenvalues\n(d={d}, P={P}, N={N}, κ={kappa:.4f}, χ={chi})", fontsize=13)
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3, axis='y')
+        # ax.set_xlabel("Eigenvalue Index", fontsize=12)
+        # ax.set_ylabel("Eigenvalue", fontsize=12)
+        # ax.set_title(f"Empirical vs Predicted Eigenvalues\n(d={d}, P={P}, N={N}, κ={kappa:.4f}, χ={chi})", fontsize=13)
+        # ax.legend(fontsize=10)
+        # ax.grid(True, alpha=0.3, axis='y')
         
-        fig.tight_layout()
-        fig.savefig(str(run_dir / "eigenvalues_vs_predictions.png"), dpi=150)
-        plt.close(fig)
+        # fig.tight_layout()
+        # fig.savefig(str(run_dir / "eigenvalues_vs_predictions.png"), dpi=150)
+        # plt.close(fig)
         
         print(f"  Predictions: lH1T={preds.lH1T:.6f}, lH1P={preds.lH1P:.6f}")
         print(f"  Empirical: max={empirical_eigs.max():.6f}, mean={empirical_eigs.mean():.6f}")
@@ -365,9 +365,9 @@ def main():
                        help='Device to use (e.g., cuda:0, cuda:1, cpu)')
     args = parser.parse_args()
     
-    dims = [2, 6, 8, 10]
-    N = 50
-    epochs = 300_000_000
+    dims = [200, 300, 400]
+
+    epochs = 1_000_000
     log_interval = 10_000
     
     # Single d training mode
@@ -378,6 +378,7 @@ def main():
         
         d = args.d
         P = 3 * d
+        N = 6 * d
         print(f"\n{'='*60}")
         print(f"Starting training for d={d} on {args.device}")
         print(f"{'='*60}")

@@ -33,31 +33,30 @@ from FCN2Network import FCN2NetworkActivationGeneric
 
 def main():
     # Hardcoded run parameters from the directory name (do not parse at runtime)
-    RUN_DIR = Path("/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P200_N200_chi_200.0_lr_5e-05_T_2.0")
-    d = 50
-    P = 200
-    N = 200
-    chi = 200.0
-    lr = 5e-05
-    T = 2.0
+    RUN_DIR = Path("d150_P600_N700_chi_700.0_lr_5e-06_T_0.1_seed_42/")#Path("/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P200_N200_chi_200.0_lr_5e-05_T_2.0")
+    d = 150
+    P = 600
+    N = 700
+    chi = 700.0
+    lr = 5e-06
+    T = 0.1
 
     # Record of theory numbers to include alongside outputs
     theory = {
-        "P": 200,
-        "lWT": 0.11102807278482588,
-        "b": 0.4244131815783876,
-        "n1": 200,
-        "lJ": 0.04442578206613102,
-        "delta": 0,
-        "chi": 50,
-        "lWP": 0.02,
-        "lk": 0.8079101490682509,
-        "kappa": 1,
-        "lkp": 1.2628786905111156e-15,
-        "lJP": 0.008488263631568477,
-        "d": 50,
+    "P": 600,
+    "lWT": 0.13370406894148495,
+    "b": 0.4244131815783876,
+    "n1": 700,
+    "lJ": 0.05231511814347966,
+    "delta": 0,
+    "chi": 700,
+    "lWP": 0.006666666666666667,
+    "lk": 0.9968217737264263,
+    "kappa": 0.05,
+    "lkp": 4.206704429243757e-16,
+    "lJP": 0.002829421210522826,
+    "d": 150
     }
-
     # Preferred loading: checkpoint.pt (has metadata) -> model.pt
     ckpt_path = RUN_DIR / "checkpoint.pt"
     model_path = RUN_DIR / "model.pt"

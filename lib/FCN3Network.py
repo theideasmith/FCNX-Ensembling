@@ -594,13 +594,6 @@ class FCN3NetworkEnsembleErf(nn.Module):
 
         return λKs
 
-    def H_Kernel(self, X):
-        f_inf = self.h1_preactivation(X)
-
-        hh_inf_i = torch.einsum('uim,vim->uvi', f_inf,
-                                f_inf)/(self.n1 * X.shape[0])
-        hh_inf = torch.sum(hh_inf_i, axis=2) / self.ens
-        return hh_inf
 
     def H_eig(self, X, Y, std=False):
         with torch.no_grad():
@@ -658,6 +651,9 @@ class FCN3NetworkActivationGeneric(nn.Module):
         if activation not in {"linear", "erf"}:
             raise ValueError(f"Unsupported activation {activation}; use 'linear' or 'erf'")
 
+        self.sigma2A = weight_initialization_variance[2]
+        self.sigma2W1 = weight_initialization_variance[1]
+        self.sigma2W0 = weight_initialization_variance[0]
         self.activation_mode = activation
         self.arch = [d, n1, n2]
         self.d = d
@@ -672,9 +668,9 @@ class FCN3NetworkActivationGeneric(nn.Module):
 
         if activation == "linear":
             std0, std1, std2 = v0 ** 0.5, v1 ** 0.5, v2 ** 0.5
-            self.W0 = nn.Parameter(torch.empty(ens, n1, d, device=device).normal_(0.0, std0))
-            self.W1 = nn.Parameter(torch.empty(ens, n2, n1, device=device).normal_(0.0, std1))
-            self.A  = nn.Parameter(torch.empty(ens, n2, device=device).normal_(0.0, std2))
+            self.W0 = nn.Parameter(torch.empty(ens, n1, d, device=device).normal_(0.0, std0), requires_grad=True).to(torch.float32)
+            self.W1 = nn.Parameter(torch.empty(ens, n2, n1, device=device).normal_(0.0, std1), requires_grad=True).to(torch.float32)
+            self.A  = nn.Parameter(torch.empty(ens, n2, device=device).normal_(0.0, std2), requires_grad=True).to(torch.float32)
         else:
             self.W0 = nn.Parameter(torch.normal(mean=0.0,
                                                 std=torch.full((ens, n1, d), v0 ** 0.5)).to(device),
@@ -702,8 +698,23 @@ class FCN3NetworkActivationGeneric(nn.Module):
     def h1_activation(self, X):
         h1_pre = self.h1_preactivation(X)
         return self._act(h1_pre)
+    def K_kernel(self, X):
+        f_inf = self.h1_activation(X)
+
+        hh_inf_i = torch.einsum('uim,vim->uvi', f_inf,
+                                f_inf)/(self.n2 * X.shape[0])
+        hh_inf = torch.sum(hh_inf_i, axis=2) / self.ens
+        return hh_inf
 
     # ---- Kernels ---------------------------------------------------------
+
+    def H_Kernel(self, X):
+        f_inf = self.h1_activation(X)
+
+        hh_inf_i = torch.einsum('uim,vim->uvi', f_inf,
+                                f_inf)/(self.n1 * X.shape[0])
+        hh_inf = torch.sum(hh_inf_i, axis=2) / self.ens
+        return hh_inf
     def H_eig_random_svd(self, X, k = 100, p = 25):
         # Random SVD works by projecting the kernel onto a random subspace, 
         # with the assumption the kernel is low rank
@@ -885,14 +896,56 @@ class FCN3NetworkActivationGeneric(nn.Module):
     # ---- Forward --------------------------------------------------------
     def forward(self, X):
         if self.activation_mode == "linear":
-            A = self.A.clone()
-            W1 = self.W1.clone()
-            W0 = self.W0.clone()
+            A = self.A
+            W1 = self.W1
+            W0 = self.W0
             return contract('ij,ijk,ikl,ul->ui', A, W1, W0, X, backend='torch')
         h1 = self.h1_activation(X)
         f  = contract('qk,uqk->uq', self.A, h1, backend='torch')
         return f
 
+    # --- Langevin training with explicit weight decay (as in fcn3_train_mean_field.py) ---
+    def langevin_train(self, X, y, lr, T, n_epochs, chi=1.0):
+        losses = []
+        # Print initial loss
+        with torch.no_grad():
+            y_pred = self(X)
+            initial_loss = ((y_pred - y) ** 2).sum().item()
+            print(f"Initial loss: {initial_loss:.6f}")
+            losses.append(initial_loss)
+        dt = lr
+
+
+        for epoch in range(n_epochs):
+
+            if epoch > n_epochs * 0.5:
+                dt = lr / 3.0
+            self.zero_grad()
+            y_pred = self(X)  
+            # Use sum reduction for all ensemble members
+            loss = ((y_pred - y) ** 2).mean(dim=0).sum()
+            loss.backward()
+
+            torch.manual_seed(epoch + 12345)  # For reproducibility
+            with torch.no_grad():
+                for name, param in self.named_parameters():
+
+                    if param.grad is not None:
+                        # Weight decay: 1/fan-in for each layer (match fcn3_train_mean_field.py)
+                        if name.endswith('A'):
+                            decay = param.data * T * chi * self.n2
+                        elif name.endswith('W1'):
+                            decay = param.data * T * self.n1
+                        elif name.endswith('W0'):
+                            decay = param.data * T * self.d
+                        noise = torch.randn_like(param) * (2 * T * dt) ** 0.5
+                        param.add_(-dt * (param.grad + decay) + noise)
+                    else:
+                        print("You fucking moron, param.grad is None!")
+            if epoch % 1000 == 0:
+                losses.append(loss.item())
+                print(f"Epoch {epoch} loss: {loss.item():.6f}")
+        return losses
 
 class FCN3Network(nn.Module):
     """
@@ -1017,6 +1070,8 @@ class FCN3Network(nn.Module):
         self.output: torch.Tensor = self.fc3(a2)
         # The output layer has a linear activation by default in this architecture.
         return self.output
+
+
 
 
 if __name__ == '__main__':

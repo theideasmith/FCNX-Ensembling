@@ -612,7 +612,7 @@ if __name__ == '__main__':
             resume = True
         else:
             if timestamped == True:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now().strftime("%B %d, %Y %I:%M %p")
                 modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lr_{args.lrA:.2e}_time_{timestamp}"
             else:
                 modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lr_{args.lrA:.2e}"

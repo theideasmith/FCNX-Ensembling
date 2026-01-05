@@ -30,7 +30,7 @@ using NLsolve
 
 Pkg.instantiate()
 
-is_physical(sol) = all(sol .> 0)
+is_physical(sol) = all(sol .>= 0)
 
 using Base: @kwdef
 
@@ -55,21 +55,22 @@ end
 function residuals(x, P, chi, d, kappa, delta, n1, b)
     lJ , lk, lWT = x[1], x[2], x[3]
     
+
+
+    # b = (4 / (π)) / (1 + 2 * TrSigma)  # erf factor
+    # Compute lT
+    lT = - chi^2 * lJ^(-2) * lk  + chi / lJ
     lWP = 1.0 / d
     TrSigma = lWT + lWP * (d - 1) 
-    b = (4 / (π)) / (1 + 2 * TrSigma)  # erf factor
-    # Compute lT
-    lT = -chi^2 * lJ^(-2) * lk  - chi / lJ
-    
     # Compute TrSigma (trace of covariance matrix)
-    rlWT = lWT - 1 / (d + delta * b * lT / (chi * n1))
-    
+    b = (4 / (π)) / (1 + 2 * TrSigma)
     # Compute gamma factor
     gammaYh2 = (4 / (π)) / (1 + 2 * TrSigma)
     
     # Residual: fixed point for lJ
-    rj = lJ - gammaYh2 / (d + delta * b * lT / (chi * n1)) 
-    rk = lk -  (lJ / (lJ + kappa / P))^2 * delta
+    rj = lJ - gammaYh2 * lWT #/ (d + delta * b * lT / (chi * n1)) 
+    rk = lk - kappa / (P * chi) * lJ / (lJ + kappa / P) -  (lJ / (lJ + kappa / P))^2 * delta
+    rlWT = lWT - 1 / (d + delta * b * lT / (chi * n1))
     return [rj, rk, rlWT]
 end
 
@@ -89,7 +90,7 @@ function gradient_descent_solver(initial_guess;
 
     for iter in 1:max_iter
         res = residuals(x, P, chi, d, kappa, delta, n1, b)
-        loss = sum(res .^ 2) + sum(x .^ 2)
+        loss = sum(abs.(res)) #+ sum(x .^ 2)
         grad = ForwardDiff.gradient(y -> sum(residuals(y, P, chi, d, kappa, delta, n1, b) .^ 2), x)
         x -= lr * grad
 
@@ -115,31 +116,35 @@ function nlsolve_solver(initial_guess;
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, n1=1.0, b=4/(3*π),
     P=nothing, anneal_steps=30000,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
-    
     x = copy(initial_guess)
     if P === nothing
         P = d^1.2
     end
-
+    
     function res_func!(F, x, c)
         F[:] = residuals(x, P, c, d, kappa, delta, n1, b)
     end
 
     result = nothing
     if anneal 
-        chi_anneal_list = exp.(range(log(1e-8), log(chi), length=anneal_steps))
+        chi_anneal_list = exp.(range(log(1), log(chi), length=anneal_steps))
         prev_sol = x
         for (j, chit) in enumerate(chi_anneal_list)
             f1! = (F, x) -> res_func!(F, x, chit)
-            try
-                sol = nlsolve(f1!, prev_sol, xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose)
-                if (j == anneal_steps)
-                    result = is_physical(sol.zero) ? sol.zero : nothing
-                end
-                prev_sol = sol.zero
-            catch e
-                print("ERROR in annealing: ")
-                showerror(stdout, e, catch_backtrace())
+
+            sol = nlsolve(f1!, prev_sol; xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose, autodiff=:forward)
+
+            if !is_physical(sol.zero) || any(isnan, sol.zero)
+                print(sol.zero)
+                error("Invalid solution at step $j, chi = $chit")
+                
+            end
+
+            # CRITICAL FIX: Extract the vector for the next guess
+            prev_sol = sol.zero
+
+            if j == anneal_steps
+                result = sol
             end
         end
     else 

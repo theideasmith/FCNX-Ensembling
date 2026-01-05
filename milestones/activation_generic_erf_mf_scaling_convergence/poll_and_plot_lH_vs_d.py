@@ -23,10 +23,10 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 from FCN3Network import FCN3NetworkActivationGeneric
-from Experiment import ExperimentLinear
+from Experiment import Experiment
 
 POLL_INTERVAL = 5.0  # seconds
-DIMS_DEFAULT = [2, 6, 8, 10]
+DIMS_DEFAULT = [15, 20, 25]
 DEVICE_DEFAULT = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
@@ -84,7 +84,7 @@ def compute_empirical_lH(
     """
     try:
         with torch.no_grad():
-            Xinf = torch.randn(3000, d, device=device)
+            Xinf = torch.randn(5000, d, device=device)
             eig_mean, eig_std = model.H_eig(Xinf, Xinf, std=True)
 
             eig_mean_np = eig_mean.detach().cpu().numpy() 
@@ -120,11 +120,11 @@ def compute_empirical_spectrum(
     """
     try:
         with torch.no_grad():
-            Xinf = torch.randn(P, d, device=device)
+            Xinf = torch.randn(5000, d, device=device)
             # Choose rank k conservatively (<= P)
             if k is None:
                 k = int(min(P, 1000))
-            eigs = model.H_eig(Xinf, Xinf)
+            eigs , std = model.H_eig(Xinf, Xinf, std=True)
             return eigs.detach().cpu().numpy()
     except Exception as e:
         print(f"  Warning: failed to compute spectrum via H_eig_random_svd: {e}")
@@ -137,11 +137,11 @@ def compute_theoretical_full_predictions(
     """Compute full theoretical predictions using ExperimentLinear.
 
     Returns the predictions object, which may have attributes like
-    lHT/lHP (linear) or lH1T/lH1P/lH3T/lH3P (erf). For linear, only lHT/lHP
+    lH1T/lH1P (linear) or lH1T/lH1P/lH3T/lH3P (erf). For linear, only lH1T/lH1P
     will be present.
     """
     try:
-        exp = ExperimentLinear(
+        exp = Experiment(
             file=".",
             N=int(cfg.get("N")),
             d=int(cfg.get("d")),
@@ -149,8 +149,10 @@ def compute_theoretical_full_predictions(
             P=int(cfg.get("P")),
             ens=50,
             device=device,
+            eps = 0.0
         )
         preds = exp.eig_predictions()
+        print (f"  Theoretical predictions for d={cfg['d']}: {preds}")
         return preds
     except Exception as e:
         print(f"  Warning: failed to compute theoretical predictions: {e}")
@@ -167,7 +169,7 @@ def plot_eigenvalues_bar(
     """Plot a bar chart of the empirical spectrum with theoretical overlays.
 
     Overlays the available theory curves:
-    - Linear networks: lHT (training) and lHP (perpendicular)
+    - Linear networks: lH1T (training) and lH1P (perpendicular)
     - Erf networks (if provided): lH1T/lH1P and lH3T/lH3P
     """
     try:
@@ -179,11 +181,11 @@ def plot_eigenvalues_bar(
         # Overlay theoretical lines if available
         if preds_obj is not None:
             # Linear predictions
-            if hasattr(preds_obj, 'lHT') and preds_obj.lHT is not None:
-                ax.axhline(y=float(preds_obj.lHT), color='tab:red', linestyle='--', linewidth=2.0,
+            if hasattr(preds_obj, 'lH1T') and preds_obj.lH1T is not None:
+                ax.axhline(y=float(preds_obj.lH1T), color='tab:red', linestyle='--', linewidth=2.0,
                            label=r'Theory $\lambda_H^{(*)}$ (training)')
-            if hasattr(preds_obj, 'lHP') and preds_obj.lHP is not None:
-                ax.axhline(y=float(preds_obj.lHP), color='tab:orange', linestyle='-.', linewidth=2.0,
+            if hasattr(preds_obj, 'lH1P') and preds_obj.lH1P is not None:
+                ax.axhline(y=float(preds_obj.lH1P), color='tab:orange', linestyle='-.', linewidth=2.0,
                            label=r'Theory $\lambda_H^{(\perp)}$ (population)')
 
             # Erf-style predictions (if object carries these attributes)
@@ -220,20 +222,21 @@ def compute_theoretical_lH(run_dir: Path, d: int, device: torch.device) -> Tuple
         N = 50 
         chi = 50
         kappa = float(1.0)
-        exp = ExperimentLinear(
+        exp = Experiment(
             file=str(run_dir), N=N, d=d, chi=chi, P=P, ens=50,
             kappa=kappa,
             device=device,
         )
         preds = exp.eig_predictions()
-        # Get training-regime top eigenvalue (lHT) and perpendicular (lHP)
-        lHT = None
-        lHP = None
-        if hasattr(preds, 'lHT') and preds.lHT is not None:
-            lHT = float(preds.lHT)
-        if hasattr(preds, 'lHP') and preds.lHP is not None:
-            lHP = float(preds.lHP)
-        return lHT, lHP
+        print("EIG THEORETICAL PREDS:", preds)
+        # Get training-regime top eigenvalue (lH1T) and perpendicular (lH1P)
+        lH1T = None
+        lH1P = None
+        if hasattr(preds, 'lH1T') and preds.lH1T is not None:
+            lH1T = float(preds.lH1T)
+        if hasattr(preds, 'lH1P') and preds.lH1P is not None:
+            lH1P = float(preds.lH1P)
+        return lH1T, lH1P
     except Exception as e:
         print(f"  Warning: failed to compute theoretical lH: {e}")
         return None, None
@@ -345,8 +348,8 @@ def poll_and_plot_once(
     - emp_top_err_list: empirical top eigenvalue stds
     - emp_rest_list: empirical mean of rest eigenvalues
     - emp_rest_err_list: empirical std of rest eigenvalues
-    - th_top_list: theoretical top eigenvalues (lHT)
-    - th_perp_list: theoretical perpendicular eigenvalues (lHP)
+    - th_top_list: theoretical top eigenvalues (lH1T)
+    - th_perp_list: theoretical perpendicular eigenvalues (lH1P)
     """
     runs = find_run_dirs(base_dir, dims, suffix=suffix)
     d_list: List[int] = []
@@ -365,7 +368,7 @@ def poll_and_plot_once(
             continue
         
         mean_top, std_top, mean_rest, std_rest = compute_empirical_lH(model, d, device)
-        lHT, lHP = compute_theoretical_lH(run_dir, d, device)
+        lH1T, lH1P = compute_theoretical_lH(run_dir, d, device)
 
         # Additionally, compute and save per-run spectrum plots via randomized SVD
         spectrum_np = compute_empirical_spectrum(model, d, cfg["P"], device)
@@ -379,8 +382,8 @@ def poll_and_plot_once(
         emp_top_err_list.append(std_top)
         emp_rest_list.append(mean_rest)
         emp_rest_err_list.append(std_rest)
-        th_top_list.append(lHT)
-        th_perp_list.append(lHP)
+        th_top_list.append(lH1T)
+        th_perp_list.append(lH1P)
     
     return d_list, emp_top_list, emp_top_err_list, emp_rest_list, emp_rest_err_list, th_top_list, th_perp_list
 

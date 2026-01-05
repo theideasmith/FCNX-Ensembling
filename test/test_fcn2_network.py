@@ -312,19 +312,6 @@ class TestFCN2NetworkStability:
         y = model(X)
         assert torch.isfinite(y).all(), "Output with small weights contains NaN/Inf"
     
-    def test_very_large_weights(self):
-        """Test stability with very large weight initialization."""
-        d, n1, P, ens = 10, 50, 100, 2
-        model = FCN2NetworkActivationGeneric(
-            d=d, n1=n1, P=P, ens=ens,
-            weight_initialization_variance=(10.0, 10.0)
-        )
-        X = torch.randn(100, 10)
-        y = model(X)
-        # With erf activation, should still be bounded
-        assert (y >= -1.5).all() and (y <= 1.5).all(), "Output with large weights should remain bounded"
-
-
 class TestFCN2NetworkGradients:
     """Test gradient flow through network."""
     

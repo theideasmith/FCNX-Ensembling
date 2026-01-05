@@ -26,7 +26,7 @@ from FCN3Network import FCN3NetworkEnsembleErf
 from Experiment import Experiment
 
 POLL_INTERVAL = 5.0  # seconds
-DIMS_DEFAULT = [2, 6, 8, 10]
+DIMS_DEFAULT = [120,200, 240]
 DEVICE_DEFAULT = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
@@ -37,10 +37,13 @@ def find_run_dirs(base: Path, dims: List[int]) -> List[Tuple[Path, Dict[str, int
     """
     selected: List[Tuple[Path, Dict[str, int]]] = []
     for d in dims:
-        name = f"d{d}_P{3*d}_N50_chi50"
+        N = 4 * d
+        chi = N
+        name = f"d{d}_P{5*d}_N{N}_chi{chi}"
         p = base / name
+        print(p)
         if p.is_dir():
-            selected.append((p, {"d": d, "P": 3*d, "N": 50, "chi": 50}))
+            selected.append((p, {"d": d, "P": 5*d, "N": N, "chi": chi}))
     selected.sort(key=lambda x: x[1]["d"])
     return selected
 

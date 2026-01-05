@@ -46,7 +46,7 @@ def train_and_track(d, P, N, epochs=300_000_000, log_interval=10_000, device_str
     chi = N  # Mean-field scaling
     kappa = 1.0 / chi
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
-    lr = (1/3.0) * 1e-5 / P 
+    lr = (1/3.0) * 1e-5 
     temperature = 2 * kappa
     
     # Setup directories
@@ -321,33 +321,33 @@ def plot_predictions_vs_empirical(d, P, N, run_dir):
             print(f"  No empirical eigenvalues available for plotting")
             return None
         
-        # Create plot
-        fig, ax = plt.subplots(figsize=(10, 6))
+        # # Create plot
+        # fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Plot empirical eigenvalues as bars
-        ax.bar(range(len(empirical_eigs)), empirical_eigs, alpha=0.6, 
-               color='steelblue', label='Empirical Eigenvalues')
+        # # Plot empirical eigenvalues as bars
+        # ax.bar(range(len(empirical_eigs)), empirical_eigs, alpha=0.6, 
+        #        color='steelblue', label='Empirical Eigenvalues')
         
-        # Plot theoretical predictions as horizontal lines
-        # lH1T and lH3T (training regime)
-        if hasattr(preds, 'lH1T') and preds.lH1T is not None:
-            ax.axhline(y=preds.lH1T, color='red', linestyle='-', linewidth=2.5, 
-                      label=f'lH1T (pred) = {preds.lH1T:.4f}')
+        # # Plot theoretical predictions as horizontal lines
+        # # lH1T and lH3T (training regime)
+        # if hasattr(preds, 'lH1T') and preds.lH1T is not None:
+        #     ax.axhline(y=preds.lH1T, color='red', linestyle='-', linewidth=2.5, 
+        #               label=f'lH1T (pred) = {preds.lH1T:.4f}')
         
-        # lH1P and lH3P (population regime)
-        if hasattr(preds, 'lH1P') and preds.lH1P is not None:
-            ax.axhline(y=preds.lH1P, color='purple', linestyle='-', linewidth=2.5, 
-                      label=f'lH1P (pred) = {preds.lH1P:.4f}')
+        # # lH1P and lH3P (population regime)
+        # if hasattr(preds, 'lH1P') and preds.lH1P is not None:
+        #     ax.axhline(y=preds.lH1P, color='purple', linestyle='-', linewidth=2.5, 
+        #               label=f'lH1P (pred) = {preds.lH1P:.4f}')
         
-        ax.set_xlabel("Eigenvalue Index", fontsize=12)
-        ax.set_ylabel("Eigenvalue", fontsize=12)
-        ax.set_title(f"Empirical vs Predicted Eigenvalues\n(d={d}, P={P}, N={N}, κ={kappa:.4f}, χ={chi})", fontsize=13)
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3, axis='y')
+        # ax.set_xlabel("Eigenvalue Index", fontsize=12)
+        # ax.set_ylabel("Eigenvalue", fontsize=12)
+        # ax.set_title(f"Empirical vs Predicted Eigenvalues\n(d={d}, P={P}, N={N}, κ={kappa:.4f}, χ={chi})", fontsize=13)
+        # ax.legend(fontsize=10)
+        # ax.grid(True, alpha=0.3, axis='y')
         
-        fig.tight_layout()
-        fig.savefig(str(run_dir / "eigenvalues_vs_predictions.png"), dpi=150)
-        plt.close(fig)
+        # fig.tight_layout()
+        # fig.savefig(str(run_dir / "eigenvalues_vs_predictions.png"), dpi=150)
+        # plt.close(fig)
         
         print(f"  Predictions: lH1T={preds.lH1T:.6f}, lH1P={preds.lH1P:.6f}")
         print(f"  Empirical: max={empirical_eigs.max():.6f}, mean={empirical_eigs.mean():.6f}")
@@ -380,7 +380,7 @@ def main():
                        help='Initialize from existing checkpoint in base folder and save to a new folder with _from_checkpoint appended')
     args = parser.parse_args()
     
-    dims = [2, 6, 8, 10]
+    dims = [15, 20, 25]
     N = 50
     epochs = 300_000_000
     log_interval = 10_000
