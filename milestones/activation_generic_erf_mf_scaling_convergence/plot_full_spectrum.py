@@ -433,7 +433,7 @@ def plot_output_projection_histograms(
         x = torch.randn(10000, d, dtype=torch.float32, device=device)
 
         with torch.no_grad():
-            output = model.h1_preactivation(x)  # (P, ens) or (P,)
+            output = model.h1_preactivation(x)  # (P, ens, N)
             # Ensure shape (P, ens) to get per-ensemble projection distribution
             if output.ndim == 1:
                 output = output.unsqueeze(1)

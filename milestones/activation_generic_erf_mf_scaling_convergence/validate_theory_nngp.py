@@ -109,11 +109,11 @@ def validate_nngp_initialization(d, P, N, chi, kappa, eps=0.03, device_str="cpu"
         
         # Compute projection directions
         x3_perp = X[:, 3] if d > 3 else torch.randn_like(X[:, 0])
-        x3_perp_normed = x3_perp / x3_perp.norm() * np.sqrt(P_dim)
+        x3_perp_normed = x3_perp / x3_perp.norm() 
         
         # Hermite cubic polynomial for perp: (x^3 - 3x)/sqrt(6)
         h3_perp = (x3_perp**3 - 3.0 * x3_perp) / 6**0.5
-        h3_perp_normed = h3_perp / h3_perp.norm() * np.sqrt(P_dim)
+        h3_perp_normed = h3_perp / h3_perp.norm() 
         
         # Project outputs onto perp directions per ensemble
         proj_lin_perp = torch.einsum('pqn,p->qn', output, x3_perp_normed) / P_dim
@@ -172,38 +172,23 @@ def validate_nngp_initialization(d, P, N, chi, kappa, eps=0.03, device_str="cpu"
     all_good_kernel = all([rel_err_h1p_kernel < tolerance, rel_err_h3p_kernel < tolerance])
     
     print("\n" + "="*70)
-    if all_good_proj and all_good_kernel:
-        print("✓ EXCELLENT AGREEMENT! Both methods have all relative errors < 5%")
-    elif all_good_proj:
-        print("✓ PROJECTION METHOD: Good agreement (< 5% error)")
-        print("⚠ KERNEL METHOD: Some discrepancies")
-    elif all_good_kernel:
-        print("⚠ PROJECTION METHOD: Some discrepancies")
-        print("✓ KERNEL METHOD: Good agreement (< 5% error)")
+    if all_good:
+        print("✓ EXCELLENT AGREEMENT! All relative errors < 5%")
     else:
-        print("⚠ BOTH METHODS - Check which eigenvalues have large relative errors")
+        print("⚠ SOME DISCREPANCIES - Check which eigenvalues have large relative errors")
     print("="*70 + "\n")
     
     return {
         "theory": theory_H,
-        "empirical_projection": {
+        "empirical": {
             "lin_perp": var_lin_perp,
             "cubic_perp": var_cubic_perp,
         },
-        "empirical_kernel": {
-            "lin_perp": kernel_lin_perp,
-            "cubic_perp": kernel_cubic_perp,
+        "relative_errors": {
+            "lin_perp": rel_err_h1p,
+            "cubic_perp": rel_err_h3p,
         },
-        "relative_errors_projection": {
-            "lin_perp": rel_err_h1p_proj,
-            "cubic_perp": rel_err_h3p_proj,
-        },
-        "relative_errors_kernel": {
-            "lin_perp": rel_err_h1p_kernel,
-            "cubic_perp": rel_err_h3p_kernel,
-        },
-        "agreement_projection": all_good_proj,
-        "agreement_kernel": all_good_kernel,
+        "agreement": all_good,
     }
 
 

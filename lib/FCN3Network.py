@@ -722,7 +722,7 @@ class FCN3NetworkActivationGeneric(nn.Module):
     # ---- Kernels ---------------------------------------------------------
 
     def H_Kernel(self, X):
-        f_inf = self.h1_preactivation(X)
+        f_inf = self.h1_activation(X)
 
         hh_inf_i = torch.einsum('uim,vim->uvi', f_inf,
                                 f_inf)/(self.n1 * X.shape[0])
