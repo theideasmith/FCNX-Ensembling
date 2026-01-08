@@ -204,8 +204,6 @@ end
 # Given a guess x = [lH1, lJ1, lH3, lJ3], returns the residuals of the 4 equations
 function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
     lJ1, lJ3, lH1, lH3, lWT = x  # current variables
-    n1 = n1
-    n2 = n2
     lWP =  1.0 / d
     
     TrSigma = lWT + lWP * (d - 1)
@@ -220,29 +218,24 @@ function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
     lV1 =    - lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)
     lV3 =    - lJ3^(-1) * (lH3  - lJ3) * lJ3^(-1)
     b = 4 / (π) * 1/ ( 1 + 2 * TrSigma)
-    C = d  + delta * b * (n2 / n1) * lV1 
-
-    K0 = C
-
-    lWT = 1 / (K0)
 
     EChh = lH1 + lH3 +
-        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3)) * (d - 1) +
+        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3))  * (d - 1) +
         (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
 
     gammaYh2 = (4 / π) / (1 + 2 * EChh)
     lK1 = gammaYh2 * lH1
     lK3 = gammaYh2 * lH3
 
-    lT1 =  - chi^2 / (kappa / P + lK1)^2 * delta
-    lT3 =  - (chi^2 / (kappa / P + lK3)^2 * delta )
+    lT1 = -(chi^2 / (kappa / P + lK1)^2 * delta) - chi^2 * kappa / (P * chi) * lK1 / (lK1 + kappa / P)
+    lT3 =   -(chi^2 / (kappa / P + lK3)^2 * delta) - chi^2 * kappa / (P * chi) * lK3 / (lK3 + kappa / P)
 
     # Residuals
     rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma)) * lWT)
     rh1 = lH1 - 1 / (1 / lJ1 + gammaYh2 * lT1 / (n2 * chi))
     rh3 = lH3 - ( 1 / (1 / lJ3 +  gammaYh2 * lT3 * epsilon^2 / (n2 * chi)) )
-    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) )
-    rlWT = lWT - 1 / (C)
+    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) ) 
+    rlWT = lWT - 1 / (d + delta * b * (n2 / n1) * lV1)
     return [rj1, rj3, rh1, rh3, rlWT]
 end
 

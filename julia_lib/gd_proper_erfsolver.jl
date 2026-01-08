@@ -63,13 +63,13 @@ precision = 8
 
 sf = x -> x #sigfig(x; n=precision)
 
-d = 40
-κ = 1.0
+d = 150
+κ = 2.0
 ϵ = 0.03
-P = 250
-n1 = 400
-n2 = 400
-χ = 50
+P = 1200
+n1 = 1600
+n2 = 1600
+χ = 80.0
 δ=1.0
 b = 4/(3*π)
 sf(1 / 40^3)
@@ -83,9 +83,9 @@ i0 = [4 / (3 * pi) * 1 / d^0.5, 1 / d^(3 / 2), 4 / (3 * pi) * 1 / d^0.5, 1 / d^(
 # i0 = fill(0.1, 4)
 exp_sol = FCS.nlsolve_solver(
     i0,
-    chi=χ, d=d, kappa=1.0, delta=δ,
+    chi=χ, d=d, kappa=2.0, delta=δ,
     epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
-    P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true, anneal_steps=30_000
+    P=P, lr=lr, max_iter=Tf, verbose=false, anneal=true, anneal_steps=30000, tol=1e-12
 )
 l1, l3 = FCS.compute_lK_ratio(exp_sol, P, n1, n2, χ, d, δ, κ, ϵ, 4 / (3 * π))
 
@@ -95,26 +95,18 @@ println("##    &*&       THE GREAT FCN3-ERF EOS SOLVER            &*&.        ")
 println("##                       Initializes                                 ")
 println("#####################################################################")
 
-lJ1, lJ3, lH1, lH3 = exp_sol
+lJ1, lJ3, lH1, lH3, lWT = exp_sol
 println("-------")
 println("Semi MF Scaling Target Eigenvalues χ=$χ")
 if exp_sol === nothing
     println("exp_sol is nothing")
 else
-    lJ1, lJ3, lH1, lH3 = exp_sol
-    lV1 = (lH1 / lJ1^2 - 1 / lJ1)
+    lJ1, lJ3, lH1, lH3, lWT = exp_sol
+    lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
     println("lH1: $(sf(lH1)), lH3: $(sf(lH3)) ")
     println("lJ1: $(sf(lJ1)), lJ3: $(sf(lJ3)) ")
 end
 
-delta = 1.0
-lH1
-1 / lJ1
-(lH1 / lJ1^2)
-lV1 = (lH1 / lJ1^2 - 1 / lJ1)
-lV3 = ((lH3 / lJ3^2 - 1 / lJ3))
-delta * b * n2 * (lV1) / n1
-lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
 @printf("lWT: %.*g\n", 7, lWT)
 
 println("lJ1/lWT: $(lJ1/(b*lWT))")
@@ -138,7 +130,7 @@ i0 = [4 / (3 * pi) * 1 / d, 1 / d^(3), 4 / (3 * pi) * 1 / d, 1 / d^(3), 1/d]
 
 exp_sol = FCS.nlsolve_solver(
     i0,
-    chi=χ, d=d, kappa=1.0, delta=δ,
+    chi=χ, d=d, kappa=2.0, delta=δ,
     epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
     P=P, lr=lr, max_iter=Tf, anneal=true
 )
@@ -149,8 +141,8 @@ println("Perpendicular Eigenvalues")
 if exp_sol === nothing
     println("exp_sol is nothing")
 else
-    lJ1, lJ3, lH1, lH3 = exp_sol
-    lV1 = (lH1 / lJ1^2 - 1 / lJ1)
+    lJ1, lJ3, lH1, lH3, lWP = exp_sol
+    lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
     lWT = 1 / (25)
     println("lH1: $(sf(lH1)), lH3: $(sf(lH3)) ")
     println("lJ1: $(sf(lJ1)), lJ3: $(sf(lJ3)) ")
@@ -161,16 +153,9 @@ println("mu1 = $(sf(l1))")
 println("mu3 = $(sf(l3))")
 
 delta = 0.0
-lH1
-1 / lJ1
-(lH1 / lJ1^2)
-lV1 = (lH1 / lJ1^2 - 1 / lJ1)
-lV3 = ((lH3 / lJ3^2 - 1 / lJ3))
-delta * b * n2 * (lV1) / n1
-lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
-@printf("lWT: %.*g\n", 7, lWT)
-println("lJ1/lWT: $(lJ1/(b*lWT))")
-println("lJ3/lWT^3: $(lJ3/(15*16/(27*π) * lWT^3))")
+@printf("lWP: %.*g\n", 7, lWP)
+println("lJ1/lWP: $(lJ1/(b*lWP))")
+println("lJ3/lWP^3: $(lJ3/(15*16/(27*π) * lWP^3))")
 
 lK1P, lK3P = FCS.compute_lK(exp_sol, P, n1, n2, χ, d, δ, κ, ϵ, 4 / (3 * π))
 println("----------")

@@ -818,6 +818,122 @@ class FCN3NetworkActivationGeneric(nn.Module):
             traceback.print_exc()
             raise e
 
+    def H_random_QB(self, X, k=100, p=25):
+            """Low rank QB decomposition using random SVD (Halko et al. 2011)"""
+            print("Computing H_random_QB on device: ", self.device)
+            
+            xtype = torch.float32 if X.dtype == torch.float32 else torch.float64
+
+            with torch.no_grad():
+                l = k + p
+                h1 = self.h1_preactivation(X)  # (N, ens, n1)
+                
+                # Random projections
+                with timed("Random Omega generation"):
+                    Omega = torch.randn((X.shape[0], l),
+                                        device=self.device,
+                                        dtype=xtype)
+
+                res = torch.zeros((X.shape[0], l),
+                                device=self.device,
+                                dtype=xtype)
+                
+                # Build res (random-projection matrix)
+                chunk_size = 4096
+                N = X.shape[0]
+
+                with timed(f"res computation (chunks of {chunk_size})"):
+                    for start in range(0, N, chunk_size):
+                        end = min(start + chunk_size, N)
+                        batch_h1 = h1[start:end]
+
+                        with timed(f"  res chunk [{start}:{end}]"):
+                            res[start:end] = torch.einsum(
+                                'bqk,Nqk,Nl->bl',
+                                batch_h1, h1, Omega
+                            ) / (self.ens * self.n1)
+
+                with timed("QR factorisation"):
+                    Q, _ = torch.linalg.qr(res)
+
+                Z = torch.zeros((X.shape[0], l),
+                                device=self.device,
+                                dtype=xtype)
+
+                # Build Z (kernel projected onto Q)
+                with timed(f"Z computation (chunks of {chunk_size})"):
+                    for start in range(0, N, chunk_size):
+                        end = min(start + chunk_size, N)
+                        batch_h1 = h1[start:end]
+
+                        with timed(f"  Z chunk [{start}:{end}]"):
+                            K_uv = torch.einsum(
+                                'bqk,Nqk->bN',
+                                batch_h1, h1
+                            ) / (self.ens * self.n1)
+
+                            Z[start:end] = torch.matmul(K_uv, Q)
+
+                return Q, Z
+            
+    def J_random_QB(self, X, k=100, p=25):
+        """Low rank QB decomposition using random SVD (Halko et al. 2011)"""
+        print("Computing H_random_QB on device: ", self.device)
+        
+        xtype = torch.float32 if X.dtype == torch.float32 else torch.float64
+
+        with torch.no_grad():
+            l = k + p
+            h1 = self.h0_activation(X)  # (N, ens, n1)
+            
+            # Random projections
+            with timed("Random Omega generation"):
+                Omega = torch.randn((X.shape[0], l),
+                                    device=self.device,
+                                    dtype=xtype)
+
+            res = torch.zeros((X.shape[0], l),
+                            device=self.device,
+                            dtype=xtype)
+            
+            # Build res (random-projection matrix)
+            chunk_size = 4096
+            N = X.shape[0]
+
+            with timed(f"res computation (chunks of {chunk_size})"):
+                for start in range(0, N, chunk_size):
+                    end = min(start + chunk_size, N)
+                    batch_h1 = h1[start:end]
+
+                    with timed(f"  res chunk [{start}:{end}]"):
+                        res[start:end] = torch.einsum(
+                            'bqk,Nqk,Nl->bl',
+                            batch_h1, h1, Omega
+                        ) / (self.ens * self.n1)
+
+            with timed("QR factorisation"):
+                Q, _ = torch.linalg.qr(res)
+
+            Z = torch.zeros((X.shape[0], l),
+                            device=self.device,
+                            dtype=xtype)
+
+            # Build Z (kernel projected onto Q)
+            with timed(f"Z computation (chunks of {chunk_size})"):
+                for start in range(0, N, chunk_size):
+                    end = min(start + chunk_size, N)
+                    batch_h1 = h1[start:end]
+
+                    with timed(f"  Z chunk [{start}:{end}]"):
+                        K_uv = torch.einsum(
+                            'bqk,Nqk->bN',
+                            batch_h1, h1
+                        ) / (self.ens * self.n1)
+
+                        Z[start:end] = torch.matmul(K_uv, Q)
+
+            return Q, Z
+
     def H_eig(self, X, Y, std=False):
         with torch.no_grad():
             # f_inf has shape (P, ens, n2) from h1_preactivation

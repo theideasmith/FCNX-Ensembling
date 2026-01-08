@@ -47,10 +47,12 @@ class Eigenvalues:
     lJ3T: float
     lH1T: float
     lH3T: float
+    lWT: float
     lJ1P: float
     lJ3P: float
     lH1P: float
     lH3P: float
+    lWP: float
     # Readout / kernel eigenvalue predictions (optional — may be computed later)
     lK1T: Optional[float] = None
     lK3T: Optional[float] = None
@@ -63,10 +65,12 @@ class Eigenvalues:
             lJ3T=values[1],
             lH1T=values[2],
             lH3T=values[3],
-            lJ1P=values[4],
-            lJ3P=values[5],
-            lH1P=values[6],
-            lH3P=values[7],
+            lWT=values[4],
+            lJ1P=values[5],
+            lJ3P=values[6],
+            lH1P=values[7],
+            lH3P=values[8],
+            lWP=values[9],
         )
     def to_list(self):
         return [
@@ -216,37 +220,39 @@ class Experiment:
     def eig_predictions(self):
         try: 
             d = float(self.d)
-            i0 = [1/d ** 0.5, 1/d ** (3/2), 1/d ** 0.5, 1/d ** (3/2), 1/d]
-            i0 = juliacall.convert( jl.Vector[jl.Float64], i0)
+            π = np.pi
+            b = 4.0 / (3.0 * π)
+            # Target regime (δ=1.0): initial guess scaled by b for conditioning (matches gd_proper_erfsolver.jl)
+            i0_target = [b / d ** 0.5, 1 / d ** (3/2), b / d ** 0.5, 1 / d ** (3/2), 1/d]
+            i0 = juliacall.convert(jl.Vector[jl.Float64], i0_target)
+            δ = 1.0
             χ = self.chi 
-            d = self.d
-            n = self.N
             n1 = self.N
             n2 = self.N 
             ϵ = self.eps
-            π = np.pi
-            δ = 1.0
             P = self.P 
-            lr =1e-6
-            Tf = 60_000
+            lr = 1e-6
+            Tf = 6_000_000  # Match Julia solver iteration count (was 60_000)
             kappa = self.kappa # My experiment multiplied the noise by a factor of 2, because I defined the loss with 1/2 and also 
             # multiplied k by 2 when I defined temperature in my langevin dynamics. 
             lT = jl.FCS.nlsolve_solver(
                 i0,
-                chi=χ, d=d, kappa=kappa, delta=δ,
-                epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
+                chi=χ, d=d, kappa=kappa, delta=1.0,
+                epsilon=ϵ, n1=n1, n2=n2, b=b,
                 P=P, lr=lr, max_iter=Tf, verbose=False, anneal=True
             )
 
-            i0 = [1/d, 1/d**3, 1/d, 1/d**3, 1/d]
-            i0 = juliacall.convert(jl.Vector[jl.Float64], i0)
+            # Perpendicular regime (δ=0.0): initial guess without b scaling
+            i0_perp = [1/d, 1/d**3, 1/d, 1/d**3, 1/d]
+            i0 = juliacall.convert(jl.Vector[jl.Float64], i0_perp)
             lP  = jl.FCS.nlsolve_solver(
                 i0,
-                chi=χ, d=d, kappa=1.0, delta=0.0,
-                epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
+                chi=χ, d=d, kappa=kappa, delta=0.0,
+                epsilon=ϵ, n1=n1, n2=n2, b=b,
                 P=P, lr=lr, max_iter=Tf, verbose=False, anneal=True
             )
-
+            print("Eigenvalue predictions from Julia FCS:")
+            print("lWT:", lT[4], "lWP:", lP[4])
             preds = Eigenvalues(*lT, *lP)
 
             # Try to compute readout/kernel eigenvalue predictions via Julia FCS
@@ -269,6 +275,7 @@ class Experiment:
                     preds.lK3P = lK_P_py[1]
             except Exception as _e:
                 print(f"Warning: compute_lK (P) failed: {_e}")
+
 
             return preds
         except Exception as e:

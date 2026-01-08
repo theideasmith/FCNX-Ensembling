@@ -466,6 +466,19 @@ class FCN3NetworkEnsembleErf(nn.Module):
 
                 return Q, Z
 
+    def J_eig_random_svd(self, X, k=100, p=25):
+        """Approximate leading eigenvalues of J kernel via randomized SVD.
+
+        Uses `J_random_QB` to obtain a low-rank QB factorization, then
+        computes eigenvalues of B = Q.T @ Z and returns them sorted.
+        """
+        with torch.no_grad():
+            Q, Z = self.J_random_QB(X, k=k, p=p)
+            B = torch.matmul(Q.t(), Z)
+            evals = torch.linalg.eigvalsh(B)
+            ret, _ = (evals / X.shape[0]).sort(descending=True)
+            return ret
+
     def H_random_QB(self, X, k = 100, p = 25, verbose=False):
 
         xtype = torch.float32 if X.dtype == torch.float32 else torch.float64
@@ -709,12 +722,115 @@ class FCN3NetworkActivationGeneric(nn.Module):
     # ---- Kernels ---------------------------------------------------------
 
     def H_Kernel(self, X):
-        f_inf = self.h1_activation(X)
+        f_inf = self.h1_preactivation(X)
 
         hh_inf_i = torch.einsum('uim,vim->uvi', f_inf,
                                 f_inf)/(self.n1 * X.shape[0])
         hh_inf = torch.sum(hh_inf_i, axis=2) / self.ens
         return hh_inf
+
+    def J_eig_random_svd(self, X, k = 100, p = 25):
+        # Random SVD works by projecting the kernel onto a random subspace, 
+        # with the assumption the kernel is low rank
+        # This is an efficient way to approximate the leading eigenvalues of the kernel§
+
+        # The advantage of this method is that it does not keep
+        # the full kernel matrix in memory, which is O(n^2) for n samples
+        _legacy_implementation = False
+        try: 
+            if _legacy_implementation: 
+                with torch.no_grad():
+                    l = k + p
+                    h1 = self.h0_activation(X)
+                    # Generate random projections
+                    Omega = torch.randn((X.shape[0], l), device=self.device, dtype=torch.float64)
+                    res = torch.zeros((X.shape[0], l), device=self.device, dtype=torch.float64)
+                    # Compute the kernel matrix
+                    for v in range(X.shape[0]):
+                        res[v,:] = torch.einsum('uqk,vqk,vl->l',h1[v:v+1],h1, Omega) / (self.ens * self.n1)
+
+                    Q, _ = torch.linalg.qr(res)
+                    Z = torch.zeros((X.shape[0], l), device=self.device, dtype=torch.float64)
+                    # Project the kernel onto the singular vectors
+                    for v in range(X.shape[0]):
+                        K_uv = torch.einsum('uqk,vqk->v',h1[v:v+1],h1) / (self.ens * self.n1)
+                        Z[v, :] = torch.matmul(K_uv.unsqueeze(0), Q)
+                    # Compute the eigenvalues of the kernel matrix
+                    B = torch.matmul(Q.t(), Z)
+                    evals = torch.linalg.eigvalsh(B)
+                    ret, _ = (evals / X.shape[0])#.sort(descending = True)
+                    return ret
+            else: 
+                # ----------------------------------------------------------------------
+                # Chunked computation with profiling
+                # ----------------------------------------------------------------------
+                with torch.no_grad():
+                    l = k + p
+                    h1 = self.h1_preactivation(X)                     # (N, ens, n1)
+
+                    # ----- Random projections ------------------------------------------------
+                    with timed("Random Omega generation"):
+                        Omega = torch.randn((X.shape[0], l),
+                                            device=self.device,
+                                            dtype=torch.float32)
+
+                    res = torch.zeros((X.shape[0], l),
+                                    device=self.device,
+                                    dtype=torch.float32)
+
+                    # ----- Build `res` (the random-projection matrix) ----------------------
+                    chunk_size = 4096          # 2048 * 2; feel free to tune
+                    N = X.shape[0]
+
+                    with timed(f"res computation (chunks of {chunk_size})"):
+                        for start in range(0, N, chunk_size):
+                            end = min(start + chunk_size, N)
+                            batch_h1 = h1[start:end]                     # (b, ens, n1)
+
+                            with timed(f"  res chunk [{start}:{end}]"):
+                                # einsum: b q k,  N q k,  N l  -> b l
+                                res[start:end] = torch.einsum(
+                                    'bqk,Nqk,Nl->bl',
+                                    batch_h1, h1, Omega
+                                ) / (self.ens * self.n1)
+
+                    with timed("QR factorisation"):
+                        Q, _ = torch.linalg.qr(res)                     # (N, l)
+
+                    Z = torch.zeros((X.shape[0], l),
+                                    device=self.device,
+                                    dtype=torch.float32)
+
+                    # ----- Build `Z` (kernel projected onto Q) ------------------------------
+                    with timed(f"Z computation (chunks of {chunk_size})"):
+                        for start in range(0, N, chunk_size):
+                            end = min(start + chunk_size, N)
+                            batch_h1 = h1[start:end]
+
+                            with timed(f"  Z chunk [{start}:{end}]"):
+                                # K_uv  : b x N
+                                K_uv = torch.einsum(
+                                    'bqk,Nqk->bN',
+                                    batch_h1, h1
+                                ) / (self.ens * self.n1)
+
+                                # matmul: (b, N) @ (N, l) -> (b, l)
+                                Z[start:end] = torch.matmul(K_uv, Q)
+
+                    # ----- [Leading] Eigenvalues -------------------------------------------------------
+                    with timed("B = Q.T @ Z"):
+                        B = torch.matmul(Q.t(), Z)                      # (l, l)
+
+                    with timed("eigvalsh"):
+                        evals = torch.linalg.eigvalsh(B)
+
+                    with timed("final sort"):
+                        ret, _ = (evals / X.shape[0]).sort(descending=True)
+
+                    return ret
+        except Exception as e:
+            traceback.print_exc()
+            raise e
     def H_eig_random_svd(self, X, k = 100, p = 25):
         # Random SVD works by projecting the kernel onto a random subspace, 
         # with the assumption the kernel is low rank

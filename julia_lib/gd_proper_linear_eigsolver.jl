@@ -32,13 +32,13 @@ end
 # -------------------------
 # Parameters (provided)
 # -------------------------
-n1 = 50.0
-n2 = 50.0
-P = 50
-d = 6
-χ = 50
+n1 = 1600.0
+n2 = 1600.0
+P = 1200
+d = 150
+χ = 80
 σ2 = 1.0
-kappa = 1.0
+kappa = 2.0
 
 # Map provided names to solver parameters
 chi = χ

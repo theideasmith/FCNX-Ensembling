@@ -44,6 +44,11 @@ model_dirs = [d for d in model_dirs if os.path.isdir(d)]
 
 model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d150_P1200_N1600_chi_80.0_lr_0.0003_T_2.0_seed_42']
 
+model_dirs = [
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_0',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_1',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_2',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3']
 
 def parse_config_from_dirname(dirname):
     parts = Path(dirname).name.split('_')
@@ -172,6 +177,66 @@ def main():
     fig_hist.savefig(os.path.join('/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel', 'h0_activation_projection_histograms.png'), dpi=150)
     plt.close(fig_hist)
     print('Saved h0_activation projection histograms to h0_activation_projection_histograms.png')
+
+    # --- Output projection histograms (onto target x[:,0] and perp x[:,3]) ---
+    fig_output, axes_output = plt.subplots(nrows_hist, ncols_hist, figsize=(5*ncols_hist, 4*nrows_hist), squeeze=False)
+    for idx, model_dir in enumerate(model_dirs):
+        model, d, P, seed = load_model(model_dir, device)
+        if model is None:
+            continue
+        # Generate x from seed
+        if seed is not None:
+            torch.manual_seed(seed)
+        x = torch.randn(1000, d, dtype=torch.float32, device=device)
+        
+        # Compute model output
+        with torch.no_grad():
+            output = model.forward(x)  # shape: (P, ens) or (P,)
+            if output.ndim == 2:
+                output = output.mean(dim=1)  # average over ensemble: (P,)
+        
+        # Target and perpendicular directions
+        x0_target = x[:, 0]
+        x3_perp = x[:, 3] if d > 3 else torch.randn_like(x[:, 0])
+        
+        # Project output onto target and perp directions
+        # Normalize by dataset size
+        proj_target = torch.einsum('p, p -> ', output, x0_target) / P
+        proj_perp = torch.einsum('p, p -> ', output, x3_perp) / P
+        
+        # For histogram, we need distributions - compute projections per sample
+        proj_target_samples = (output * x0_target).cpu().numpy()
+        proj_perp_samples = (output * x3_perp).cpu().numpy()
+        
+        axo = axes_output[idx//ncols_hist, idx%ncols_hist]
+        # Compute histogram and convert to action plot
+        for samples, label, color in zip(
+            [proj_target_samples, proj_perp_samples],
+            ['Target (x[:,0])', 'Perp (x[:,3])'],
+            ['royalblue', 'orange']
+        ):
+            hist, bin_edges = np.histogram(samples, bins=200, density=True)
+            bin_widths = np.diff(bin_edges)
+            probs = hist * bin_widths
+            # Avoid log(0)
+            probs = np.clip(probs, 1e-12, None)
+            action = -np.log(probs)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            mask = np.isfinite(action) & (action > 0)
+            axo.plot(bin_centers[mask], action[mask], label=label, color=color)
+        
+        axo.set_title(Path(model_dir).name)
+        axo.set_xlabel('Output projection value')
+        axo.set_ylabel('Action: -log P')
+        axo.legend()
+        axo.grid(True, alpha=0.3)
+    
+    for j in range(idx+1, nrows_hist*ncols_hist):
+        axes_output[j//ncols_hist, j%ncols_hist].axis('off')
+    fig_output.tight_layout()
+    fig_output.savefig(os.path.join('/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel', 'output_projection_histograms.png'), dpi=150)
+    plt.close(fig_output)
+    print('Saved output projection histograms to output_projection_histograms.png')
 
     # Hide unused subplots
     for j in range(len(param_keys), nrows*ncols):
