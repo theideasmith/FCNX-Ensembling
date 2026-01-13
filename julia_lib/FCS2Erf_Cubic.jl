@@ -101,38 +101,93 @@ function residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b)
 end
 
 # -------------------------
+# Residual function with hardcoded TrSigma
+# -------------------------
+# Given x = [lJ1, lJ3], with TrSigma fixed to hardcoded value
+function residuals_fcn2_fixed_TrSigma(x, P, chi, d, kappa, delta, epsilon, n1, b, TrSigma_fixed)
+    lJ1, lJ3 = x
+    lWP_val = 1.0 / d
+    
+    # Compute lWT from fixed TrSigma: TrSigma = lWT + (d-1)*lWP => lWT = TrSigma - (d-1)*lWP
+    lWT = TrSigma_fixed - (d - 1) * lWP_val
+    TrSigma_val = TrSigma_fixed
+    
+    # Output kernel eigenvalues
+    gammaYh = (4 / π) / (1 + 2 * TrSigma_val)
+    
+    # Training signal
+    lT1 = -(chi^2 / (kappa / P + lJ1)^2 * delta) - chi^2 * kappa / (P * chi) * lJ1 / (lJ1 + kappa / P)
+    lT3 = -(chi^2 / (kappa / P + lJ3)^2 * delta) - chi^2 * kappa / (P * chi) * lJ3 / (lJ3 + kappa / P)
+    
+    # Equations of state (J equations only, lWT is fixed)
+    rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma_val)) * lWT)
+    rj3 = lJ3 - (16 / (π * (1 + 2 * TrSigma_val)^3) * 15 * (lWT^3))
+    
+    return [rj1, rj3]
+end
+
+# -------------------------
 # Gradient Descent Solver
 # -------------------------
 function gradient_descent_solver_fcn2(initial_guess;
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, b=1.0,
     P=nothing,
+    TrSigma_fixed=nothing,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
 
-    x = copy(initial_guess)
     if P === nothing
         P = d^1.2
     end
     loss = nothing
 
-    for iter in 1:max_iter
-        res = residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b)
-        loss = sum(res .^ 2)
-        
-        grad = ForwardDiff.gradient(x -> sum(residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b) .^ 2), x)
-        x -= lr * grad
-        
-        if loss < tol
-            if verbose
-                println("Converged in $iter iterations, loss = $loss")
+    if TrSigma_fixed === nothing
+        # Standard 3-variable solve
+        x = copy(initial_guess)
+        for iter in 1:max_iter
+            res = residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b)
+            loss = sum(res .^ 2)
+            
+            grad = ForwardDiff.gradient(x -> sum(residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b) .^ 2), x)
+            x -= lr * grad
+            
+            if loss < tol
+                if verbose
+                    println("Converged in $iter iterations, loss = $loss")
+                end
+                return x
             end
-            return x
+        end
+    else
+        # 2-variable solve with fixed TrSigma
+        x = copy(initial_guess[1:2])  # Use only [lJ1, lJ3]
+        lWP_val = 1.0 / d
+        lWT_from_TrSigma = TrSigma_fixed - (d - 1) * lWP_val
+        for iter in 1:max_iter
+            res = residuals_fcn2_fixed_TrSigma(x, P, chi, d, kappa, delta, epsilon, n1, b, TrSigma_fixed)
+            loss = sum(res .^ 2)
+            
+            grad = ForwardDiff.gradient(x -> sum(residuals_fcn2_fixed_TrSigma(x, P, chi, d, kappa, delta, epsilon, n1, b, TrSigma_fixed) .^ 2), x)
+            x -= lr * grad
+            
+            if loss < tol
+                if verbose
+                    println("Converged in $iter iterations, loss = $loss (fixed TrSigma = $TrSigma_fixed, lWT = $lWT_from_TrSigma)")
+                end
+                return [x[1], x[2], lWT_from_TrSigma]  # Return with computed lWT
+            end
         end
     end
 
     if verbose
         println("Reached max iterations, final loss = $loss")
     end
-    return x
+    if TrSigma_fixed === nothing
+        return x
+    else
+        lWP_val = 1.0 / d
+        lWT_from_TrSigma = TrSigma_fixed - (d - 1) * lWP_val
+        return [x[1], x[2], lWT_from_TrSigma]
+    end
 end
 
 # -------------------------
@@ -142,42 +197,85 @@ function nlsolve_solver_fcn2(initial_guess;
     anneal=false,
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, b=1.0,
     P=nothing, anneal_steps=30000,
+    TrSigma_fixed=nothing,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
     
-    x = copy(initial_guess)
     if P === nothing
         P = d^1.2
     end
 
-    function res_func!(F, x, c)
-        F[:] = residuals_fcn2(x, P, c, d, kappa, delta, epsilon, n1, b)
-    end
-
     result = nothing
-    if anneal
-        chi_anneal_list = exp.(range(log(1e-8), log(chi), length=anneal_steps))
-        prev_sol = x
-        for (j, chit) in enumerate(chi_anneal_list)
-            f1! = (F, x) -> res_func!(F, x, chit)
-            try
-                sol = nlsolve(f1!, prev_sol, xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose)
-                if (j == anneal_steps)
-                    result = sol.zero
+    
+    if TrSigma_fixed === nothing
+        # Standard 3-variable solve
+        x = copy(initial_guess)
+        
+        function res_func!(F, x, c)
+            F[:] = residuals_fcn2(x, P, c, d, kappa, delta, epsilon, n1, b)
+        end
+
+        if anneal
+            chi_anneal_list = exp.(range(log(1e-8), log(chi), length=anneal_steps))
+            prev_sol = x
+            for (j, chit) in enumerate(chi_anneal_list)
+                f1! = (F, x) -> res_func!(F, x, chit)
+                try
+                    sol = nlsolve(f1!, prev_sol, xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose)
+                    if (j == anneal_steps)
+                        result = sol.zero
+                    end
+                    prev_sol = sol.zero
+                catch e
+                    println("Error during annealing at chi=$chit")
+                    showerror(stdout, e, catch_backtrace())
                 end
-                prev_sol = sol.zero
+            end
+        else
+            f2!(F, x) = res_func!(F, x, chi)
+            try
+                result = nlsolve(f2!, x; xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose).zero
             catch e
-                println("Error during annealing at chi=$chit")
+                println("Error during solve")
                 showerror(stdout, e, catch_backtrace())
+                result = nothing
             end
         end
     else
-        f2!(F, x) = res_func!(F, x, chi)
-        try
-            result = nlsolve(f2!, x; xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose).zero
-        catch e
-            println("Error during solve")
-            showerror(stdout, e, catch_backtrace())
-            result = nothing
+        # 2-variable solve with fixed TrSigma
+        x = copy(initial_guess[1:2])  # Use only [lJ1, lJ3]
+        lWP_val = 1.0 / d
+        lWT_from_TrSigma = TrSigma_fixed - (d - 1) * lWP_val
+        
+        function res_func_fixed!(F, x, c)
+            F[:] = residuals_fcn2_fixed_TrSigma(x, P, c, d, kappa, delta, epsilon, n1, b, TrSigma_fixed)
+        end
+
+        if anneal
+            chi_anneal_list = exp.(range(log(1e-8), log(chi), length=anneal_steps))
+            prev_sol = x
+            for (j, chit) in enumerate(chi_anneal_list)
+                f1! = (F, x) -> res_func_fixed!(F, x, chit)
+                try
+                    sol = nlsolve(f1!, prev_sol, xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose)
+                    if (j == anneal_steps)
+                        result = [sol.zero[1], sol.zero[2], lWT_from_TrSigma]
+                    end
+                    prev_sol = sol.zero
+                catch e
+                    println("Error during annealing at chi=$chit with fixed TrSigma=$TrSigma_fixed")
+                    showerror(stdout, e, catch_backtrace())
+                end
+            end
+        else
+            f2!(F, x) = res_func_fixed!(F, x, chi)
+            try
+                sol_2var = nlsolve(f2!, x; xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose).zero
+                result = [sol_2var[1], sol_2var[2], lWT_from_TrSigma]
+            catch e
+                println("Error during solve with fixed TrSigma=$TrSigma_fixed")
+                showerror(stdout, e, catch_backtrace())
+                result = nothing
+            end
         end
     end
 
@@ -219,7 +317,7 @@ end
 # Main Solver Interface
 # -------------------------
 function solve_FCN2_Erf(problem_params::ProblemParams2, initial_guess;
-    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, use_anneal=true)
+    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, use_anneal=true, TrSigma_fixed=nothing)
 
     sol_vec = nlsolve_solver_fcn2(
         initial_guess,
@@ -231,6 +329,7 @@ function solve_FCN2_Erf(problem_params::ProblemParams2, initial_guess;
         n1=problem_params.n1,
         b=problem_params.b,
         P=problem_params.P,
+        TrSigma_fixed=TrSigma_fixed,
         lr=lr,
         max_iter=max_iter,
         tol=tol,

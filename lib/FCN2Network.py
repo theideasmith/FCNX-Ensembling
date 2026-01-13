@@ -226,7 +226,7 @@ class FCN2NetworkActivationGeneric(nn.Module):
             # Build Y = K @ Omega where K is the kernel (averaged over ensembles)
             # K[u,v] = (1/(n1*P)) sum_{q,k} h0[u,q,k] * h0[v,q,k]
             Y = torch.zeros(P_actual, l, device=self.device, dtype=h0.dtype)
-            chunk_size = 256
+            chunk_size = 2048  # Process in chunks to save memory
             
             for u in range(0, P_actual, chunk_size):
                 u_end = min(u + chunk_size, P_actual)

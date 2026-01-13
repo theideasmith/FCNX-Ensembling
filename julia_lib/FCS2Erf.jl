@@ -59,7 +59,7 @@ function residuals(x, P, chi, d, kappa, delta, n1, b)
 
     # b = (4 / (π)) / (1 + 2 * TrSigma)  # erf factor
     # Compute lT
-    lT = - chi^2 * lJ^(-2) * lk  + chi / lJ
+    lT =  - chi^2 * lJ^(-2) * lk  + chi / lJ
     lWP = 1.0 / d
     TrSigma = lWT + lWP * (d - 1) 
     # Compute TrSigma (trace of covariance matrix)
@@ -69,7 +69,7 @@ function residuals(x, P, chi, d, kappa, delta, n1, b)
     
     # Residual: fixed point for lJ
     rj = lJ - gammaYh2 * lWT #/ (d + delta * b * lT / (chi * n1)) 
-    rk = lk - kappa / (P * chi) * lJ / (lJ + kappa / P) -  (lJ / (lJ + kappa / P))^2 * delta
+    rk = lk - (  kappa / (P * chi) * lJ / (lJ + kappa / P) +  (lJ / (lJ + kappa / P))^2 * delta )
     rlWT = lWT - 1 / (d + delta * b * lT / (chi * n1))
     return [rj, rk, rlWT]
 end

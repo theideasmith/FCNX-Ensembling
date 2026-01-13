@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import json
+import traceback
 from torch.utils.tensorboard import SummaryWriter
 
 # Set default dtype
@@ -55,7 +56,7 @@ def _pred_record(epoch, targets, outputs):
     }
 
 
-def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
+def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=10_000, ens=50,
                device_str="cuda:1", base_lr=1e-5, temperature=0.02, chi=1.0,
                run_dir=None, writer=None, dataset_seed=42, activation="erf"):
     """Train 2-layer erf network and track H eigenvalues.
@@ -82,7 +83,7 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     
     # Setup directory
     if run_dir is None:
-        run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi_{chi}_lr_{base_lr}_T_{temperature}_seed_{dataset_seed}"
+        run_dir = Path(__file__).parent / f"d{d}_P{P}_N{N}_chi_{chi}_lr_{base_lr}_T_{temperature}_seed_{dataset_seed}_eps_{eps}"
     run_dir.mkdir(exist_ok=True, parents=True)
     
     print(f"\nTraining 2-layer erf network:")
@@ -100,7 +101,9 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     # Generate data: Y = X[:, 0] (first dimension as target)
     torch.manual_seed(dataset_seed)
     X = torch.randn(P, d, device=device)
-    Y = X[:, 0].unsqueeze(-1)  # (P, 1)
+    z = X[:, 0].unsqueeze(-1)  # (P, 1)
+    z3 = (z ** 3 - 3 * z)/6**0.5  # Cubic nonlinearity
+    Y = z + eps * z3  # (P, 1)
     
     # Model
     ens = ens  # ensemble size
@@ -303,6 +306,62 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
                     eigenvalues = None
                     model.to(device)
                 
+                # Compute h0_activation projections
+                try:
+                    import traceback
+                    model_cpu = model.cpu()
+                    Xinf_cpu = Xinf.cpu()
+                    
+                    # Get hidden layer activations: shape (P, ens, n1)
+                    h0_act = model_cpu.h0_activation(Xinf_cpu)
+                    P_dim = h0_act.shape[0]
+                    
+                    # Compute projection directions
+                    x0_target = Xinf_cpu[:, 0]
+                    x0_target_normed = x0_target 
+                    x1_perp = Xinf_cpu[:, 1] if d > 1 else torch.randn_like(Xinf_cpu[:, 0])
+                    x1_perp_normed = x1_perp / x1_perp.norm() 
+                    
+                    # Hermite cubic polynomials for target and perp: (x^3 - 3x)/sqrt(6)
+                    h3_target = (x0_target**3 - 3.0 * x0_target) 
+                    h3_target_normed = h3_target 
+                    h3_perp = (x1_perp**3 - 3.0 * x1_perp)
+                    h3_perp_normed = h3_perp 
+                    
+                    # Project activations onto target/perp directions per ensemble
+                    # h0_act shape: (P, ens, n1)
+                    proj_lin_target = torch.einsum('pqn,p->qn', h0_act, x0_target_normed) / P_dim
+                    proj_lin_perp = torch.einsum('pqn,p->qn', h0_act, x1_perp_normed) / P_dim
+                    proj_cubic_target = torch.einsum('pqn,p->qn', h0_act, h3_target_normed)  / P_dim
+                    proj_cubic_perp = torch.einsum('pqn,p->qn', h0_act, h3_perp_normed) / P_dim
+                    
+                    # Compute variances
+                    var_lin_target = float(torch.var(proj_lin_target).item())
+                    var_lin_perp = float(torch.var(proj_lin_perp).item())
+                    var_cubic_target = float(torch.var(proj_cubic_target).item())
+                    var_cubic_perp = float(torch.var(proj_cubic_perp).item())
+                    
+                    # Log variances to TensorBoard
+                    if writer is not None:
+                        writer.add_scalar('Projections/He1_target_var', var_lin_target, epoch)
+                        writer.add_scalar('Projections/He1_perp_var', var_lin_perp, epoch)
+                        writer.add_scalar('Projections/He3_target_var', var_cubic_target, epoch)
+                        writer.add_scalar('Projections/He3_perp_var', var_cubic_perp, epoch)
+                        
+                        # Log histograms to TensorBoard
+                        writer.add_histogram('Projections/He1_target', proj_lin_target, epoch)
+                        writer.add_histogram('Projections/He1_perp', proj_lin_perp, epoch)
+                        writer.add_histogram('Projections/He3_target', proj_cubic_target, epoch)
+                        writer.add_histogram('Projections/He3_perp', proj_cubic_perp, epoch)
+                        
+                    print(f"  Projections - He1_target: {var_lin_target:.3g}, He1_perp: {var_lin_perp:.3g}, He3_target: {var_cubic_target:.3g}, He3_perp: {var_cubic_perp:.3g}")
+                    
+                    model.to(device)
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f"  Warning: Could not compute/log projections at epoch {epoch}: {e}")
+                    model.to(device)
+                
                 # Log loss and eigenvalues
                 if epoch > 0:
                     
@@ -365,7 +424,7 @@ def train_fcn2(d, P, N, epochs=10_000_000, log_interval=10_000, ens=50,
     
     # Save config
     config = {
-        "d": d, "P": P, "N": N, 
+        "d": d, "P": P, "N": N, "eps": eps,
         "lr": float(lr), "temperature": float(temperature),
         "chi": float(chi), "effective_temperature": float(temperature / chi),
         "epochs": epochs, "ens": ens
@@ -426,6 +485,7 @@ def main():
     parser.add_argument('--device', type=str, default='cuda:1', help='Device')
     parser.add_argument('--dataset-seed', type=int, default=42, help='Random seed for dataset generation')
     parser.add_argument('--ens', type=int, default=10, help='Ensemble size')
+    parser.add_argument('--eps', type=float, default=0.03, help='Epsilon for cubic nonlinearity')
     args = parser.parse_args()
     
     print("="*60)
@@ -433,13 +493,13 @@ def main():
     print("="*60)
     
     # Setup TensorBoard
-    tensorboard_dir = Path(__file__).parent / "runs" / f"d{args.d}_P{args.P}_N{args.N}_chi_{args.chi}_seed_{args.dataset_seed}_lr_{args.lr}_T_{args.temperature}"
+    tensorboard_dir = Path(__file__).parent / "runs" / f"d{args.d}_P{args.P}_N{args.N}_chi_{args.chi}_seed_{args.dataset_seed}_lr_{args.lr}_T_{args.temperature}_eps_{args.eps}"
     writer = SummaryWriter(log_dir=str(tensorboard_dir))
     print(f"TensorBoard logging to: {tensorboard_dir}")
     
     # Train
     final_eigs, eigs_over_time, run_dir = train_fcn2(
-        d=args.d, P=args.P, N=args.N,
+        d=args.d, P=args.P, N=args.N,eps=args.eps,
         epochs=args.epochs, log_interval=args.log_interval,
         device_str=args.device, base_lr=args.lr, temperature=args.temperature, chi=args.chi,
         writer=writer, dataset_seed=args.dataset_seed, ens=args.ens

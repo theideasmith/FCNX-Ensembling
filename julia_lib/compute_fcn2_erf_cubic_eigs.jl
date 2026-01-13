@@ -80,6 +80,11 @@ function parse_cli_args()
         help = "disable annealing"
         action = :store_true
         
+        "--TrSigma-hardcode"
+        help = "hardcode TrSigma value (optional, solves 2D problem for lJ1 & lJ3)"
+        arg_type = Float64
+        default = NaN
+        
         "--to"
         help = "path to save JSON results"
         arg_type = String
@@ -108,6 +113,7 @@ function main()
     b = args["b"]
     quiet = args["quiet"]
     verbose = args["verbose"]
+    TrSigma_hardcode = isnan(args["TrSigma-hardcode"]) ? nothing : args["TrSigma-hardcode"]
     
     # Initial guess: [lJ1, lJ3, lWT]
     init = [1.0 / d, 1.0 / d^3, 1.0 / d]
@@ -130,7 +136,8 @@ function main()
         max_iter=args["max_iter"],
         tol=args["tol"],
         verbose=verbose,
-        use_anneal=!args["no-anneal"]
+        use_anneal=!args["no-anneal"],
+        TrSigma_fixed=TrSigma_hardcode
     )
     
     # Solve for perpendicular (delta=0.0)
@@ -151,7 +158,8 @@ function main()
         max_iter=args["max_iter"],
         tol=args["tol"],
         verbose=verbose,
-        use_anneal=!args["no-anneal"]
+        use_anneal=!args["no-anneal"],
+        TrSigma_fixed=TrSigma_hardcode
     )
     
     # Compute normalized eigenvalues

@@ -49,20 +49,24 @@ from FCN2Network import FCN2NetworkActivationGeneric
 # ]
 
 import os
-MODELDIR = '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/'
+MODELDIR = '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/MiniGrokkingMFScalingResults'
 model_dirs = [os.path.join(MODELDIR, d) for d in os.listdir(MODELDIR)]
 # Only take directories (not files)
 model_dirs = [d for d in model_dirs if os.path.isdir(d)]
+model_dirs_A = model_dirs
+#model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d150_P1200_N1600_chi_80.0_lr_0.0003_T_2.0_seed_42']
 
-model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d150_P1200_N1600_chi_80.0_lr_0.0003_T_2.0_seed_42']
-
-model_dirs = [
+model_dirs_B  =[
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_0',
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_1',
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_2',
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3']
+
+model_dirs_B = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_1_eps_0.0',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_0_eps_0.0']
 def parse_config_from_dirname(dirname):
     parts = Path(dirname).name.split('_')
+    print("Parsing config from directory name:", dirname)
     print(parts)
     d = int(parts[0][1:])
     P = int(parts[1][1:])
@@ -73,6 +77,7 @@ def parse_config_from_dirname(dirname):
 def load_model(model_dir, device):
     d, P, N, chi = parse_config_from_dirname(model_dir)
     model_path = Path(model_dir) / "model.pt"
+    if N > 1000:return None, None, None
     if not model_path.exists():
         model_path = Path(model_dir) / "model_final.pt"
     if not model_path.exists():
@@ -125,10 +130,10 @@ def main():
         largest_eigs = eigvals_array.max(axis=1)
         W0 = model.W0.detach().cpu().numpy()  # (ens, N, d)
         target_weight_vals = W0[:,:,0].flatten()
-        other_weight_vals = W0[:,:,1:].flatten() if W0.shape[2] > 1 else []
+        perp_weight_vals = W0[:,:,1:].flatten() if W0.shape[2] > 1 else []
         largest_eigs_list.append(largest_eigs)
         target_weight_list.append(target_weight_vals)
-        other_weight_list.append(other_weight_vals)
+        other_weight_list.append(perp_weight_vals)
         model_names.append(Path(model_dir).name)
     np.savez("W0_cov_eigenvalues.npz", **results)
     print("Saved all eigenvalues to W0_cov_eigenvalues.npz")
@@ -186,11 +191,93 @@ def main():
         plt.savefig(os.path.join(MODELDIR, filename), dpi=150)
         plt.close()
         print(f'Saved grid plot to {filename}')
+
+    def plot_neg_log_prob_grid(data_list, model_names, filename):
+        """Plot -log probabilities for histograms"""
+        n = len(data_list)
+        ncols = 4
+        nrows = (n + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5*ncols, 4*nrows), squeeze=False)
+        
+        for i, (data, name) in enumerate(zip(data_list, model_names)):
+            ax = axes[i//ncols, i%ncols]
+            
+            # Create histogram
+            hist, bin_edges = np.histogram(data, density=True)
+            bin_widths = np.diff(bin_edges)
+            probs = hist * bin_widths  # Convert density to probability
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            
+            # Filter positive probabilities
+            mask = probs > 0
+            neg_log_probs = -np.log(probs[mask])
+            
+            ax.plot(bin_centers[mask], neg_log_probs, linewidth=2)
+            ax.set_title(f'{name}')
+            ax.set_xlabel('Weight Value')
+            ax.set_ylabel('-log(P)')
+            ax.grid(True, alpha=0.3)
+            
+        # Hide unused subplots
+        for j in range(i+1, nrows*ncols):
+            axes[j//ncols, j%ncols].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(MODELDIR, filename), dpi=150)
+        plt.close()
+        print(f'Saved grid plot to {filename}')
+    
+    def plot_combined_neg_log_prob_grid(target_list, perp_list, model_names, filename):
+        """Plot -log probabilities for both target and perp histograms on same axes"""
+        n = len(target_list)
+        ncols = 4
+        nrows = (n + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5*ncols, 4*nrows), squeeze=False)
+        
+        for i, (target_data, perp_data, name) in enumerate(zip(target_list, perp_list, model_names)):
+            ax = axes[i//ncols, i%ncols]
+            
+            # Target histogram
+            hist, bin_edges = np.histogram(target_data, bins=200, density=True)
+            bin_widths = np.diff(bin_edges)
+            probs = hist * bin_widths
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            mask = probs > 0
+            ax.plot(bin_centers[mask], -np.log(probs[mask]), label='Target', color='salmon', linewidth=2)
+            
+            # Perp histogram
+            if len(perp_data) > 0:
+                hist, bin_edges = np.histogram(perp_data, bins=200, density=True)
+                bin_widths = np.diff(bin_edges)
+                probs = hist * bin_widths
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                mask = probs > 0
+                ax.plot(bin_centers[mask], -np.log(probs[mask]), label='Perp', color='mediumseagreen', linewidth=2)
+            
+            ax.set_title(f'{name}')
+            ax.set_xlabel('Weight Value')
+            ax.set_ylabel('-log(P)')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+        # Hide unused subplots
+        for j in range(i+1, nrows*ncols):
+            axes[j//ncols, j%ncols].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(MODELDIR, filename), dpi=150)
+        plt.close()
+        print(f'Saved grid plot to {filename}')
+    
     plt.suptitle('W0 Covariance Largest Eigenvalue and Weight Distributions', fontsize=16)
     plot_grid(largest_eigs_list, model_names, bins=20, color='skyblue', xlabel='Largest Eigenvalue', title='Largest Eigenvalues', filename='grid_largest_eigenvalue_distribution.png')
     plot_grid(target_weight_list, model_names, bins=40, color='salmon', xlabel='W0[:, :, 0] Value (Target Weight)', title='Target Weight', filename='grid_target_weight_distribution.png')
     if any(len(ow) > 0 for ow in other_weight_list):
-        plot_grid(other_weight_list, model_names, bins=40, color='mediumseagreen', xlabel='W0[:, :, 1:] Value (Other Weights)', title='Other Weights', filename='grid_other_weight_distribution.png')
+        plot_grid(other_weight_list, model_names, bins=40, color='mediumseagreen', xlabel='W0[:, :, 1:] Value (Perp Weights)', title='Perp Weights', filename='grid_perp_weight_distribution.png')
+    
+    # Plot -log probability distributions
+    plot_combined_neg_log_prob_grid(target_weight_list, other_weight_list, model_names, filename='grid_neg_log_prob_combined.png')
+
 
 if __name__ == "__main__":
     main()
