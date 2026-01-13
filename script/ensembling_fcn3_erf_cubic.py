@@ -533,7 +533,7 @@ if __name__ == '__main__':
     save_interval = 100_000
     eigenvalue_log_interval = 10_000
     gsheets_log_interval = 10_000
-    tqdm_log_interval = 1000
+    tqdm_log_interval = 10_000
 
     # If headless was requested via CLI, reduce frequent interactive updates
     headless = getattr(args, 'headless', False)

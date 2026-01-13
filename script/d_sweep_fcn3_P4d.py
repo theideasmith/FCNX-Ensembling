@@ -37,17 +37,17 @@ LOG_DIR = _script_dir / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # === Defaults / constants ===
-N = 250
-n_factor = 10
+
+n_factor = 4
 epochs = 20_000_000
 lrA = 1e-6
 # devices
-START_DEVICE = "cuda:1"
-FALLBACK_DEVICE = "cuda:0"
+START_DEVICE = "cuda:0"
+FALLBACK_DEVICE = "cuda:1"
 # Sweep defaults
 DEFAULT_START = 20
-DEFAULT_STOP = 200
-DEFAULT_STEP = 40
+DEFAULT_STOP = 80
+DEFAULT_STEP = 20
 
 
 def build_command(d, device, extra_args=None, headless=False):
@@ -60,13 +60,12 @@ def build_command(d, device, extra_args=None, headless=False):
         "--d", str(d),
         "--P", str(P),
         "--chi", str(chi),
-        "--N", str(N),
+        "--N", str(n),
         "--epochs", str(epochs),
         "--lrA", str(lrA),
-        "--ens", str(7),
         "--device", str(device),
         "--eps", str(0.03),
-        "--ens", str(10)
+        "--ens", str(5)
     ]
     if headless:
         cmd += ["--headless"]

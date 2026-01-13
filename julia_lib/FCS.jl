@@ -291,7 +291,7 @@ return lK1, lK3
 end
 
 function populate_solution(sol::Solution, params::ProblemParams)
-    lK1, lK3 = lK(sol, params.P; n=params.n, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
+    lK1, lK3 = lK(sol, params.P; n=params.n, chi=params.χ, d=params.d, delta=params.\delta, kappa=params.κ, epsilon=params.ϵ, b=params.b)
     t1, t3 = lT(sol, params.P; n=params.n, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
     v1, v3 = lV(sol)
 
@@ -301,6 +301,7 @@ function populate_solution(sol::Solution, params::ProblemParams)
     sol.lT3 = t3
     sol.lV1 = v1
     sol.lV3 = v3
+    sol.lWT = 1/(d + params.delta * params.b * v1 / params.n)
     sol.learnability1 = lK1 / (lK1 + params.κ / params.P)
     sol.learnability3 = lK3 / (lK3 + params.κ / params.P)
     return sol
