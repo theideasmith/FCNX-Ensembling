@@ -5,5 +5,10 @@
     "python.analysis.extraPaths": [
         "./lib"
     ],
-    "editor.tabCompletion": "on"
+    "editor.tabCompletion": "on",
+    "python.testing.pytestArgs": [
+        "test"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }

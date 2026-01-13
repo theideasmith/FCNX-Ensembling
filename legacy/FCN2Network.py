@@ -162,7 +162,7 @@ class FCN2NetworkEnsembleErf(nn.Module):
             (self.ens, self.n1, self.d),
             (num_samples, self.d)
         ]
-        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float32) for s in shapes]
         path, _ = contract_path(eq, *dummy_tensors)
         self.forward_path_h0 = path
 
@@ -172,7 +172,7 @@ class FCN2NetworkEnsembleErf(nn.Module):
             (self.ens, self.n1),
             (num_samples, self.ens, self.n1)
         ]
-        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float32) for s in shapes]
         path, _ = contract_path(eq, *dummy_tensors)
         self.forward_path_f = path
 

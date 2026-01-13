@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: fcnx-ensembling
+Version: 0.1.0
+Summary: Eigenvalue spectra of fully connected neural networks
+Requires-Python: >=3.10
+Requires-Dist: torch
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: opt-einsum
+Requires-Dist: juliacall
+Requires-Dist: matplotlib

@@ -1,0 +1,6 @@
+torch
+numpy
+scipy
+opt-einsum
+juliacall
+matplotlib

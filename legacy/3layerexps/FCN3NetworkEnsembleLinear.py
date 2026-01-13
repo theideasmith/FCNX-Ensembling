@@ -25,7 +25,7 @@ class FCN3NetworkEnsembleLinear(nn.Module):
         # Pre-compute einsum paths for better performance
         self._precompute_einsum_paths(num_samples)
         # Pre-allocate single noise buffer for all parameters
-        self.noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
+        self.noise_buffer = torch.empty(1, device=device, dtype=torch.float32)
 
     def _precompute_einsum_paths(self, num_samples):
         """Pre-compute einsum paths for repeated operations"""
@@ -38,12 +38,12 @@ class FCN3NetworkEnsembleLinear(nn.Module):
             (self.ens, self.n1, self.d),
             (num_samples, self.d)
         ]
-        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float64) for s in shapes]
+        dummy_tensors = [torch.empty(s, device=self.device, dtype=torch.float32) for s in shapes]
         path, _ = contract_path(eq, *dummy_tensors)
         self.forward_path = path
 
     def h1_activation(self, X):
-        X = X.to(dtype=torch.float64)
+        X = X.to(dtype=torch.float32)
         if X.dim() == 3: 
             contraction = 'ijk,ikl,unl->uij'
         elif X.dim() == 2:

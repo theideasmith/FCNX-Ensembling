@@ -42,15 +42,16 @@ import torch
 # Load default experiment list from central registry; fall back to a local
 # hardcoded list if import fails (keeps behaviour safe if the module is not
 # available in some environments).
-try:
-    from experiment_collections import erf_cubic_P_SWEEP as _DEFAULT_EXPERIMENTS
-except Exception:
-    _DEFAULT_EXPERIMENTS = [
-        'erf_cubic_eps_0.03_P_400_D_40_N_250_epochs_20000000_lrA_2.50e-09_time_20251125_140822',
-        'erf_cubic_eps_0.03_P_200_D_40_N_250_epochs_20000000_lrA_5.00e-09_time_20251125_140822',
-        'erf_cubic_eps_0.03_P_40_D_40_N_250_epochs_20000000_lrA_2.50e-08_time_20251125_140822',
-        'erf_cubic_eps_0.03_P_1000_D_40_N_250_epochs_20000000_lrA_1.00e-09_time_20251125_140822',
-    ]
+# try:
+#     from experiment_collections import erf_cubic_P_SWEEP as _DEFAULT_EXPERIMENTS
+# except Exception:
+#     _DEFAULT_EXPERIMENTS = [
+# 'erf_cubic_eps_0.03_P_50_D_10_N_40_epoch s_20000000_lr_5.00e-05',
+# 'erf_cubic_eps_0.03_P_10_D_2_N_8_epochs_20000000_lr_1.00e-05',
+# 'erf_cubic_eps_0.03_P_20_D_4_N_16_epochs_20000000_lr_2.00e-05',
+# 'erf_cubic_eps_0.03_P_30_D_6_N_24_epochs_20000000_lr_3.00e-05',
+# 'erf_cubic_eps_0.03_P_40_D_8_N_32_epochs_20000000_lr_4.00e-05'
+#     ]
 
 
 def _parse_P_from_name(name: str) -> Optional[int]:

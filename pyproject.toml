@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fcnx-ensembling"
+version = "0.1.0"
+description = "Eigenvalue spectra of fully connected neural networks"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "numpy",
+    "scipy",
+    "opt-einsum",
+    "juliacall",
+    "matplotlib",
+]
+
+[tool.setuptools]
+packages = ["lib"]

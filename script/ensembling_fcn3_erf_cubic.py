@@ -293,7 +293,7 @@ def delete_gsheets_row_by_foldername(folder_name):
 # Custom loss function (slightly faster than MSE)
 def custom_mse_loss(outputs, targets):
     diff = outputs - targets
-    return 0.5 * torch.sum(diff * diff)
+    return torch.sum(diff * diff)
 
 
 def atomic_save_model(model, save_path):
@@ -314,12 +314,21 @@ def atomic_save_json(data, save_path):
 
 def gen_eigenvalues_for_logging(model, X_inf, Y1_inf, Y3_inf):
     with torch.no_grad():
-    
-        lH1 = model.H_eig(X_inf, Y1_inf)
-        lH3 = model.H_eig(X_inf, Y3_inf)
+        Q, Z = model.H_random_QB(X_inf, k = 2000, p=200)
+        Ut, _S, V = torch.linalg.svd(Z.T)
+        m, n = Z.shape[1], Z.shape[0]
+        k = min(m, n)
+        Sigma = torch.zeros(m, n, device=Z.device, dtype=Z.dtype)
+        Sigma[:k, :k] = torch.diag(_S) 
+        U = torch.matmul(Q, Ut)
+        ls = Sigma.diagonal() / X_inf.shape[0]
+        Y1_inf = Y1_inf / torch.norm(Y1_inf, dim=0) 
+        Y3_inf = Y3_inf / torch.norm(Y3_inf, dim=0)
+        Y1_sandwich = (torch.matmul(Y1_inf.t(), U) @ _S.diag() @ torch.matmul(U.T, Y1_inf)).diagonal() / X_inf.shape[0]
+        Y3_sandwich = (torch.matmul(Y3_inf.t(), U) @ _S.diag() @ torch.matmul(U.T, Y3_inf)).diagonal()  / X_inf.shape[0]
         lK1 = model.K_eig(X_inf, Y1_inf)
         lK3 = model.K_eig(X_inf, Y3_inf)
-        return lH1, lH3, lK1, lK3
+        return Y1_sandwich, Y3_sandwich, lK1, lK3
 
 def sift_eigenvalues_for_logging(lH1, lH3, lK1, lK3, kappa, num_samples):
 
@@ -470,7 +479,7 @@ if __name__ == '__main__':
                         help='Learning rate lrA (default: 1e-3/400)')
     parser.add_argument('--ens', type=int, default=100,
                         help='Number of ensembles to train')
-    parser.add_argument('--kappa', type=float, default=1.0,
+    parser.add_argument('--kappa', type=float, default=0.001,
                         help='Data noise parameter kappa')
     parser.add_argument('-static', '--static', action='store_true',
                         help='Keep the learning rate static at lrA')
@@ -484,6 +493,13 @@ if __name__ == '__main__':
                         help="Torch device string, e.g. 'cuda:1' or 'cpu'. If omitted, code uses 'cuda:1' when available otherwise 'cpu'.")
     parser.add_argument('--headless', action='store_true',
                         help='Run without interactive progress bars / plotting; print summary every ~10k epochs')
+    # Default timestamped is false
+    parser.add_argument('--timestamped', type=bool, default=False,
+                        help='Whether to append timestamp to modeldesc (default: False)')
+    parser.add_argument('--experiment_dirname', type=str, default='ensembling_fcn3_erf_cubic',
+                        help='Base directory name for experiments (default: ensembling_fcn3_erf_cubic)')
+    parser.add_argument('--dataset-averaged-noise', action='store_true',
+                        help='Use dataset-averaged noise scaling for Langevin dynamics (k/P instead of k)')
     args = parser.parse_args()
 
     global  debug
@@ -505,7 +521,7 @@ if __name__ == '__main__':
     ################################################################
     # &*&   Main hyperparameters from arguments.        &*&
     ################################################################
-
+    
     epochs = args.epochs
     modeldesc = ''
     save_dir = getattr(args, 'modeldesc', '')
@@ -520,29 +536,32 @@ if __name__ == '__main__':
     kappa = k
     batch_size = args.batch_size if args.batch_size is not None else num_samples
     t0 = 2 * k
-    t = t0 / chi  # Temperature for Langevin (used in noise)
-    eps = float(getattr(args, 'eps', 0.03))
+    t = t0 / chi
 
+    eps = float(getattr(args, 'eps', 0.03))
+    ghost = False  # Whether running in ghost mode (no saving/logging)
     # --- Learning Rate Schedule Parameters ---
     alphaT = max(0.0, min(1.0, getattr(args, 'alphaT', 0.7)))
     T = int(epochs * alphaT)
     lrB = (1.0 / 3) * lrA / num_samples
 
     # Log intervals
-    log_interval = 15_000
-    save_interval = 100_000
+    log_interval = 10_000
+    save_interval = 60_000
     eigenvalue_log_interval = 10_000
     gsheets_log_interval = 10_000
     tqdm_log_interval = 10_000
 
+    timestamped = getattr(args, 'timestamped', False)
+    experiment_dirname = getattr(args, 'experiment_dirname', 'ensembling_fcn3_erf_cubic')   
     # If headless was requested via CLI, reduce frequent interactive updates
     headless = getattr(args, 'headless', False)
     if headless:
         # align log intervals to ~10k for less verbose output
-        log_interval = min(log_interval, 10_000)
-        eigenvalue_log_interval = 10_000
-        gsheets_log_interval = 10_000
-        tqdm_log_interval = max(tqdm_log_interval, 10_000)
+        log_interval = min(log_interval, 60_000)
+        eigenvalue_log_interval = 60_000
+        gsheets_log_interval = 60_000
+        tqdm_log_interval = max(tqdm_log_interval, 100_000)
 
     # Set seeds as constants
     DATA_SEED = 613
@@ -554,7 +573,7 @@ if __name__ == '__main__':
     current_base_learning_rate = lrA
 
     # Set the default dtype to float64
-    torch.set_default_dtype(torch.float64)
+    torch.set_default_dtype(torch.float32)
 
     # Device selection: prefer user-specified device if provided.
     # If the user requests a CUDA device but CUDA is unavailable, fall back to CPU.
@@ -584,7 +603,7 @@ if __name__ == '__main__':
 
     # Conditionally set up logging and saving directories
     # based on whether in debug mode
-    if not debug:
+    if not debug and not ghost:
         if args.modeldesc is not None:
             modeldesc = os.path.normpath(args.modeldesc)
             save_dir = os.path.join("/home/akiva/exp/fcn3erf", modeldesc)
@@ -592,14 +611,22 @@ if __name__ == '__main__':
             os.makedirs(runs_dir, exist_ok=True)
             resume = True
         else:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lrA_{lrA:.2e}_time_{timestamp}"
-            save_dir = os.path.join("/home/akiva/exp/fcn3erf", modeldesc)
+            if timestamped == True:
+                timestamp = datetime.now().strftime("%B %d, %Y %I:%M %p")
+                modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lr_{args.lrA:.2e}_time_{timestamp}"
+            else:
+                modeldesc = f"erf_cubic_eps_{eps}_P_{num_samples}_D_{input_size}_N_{hidden_size}_epochs_{epochs}_lr_{args.lrA:.2e}"
+            save_dir = os.path.join("/home/akiva/exp/", experiment_dirname, modeldesc)
             os.makedirs(save_dir, exist_ok=True)
             runs_dir = os.path.join(save_dir, "runs")
             os.makedirs(runs_dir, exist_ok=True)
             resume = False
-
+        config_path = os.path.join(save_dir, 'config.json')
+        # Save the configuration to config.json
+        with open(config_path, 'w') as f:
+            # Use vars(args) to get a dictionary of all arguments
+            json.dump(vars(args), f, indent=4) 
+        print(f"Saved configuration to {config_path}")
         # Initialize TensorBoard writer
         writer_cm = SummaryWriter(log_dir=runs_dir)
         state_path = os.path.join(save_dir, 'state.json')
@@ -647,7 +674,7 @@ if __name__ == '__main__':
     ################################################
     torch.manual_seed(DATA_SEED)
     X = torch.randn((num_samples, input_size),
-                    dtype=torch.float64, device=device)
+                    dtype=torch.float32, device=device)
 
     # Target: y(x) = He1(w·x) + eps * He3(w·x), probabilists' Hermite with w = e1
     z = X[:, 0]  # w = e1 along w0 direction
@@ -656,7 +683,7 @@ if __name__ == '__main__':
     Y = (He1 + eps * He3).unsqueeze(-1)
 
     torch.manual_seed(DATA_SEED)
-    X_inf = torch.randn((2000, input_size), dtype=torch.float64, device=device)
+    X_inf = torch.randn((3000, input_size), dtype=torch.float32, device=device)
     Y1_inf = X_inf  # He1 along each coordinate
     Y3_inf = eps * (X_inf**3 - 3.0 * X_inf)  # He3 along each coordinate
 
@@ -756,10 +783,10 @@ if __name__ == '__main__':
     ## &*& Initializing Langevin dynamics parameters. &*&
     ###############################################################
     weight_decay = torch.tensor(
-        [input_size, hidden_size, hidden_size*chi], dtype=torch.float64, device=device) * t
+        [input_size, hidden_size, hidden_size*chi], dtype=torch.float32, device=device) * t
 
     # Pre-allocate noise buffer for Langevin dynamics
-    noise_buffer = torch.empty(1, device=device, dtype=torch.float64)
+    noise_buffer = torch.empty(1, device=device, dtype=torch.float32)
     # Dedicated RNG for Langevin noise to ensure deterministic, epoch-indexed randomness
     langevin_gen = torch.Generator(device=device)
 
@@ -778,81 +805,90 @@ if __name__ == '__main__':
         print('Failed to compute initial eigenvalues:',  e)
         pass
 
-# Compute MF predictions once (expensive) and reuse during training if available
-preds = None
-if Experiment is not None:
-    try:
-        exp = Experiment(save_dir, hidden_size, input_size, chi, num_samples, ens)
-        preds = exp.eig_predictions()
-        print("MF predictions computed and cached in 'preds'.")
-        # Fancy listing of predictions with nice styled header
-        print("="*40)
-        print(f"{'Mean-Field Eigenvalue Predictions':^40}")
-        print("="*40)
-        for key in ['lH1T', 'lH1P', 'lH3T', 'lH3P', 'lK1T', 'lK1P', 'lK3T', 'lK3P']:
-            if hasattr(preds, key):
-                value = getattr(preds, key)
-                print(f"{key:>10}: {value:.6g}")
-        print("="*40)
-    except Exception as _e:
-        print(f"[Warning] Could not compute MF predictions at startup: {_e}")
+    # Compute MF predictions once (expensive) and reuse during training if available
+    preds = None
+    if Experiment is not None:
+        try:
+            exp = Experiment(save_dir, hidden_size, input_size, chi, num_samples, ens)
+            preds = exp.eig_predictions()
+            print("MF predictions computed and cached in 'preds'.")
+            # Fancy listing of predictions with nice styled header
+            print("="*40)
+            print(f"{'Mean-Field Eigenvalue Predictions':^40}")
+            print("="*40)
+            for key in ['lH1T', 'lH1P', 'lH3T', 'lH3P', 'lK1T', 'lK1P', 'lK3T', 'lK3P']:
+                if hasattr(preds, key):
+                    value = getattr(preds, key)
+                    print(f"{key:>10}: {value:.6g}")
+            print("="*40)
+        except Exception as _e:
+            print(f"[Warning] Could not compute MF predictions at startup: {_e}")
 
-    # Use a dummy progress bar in headless mode to avoid interactive updates
-    if headless:
-        class _DummyPbar:
-            def update(self, n=1):
-                return
+    pbar = tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch)
+    training_pbar = pbar
 
-            def set_postfix(self, *args, **kwargs):
-                return
+    #-----------------------------------------------------------------------------
+    #                          Setting Up Learning Rate     
+    #----(§§§)----------------------------------------------------------------(§§§)
 
-            def close(self):
-                return
+    curLr = lrA
+    lr_ind = 0
 
-        pbar = _DummyPbar()
-        training_pbar = pbar
-    else:
-        pbar = tqdm(total=epochs, desc="Training", unit="epoch", initial=epoch)
-        training_pbar = pbar
+    lr_decay = 0.5**0.5
+    lr_epoch_list = [
+            (100, lrA),
+            (500_000, lrA * lr_decay),
+            (3_000_000, lrA * lr_decay**2),
+            (5_000_000, lrA * lr_decay**3),
+            (6_000_000, lrA * lr_decay**4),
+            (7_000_000, lrA * lr_decay**5),
+            (7_000_000, lrA * lr_decay**5),
+            (10_000_000, lrA * lr_decay**6)
+    ]
+
+    #-----------------------------------------------------------------------------
+    #                          Starting Training Loop     
+    #----(§§§)----------------------------------------------------------------(§§§)
 
     while epoch < epochs:
+        # Training related important things
+        model.zero_grad()
 
-            model.zero_grad()
-            effective_learning_rate_for_update = lrA
-            current_base_learning_rate = effective_learning_rate_for_update
-            if (epoch > T) and (getattr(args, 'static', True)):
-                effective_learning_rate_for_update = lrA / 3
+        if epoch == lr_epoch_list[lr_ind][0]:
+            curLr = lr_epoch_list[lr_ind][1]
+            if lr_ind < len(lr_epoch_list) - 1: 
+                lr_ind += 1
 
-            noise_scale = (2 * effective_learning_rate_for_update * t) ** 0.5
-            langevin_gen.manual_seed(LANGEVIN_SEED + epoch)
+        noise_scale = (2 * curLr * t) ** 0.5
+        langevin_gen.manual_seed(LANGEVIN_SEED + epoch)
 
-            try:
-                outputs = model(X)
-                loss = custom_mse_loss(outputs, Y.unsqueeze(-1))
-                losses.append(loss.item())
-                avg_loss = loss.item() / (ens * num_samples)
-                loss.backward()
+        try:
+            outputs = model(X)
+            loss = custom_mse_loss(outputs, Y.unsqueeze(-1))
+            losses.append(loss.item())
+            avg_loss = loss.item() / (ens * num_samples)
+            loss.backward()
 
-                with torch.no_grad():
-                    for i, param in enumerate(model.parameters()):
-                        if param.grad is not None:
-                            noise_buffer.resize_(param.shape).normal_(
-                                0, noise_scale, generator=langevin_gen)
-                            param.add_(noise_buffer)
-                            param.add_(
-                                param.data, alpha=-(weight_decay[i]).item() * effective_learning_rate_for_update)
-                            param.add_(param.grad, alpha=-effective_learning_rate_for_update)
+            with torch.no_grad():
+                for i, param in enumerate(model.parameters()):
+                    if param.grad is not None:
+                        noise_buffer.resize_(param.shape).normal_(
+                            0, noise_scale, generator=langevin_gen)
+                        param.add_(noise_buffer)
+                        param.add_(
+                            param.data, alpha=-(weight_decay[i]).item() * curLr)
+                        param.add_(param.grad, alpha=-curLr)
 
-                if not torch.isfinite(loss):
-                    print(f"Warning: Invalid loss at epoch {epoch}: {loss.item()}")
+            if not torch.isfinite(loss):
+                print(f"Warning: Invalid loss at epoch {epoch}: {loss.item()}")
 
-                # advance progress (no-op in headless mode)
+            if (epoch % tqdm_log_interval) == 0 and not ghost: 
+                # No op in headless mode
                 try:
-                    pbar.update(1)
+                    pbar.update(tqdm_log_interval)
                 except Exception:
                     pass
-                # Update progress bar with time info
-                # update postfix if available (no-op in headless)
+
                 try:
                     pbar.set_postfix({
                         "MSE": f"{avg_loss:.6f}",
@@ -861,148 +897,151 @@ if Experiment is not None:
                 except Exception:
                     pass
 
-                epoch += 1
+            epoch += 1
 
-            except Exception as e:
-                print(f"Error in training loop at epoch {epoch}: {e}")
-                exc_type, exc_obj, exc_tb = sys.exc_info()
-                fname = exc_tb.tb_frame.f_code.co_filename if exc_tb is not None else 'Unknown'
-                line_number = exc_tb.tb_lineno if exc_tb is not None else 'Unknown'
-                exc_type_name = exc_type.__name__ if exc_type is not None else 'Unknown'
-                print(f"An exception occurred:")
-                print(f" Type: {exc_type_name}")
-                print(f" Message: {e}")
-                print(f" File: {fname}")
-                print(f" Line: {line_number}")
+        except Exception as e:
+            print(f"Error in training loop at epoch {epoch}: {e}")
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = exc_tb.tb_frame.f_code.co_filename if exc_tb is not None else 'Unknown'
+            line_number = exc_tb.tb_lineno if exc_tb is not None else 'Unknown'
+            exc_type_name = exc_type.__name__ if exc_type is not None else 'Unknown'
+            print(f"An exception occurred:")
+            print(f" Type: {exc_type_name}")
+            print(f" Message: {e}")
+            print(f" File: {fname}")
+            print(f" Line: {line_number}")
 
-                try:
-                    pbar.update(1)
-                except Exception:
-                    pass
-                
-                epoch += 1
-                continue
-
-            if (epoch) % log_interval == 0 or epoch == 0:
-                with open(state_path, 'w') as f:
-                    json.dump({'epoch': epoch}, f)
-                    writer_cm.add_scalar('Loss', avg_loss, epoch)
-                    writer_cm.add_scalar(
-                        'Learning Rate', current_base_learning_rate, epoch)
-
-            eigenvalues = {}
-            if ((epoch) % eigenvalue_log_interval == 0 or epoch == 0) and not args.debug:
-                try:
-                    lH1, lH3, lK1, lK3 = gen_eigenvalues_for_logging(
-                        model, X_inf, Y1_inf, Y3_inf)
-                    eigenvalues_data = sift_eigenvalues_for_logging(
-                        lH1, lH3, lK1, lK3, kappa, num_samples)
-                    scalarsH1, scalarsH3, scalarsK1, scalarsK3, muK1, muK3 = eigenvalues_data
-
-                    # Log the raw eigenvalue scalars to TensorBoard
-                    log_eigenvalues_to_tensorboard(writer_cm, epoch, *eigenvalues_data)
-
-                    # If precomputed MF predictions are available, add horizontal prediction series to TensorBoard
-                    if preds is not None:
-                        try:
-                            # He1 predictions
-                            sH1 = dict(scalarsH1)
-                            sH1['mf_target'] = float(getattr(preds, 'lH1T', float('nan')))
-                            sH1['mf_perp'] = float(getattr(preds, 'lH1P', float('nan')))
-                            writer_cm.add_scalars('Eigenvalues/He1', sH1, epoch)
-
-                            # He3 predictions
-                            sH3 = dict(scalarsH3)
-                            sH3['mf_target'] = float(getattr(preds, 'lH3T', float('nan')))
-                            sH3['mf_perp'] = float(getattr(preds, 'lH3P', float('nan')))
-                            writer_cm.add_scalars('Eigenvalues/He3', sH3, epoch)
-
-                            # K_He1 / K_He3: use computed lK predictions if available
-                            sK1 = dict(scalarsK1)
-                            sK1['mf_target'] = float(getattr(preds, 'lK1T', getattr(preds, 'lJ1T', float('nan'))))
-                            sK1['mf_perp'] = float(getattr(preds, 'lK1P', getattr(preds, 'lJ1P', float('nan'))))
-                            writer_cm.add_scalars('Eigenvalues/K_He1', sK1, epoch)
-
-                            sK3 = dict(scalarsK3)
-                            sK3['mf_target'] = float(getattr(preds, 'lK3T', getattr(preds, 'lJ3T', float('nan'))))
-                            sK3['mf_perp'] = float(getattr(preds, 'lK3P', getattr(preds, 'lJ3P', float('nan'))))
-                            writer_cm.add_scalars('Eigenvalues/K_He3', sK3, epoch)
-                        except Exception as _e:
-                            print(f"[Warning] Could not log MF prediction lines to TensorBoard: {_e}")
-
-                    eigenvalues = {
-                        'He1': scalarsH1,
-                        'He3': scalarsH3,
-                        'K_He1': scalarsK1,
-                        'K_He3': scalarsK3,
-                        'mu_He1': muK1,
-                        'mu_He3': muK3
-                    }
-
-                except Exception as e:
-                    print(f"Error computing/logging eigenvalues at epoch {epoch}: {e}")
-                    eigenvalues = None
+            try:
+                pbar.update(1)
+            except Exception:
+                pass
+            # This is all logging, not essential to the training loop per se
+            epoch += 1
+            continue
             
 
-            if (epoch) % gsheets_log_interval == 0 or epoch == 0:   
-                try:
-                    log_to_gsheets(
-                        epoch=epoch,
-                        gpr_alignment=cos_sim.item() if 'cos_sim' in locals() else None,
-                        eigenvalues=eigenvalues,
-                        folder_name=modeldesc,
-                        input_size=input_size,
-                        hidden_size=hidden_size,
-                        ensemble_size=ens,
-                        chi=chi,
-                        learning_rate=current_base_learning_rate,
-                        status='RUNNING',
-                        current_loss=avg_loss
-                    )
-                except Exception as gsheets_exc:
-                    print(
-                        f"[Warning] Google Sheets logging failed at detailed log interval: {gsheets_exc}")
+        # This is all logging, not essential to the training loop per se
+        if (epoch) % log_interval == 0 or epoch == 0 and not ghost:
+            with open(state_path, 'w') as f:
+                json.dump({'epoch': epoch}, f)
+                writer_cm.add_scalar('Loss', avg_loss, epoch)
+                writer_cm.add_scalar(
+                    'Learning Rate', current_base_learning_rate, epoch)
 
-            if (epoch) % save_interval == 0:
-                try: 
-                    model_filename = f"model.pth"
-                    torch.save(model.state_dict(), os.path.join(
-                        save_dir, model_filename))
+        eigenvalues = {}
+        if ((epoch) % eigenvalue_log_interval == 0 or epoch == 0) and not args.debug and not ghost:
+            try:
+                lH1, lH3, lK1, lK3 = gen_eigenvalues_for_logging(
+                    model, X_inf, Y1_inf, Y3_inf)
+                eigenvalues_data = sift_eigenvalues_for_logging(
+                    lH1, lH3, lK1, lK3, kappa, num_samples)
+                scalarsH1, scalarsH3, scalarsK1, scalarsK3, muK1, muK3 = eigenvalues_data
 
-                    with open(os.path.join(save_dir, f"losses.txt"), "a") as f:
-                        f.write(f"{epoch},{loss.item()}\n")
-                except Exception as save_exc:
-                    print(f"[Warning] Error saving model or losses at epoch {epoch}: {save_exc}")
+                # Log the raw eigenvalue scalars to TensorBoard
+                log_eigenvalues_to_tensorboard(writer_cm, epoch, *eigenvalues_data)
 
-    # Close TensorBoard writer
-    if writer_cm is not None:
-        writer_cm.close()
-    elif debug and writer_cm is not None:
-        writer_cm.close()
-    if debug:
-        try:
-            delete_gsheets_row_by_foldername(modeldesc)
-        except Exception as e:
-            print(f"Error deleting Google Sheets row for debug: {e}")
-    else:
-        # Set status to COMPLETE in Google Sheets at end of training
-        try:
-            log_to_gsheets(
-                epoch=epoch,
-                gpr_alignment=None,
-                eigenvalues=None,
-                folder_name=modeldesc,
-                input_size=input_size,
-                hidden_size=hidden_size,
-                ensemble_size=ens,
-                chi=chi,
-                learning_rate=current_base_learning_rate,
-                status='COMPLETE',
-                current_loss=avg_loss
-            )
-        except Exception as e:
-            print(
-                f"Error updating Google Sheets status at end of training: {e}")
+                # If precomputed MF predictions are available, add horizontal prediction series to TensorBoard
+                if False: #preds is not None:
+                    try:
+                        # He1 predictions
+                        sH1 = dict(scalarsH1)
+                        sH1['mf_target'] = float(getattr(preds, 'lH1T', float('nan')))
+                        sH1['mf_perp'] = float(getattr(preds, 'lH1P', float('nan')))
+                        writer_cm.add_scalars('Eigenvalues/He1', sH1, epoch)
+
+                        # He3 predictions
+                        sH3 = dict(scalarsH3)
+                        sH3['mf_target'] = float(getattr(preds, 'lH3T', float('nan')))
+                        sH3['mf_perp'] = float(getattr(preds, 'lH3P', float('nan')))
+                        writer_cm.add_scalars('Eigenvalues/He3', sH3, epoch)
+
+                        # K_He1 / K_He3: use computed lK predictions if available
+                        sK1 = dict(scalarsK1)
+                        sK1['mf_target'] = float(getattr(preds, 'lK1T', getattr(preds, 'lJ1T', float('nan'))))
+                        sK1['mf_perp'] = float(getattr(preds, 'lK1P', getattr(preds, 'lJ1P', float('nan'))))
+                        writer_cm.add_scalars('Eigenvalues/K_He1', sK1, epoch)
+
+                        sK3 = dict(scalarsK3)
+                        sK3['mf_target'] = float(getattr(preds, 'lK3T', getattr(preds, 'lJ3T', float('nan'))))
+                        sK3['mf_perp'] = float(getattr(preds, 'lK3P', getattr(preds, 'lJ3P', float('nan'))))
+                        writer_cm.add_scalars('Eigenvalues/K_He3', sK3, epoch)
+                    except Exception as _e:
+                        print(f"[Warning] Could not log MF prediction lines to TensorBoard: {_e}")
+
+                eigenvalues = {
+                    'He1': scalarsH1,
+                    'He3': scalarsH3,
+                    'K_He1': scalarsK1,
+                    'K_He3': scalarsK3,
+                    'mu_He1': muK1,
+                    'mu_He3': muK3
+                }
+
+
+            except Exception as e:
+                print(f"Error computing/logging eigenvalues at epoch {epoch}: {e}")
+                eigenvalues = None
+
+        if (epoch) % gsheets_log_interval == 0 or epoch == 0 and not ghost:   
+            try:
+                log_to_gsheets(
+                    epoch=epoch,
+                    gpr_alignment=cos_sim.item() if 'cos_sim' in locals() else None,
+                    eigenvalues=eigenvalues,
+                    folder_name=modeldesc,
+                    input_size=input_size,
+                    hidden_size=hidden_size,
+                    ensemble_size=ens,
+                    chi=chi,
+                    learning_rate=current_base_learning_rate,
+                    status='RUNNING',
+                    current_loss=avg_loss
+                )
+            except Exception as gsheets_exc:
+                print(
+                    f"[Warning] Google Sheets logging failed at detailed log interval: {gsheets_exc}")
+
+        if (epoch) % save_interval == 0:
+            try: 
+                model_filename = f"model.pth"
+                torch.save(model.state_dict(), os.path.join(
+                    save_dir, model_filename))
+
+                with open(os.path.join(save_dir, f"losses.txt"), "a") as f:
+                    f.write(f"{epoch},{loss.item()}\n")
+            except Exception as save_exc:
+                print(f"[Warning] Error saving model or losses at epoch {epoch}: {save_exc}")
+
+    if not ghost: 
+        # Close TensorBoard writer
+        if writer_cm is not None:
+            writer_cm.close()
+        elif debug and writer_cm is not None:
+            writer_cm.close()
+        if debug:
+            try:
+                delete_gsheets_row_by_foldername(modeldesc)
+            except Exception as e:
+                print(f"Error deleting Google Sheets row for debug: {e}")
+        else:
+            # Set status to COMPLETE in Google Sheets at end of training
+            try:
+                log_to_gsheets(
+                    epoch=epoch,
+                    gpr_alignment=None,
+                    eigenvalues=None,
+                    folder_name=modeldesc,
+                    input_size=input_size,
+                    hidden_size=hidden_size,
+                    ensemble_size=ens,
+                    chi=chi,
+                    learning_rate=current_base_learning_rate,
+                    status='COMPLETE',
+                    current_loss=avg_loss
+                )
+            except Exception as e:
+                print(
+                    f"Error updating Google Sheets status at end of training: {e}")
     # ensure progress bar cleaned up
     try:
         pbar.close()

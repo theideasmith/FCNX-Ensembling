@@ -1,4 +1,11 @@
+**/events.out.tfevents.*
+**.pkl
+**.json
+**.pt
+**.out
 **.log
+**/logs/
+**/logs/**
 **.pyc
 **.jls
 **.pdf
@@ -9,5 +16,13 @@ Menagerie/*
 **.pth
 plots/*
 plots/
+**/plots/
+**/plots/**
 FCN3Exps/**.log
+**.npz
+**.mp4
+
+# Ignore NumPy compressed arrays and Python cache directories
+*.npz
+__pycache__/
 
