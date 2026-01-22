@@ -10,13 +10,13 @@ DEVICE="cuda:0"
 # fi
 
 ENSEMBLE_SIZE=5
-EPOCHS=50000000
-LR=3e-5
-N=1600
+EPOCHS=100000000
+LR=1e-5
+N=800
 CHI=10
 D=100
-P=1500
-TEMP=8.0
+P=3000
+TEMP=16.0
 
 for SEED in 0 1 2 3; do
   python train_fcn2_erf.py \

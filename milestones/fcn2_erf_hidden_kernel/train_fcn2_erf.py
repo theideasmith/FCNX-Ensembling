@@ -225,12 +225,34 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=10_000, ens=50
     # Training loop
     for epoch in range(start_epoch, epochs + 1):
         if epoch > 0:
-            if epoch > epochs * 0.75:
-                lr = base_lr / (3 * P)
+            lr = base_lr / P
+            # # 1. Define the annealing schedule
+            # anneal_start = int(epochs * 0.75)
+            # anneal_end = int(epochs * 0.80)  # Spend 5% of time cooling down
+            # target_lr = base_lr / (3 * P)
+            # current_base_lr = base_lr / P
+            # if epoch == anneal_start:
+            #     # Hard save model to a filename indicating start of annealing
+            #     anneal_checkpoint_path = run_dir / f"checkpoint_anneal_start_epoch_{epoch}.pt"
+            #     torch.save({
+            #         'epoch': epoch,
+            #         'model_state_dict': model.state_dict(),
+            #     }, anneal_checkpoint_path)
+            #     print(f"  Saved anneal start checkpoint to {anneal_checkpoint_path}")
+            # if epoch < anneal_start:
+            #     lr = current_base_lr
+            # elif epoch < anneal_end:
+            #     # Linear interpolation between high LR and low LR
+            #     fraction = (epoch - anneal_start) / (anneal_end - anneal_start)
+            #     lr = current_base_lr + fraction * (target_lr - current_base_lr)
+            # else:
+            #     lr = target_lr
 
+            # 2. Re-calculate noise scale based on the smoothly changing LR
             torch.manual_seed(epoch)
-            # Langevin noise scale
             noise_scale = np.sqrt(2.0 * lr * effective_temperature)
+
+
 
             # Forward pass
             output = model(X)  # (P, ens)
@@ -383,7 +405,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=10_000, ens=50
                               f"mean_eig={eigenvalues.mean():.6f}")
 
                 # Save checkpoint
-                if epoch > 0:
+                if epoch % (2 * log_interval) == 0:
                     # Save model state
                     torch.save(model.state_dict(), run_dir / "model.pt")
                     

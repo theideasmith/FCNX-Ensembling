@@ -79,27 +79,32 @@ class FCN2NetworkActivationGeneric(nn.Module):
         path_f, _ = contract_path(eq_f, *dummy_f)
         self.forward_path_f = path_f
     
-    def h0_preactivation(self, X):
+    def h0_preactivation(self, X, optimize=True):
         """Compute pre-activation of hidden layer: W0 @ X
         
         Returns:
             h0: shape (P, ens, n1) - pre-activations before activation function
         """
+        if optimize == False:
+            path = None
+        else:
+            path = self.forward_path_h0
+
         h0 = contract(
             'qkl,ul->uqk',
             self.W0, X,
-            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+            optimize=path,
             backend='torch'
         )
         return h0
     
-    def h0_activation(self, X):
+    def h0_activation(self, X, optimize=True):
         """Compute activation of hidden layer.
         
         Returns:
             a0: shape (P, ens, n1) - activations after activation function
         """
-        h0 = self.h0_preactivation(X)
+        h0 = self.h0_preactivation(X, optimize=optimize)
         
         if self.activation_name == "erf":
             return torch.erf(h0)

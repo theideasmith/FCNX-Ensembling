@@ -104,7 +104,7 @@ function main()
 
     # println("Solved for delta = $delta")
     # println("Solution: ", sol)
-    solution = sol.zero
+    solution = sol
     lJ = solution[1]
     lk = solution[2]
     lWT = solution[3]
@@ -127,7 +127,7 @@ function main()
         anneal=!args["no-anneal"],
         anneal_steps=args["anneal_steps"],
     )
-    solution = sol.zero
+    solution = sol
     lJP = solution[1]
     lkp = solution[2]
     lWTP = solution[3]

@@ -28,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 from typing import Optional
 import subprocess
 import tempfile
+
+
 def load_model_from_run(run_dir: Path, device: torch.device) -> FCN2NetworkActivationGeneric:
     """Recreate model from run directory by inferring dimensions and loading weights.
 
@@ -116,9 +118,6 @@ def load_model_from_run(run_dir: Path, device: torch.device) -> FCN2NetworkActiv
     model = model.double()
     model.eval()
     return model
-    model = model.double()
-    model.eval()
-    return model
 
 
 def parse_run_params(run_dir: Path):
@@ -139,7 +138,7 @@ def parse_run_params(run_dir: Path):
             P = int(cfg.get("P")) if cfg.get("P") is not None else None
             N = int(cfg.get("N")) if cfg.get("N") is not None else None
             chi = float(cfg.get("chi")) if cfg.get("chi") is not None else None
-            T = float(cfg.get("T")) if cfg.get("T") is not None else None
+            T = float(cfg.get("temperature")) if cfg.get("temperature") is not None else None
             epsilon = float(cfg.get("eps")) if cfg.get("eps") is not None else None
         except Exception:
             pass
@@ -200,7 +199,10 @@ def compute_theory_with_julia(d: int, n1: int, P: int, chi: float, kappa: float,
         except OSError:
             pass
 
-
+def second_moment(projections):
+    k = projections.flatten().shape[0]
+    return torch.sum(projections**2) / k
+    
 def compute_h3_projections_streaming(
     model: FCN2NetworkActivationGeneric,
     d: int,
@@ -216,10 +218,10 @@ def compute_h3_projections_streaming(
     """
     assert perp_dim >= 0 and perp_dim < d, f"perp_dim {perp_dim} out of range for d={d}"
 
-    dtype = torch.float64
+    dtype = torch.float32
     ens = model.ens
     n1 = model.n1
-
+    model.to(dtype)
     # Accumulators for summed projections over P (He3 and He1)
     proj3_target_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
     proj3_perp_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
@@ -239,28 +241,41 @@ def compute_h3_projections_streaming(
             # Cubic Hermite features (normalized to project; scaling by P later)
             x0 = X_batch[:, 0]
             x_perp = X_batch[:, perp_dim]
-            phi3_target = (x0**3 - 3.0 * x0) / (6.0 ** 0.5)
-            phi3_perp = (x_perp**3 - 3.0 * x_perp) / (6.0 ** 0.5)
+            phi3_target = (x0**3 - 3.0 * x0) 
+            phi3_perp = (x_perp**3 - 3.0 * x_perp) 
             # Linear features (He1)
             phi1_target = x0
             phi1_perp = x_perp
-
+            
             # Hidden activations a0: (bs, ens, n1)
             a0 = model.h0_activation(X_batch)
 
             # Accumulate projections (sum over samples)
-            proj3_target_sum += torch.einsum('pqn,p->qn', a0, phi3_target)
-            proj3_perp_sum += torch.einsum('pqn,p->qn', a0, phi3_perp)
-            proj1_target_sum += torch.einsum('pqn,p->qn', a0, phi1_target)
-            proj1_perp_sum += torch.einsum('pqn,p->qn', a0, phi1_perp)
-
+            proj3_target_sum += torch.einsum('pqn,p->qn', a0, phi3_target) / P_total
+            proj3_perp_sum += torch.einsum('pqn,p->qn', a0, phi3_perp) / P_total
+            proj1_target_sum += torch.einsum('pqn,p->qn', a0, phi1_target) / P_total
+            proj1_perp_sum += torch.einsum('pqn,p->qn', a0, phi1_perp) / P_total
+            torch.cuda.empty_cache()
+            del X_batch, x0, x_perp, phi3_target, phi3_perp, phi1_target, phi1_perp, a0
+    
     # Normalize by total P to get expectation
-    proj3_target = (proj3_target_sum / P_total).cpu().numpy()
-    proj3_perp = (proj3_perp_sum / P_total).cpu().numpy()
-    proj1_target = (proj1_target_sum / P_total).cpu().numpy()
-    proj1_perp = (proj1_perp_sum / P_total).cpu().numpy()
+    proj3_target = proj3_target_sum
+    proj3_perp = proj3_perp_sum
+    proj1_target = proj1_target_sum
+    proj1_perp = proj1_perp_sum
 
-    # Summary stats over ensembles and neurons
+    # Save all h3 projections as eigenvalues: target and d-1 degenerate perp
+    # For each ensemble and neuron, treat target as the first eigenvalue, and perp as (d-1) degenerate eigenvalues
+    # Shape: (ens, n1)
+    eig_target1 = proj1_target.var().cpu().numpy().flatten()  # shape (ens*n1,)
+    eig_perp1 = proj1_perp.var().cpu().numpy().flatten()      # shape (ens*n1,)
+    eig_target3 = proj3_target.var().cpu().numpy().flatten()  # shape (ens*n1,)
+    eig_perp3 = proj3_perp.var().cpu().numpy().flatten()      # shape (ens*n1,)
+    d_minus_1 = d - 1
+
+    # Eigenvalues: [target, perp, perp, ..., perp] (d-1 times)
+    eigenvalues = np.concatenate([eig_target1, np.tile(eig_perp1, d_minus_1), eig_target3, np.tile(eig_perp3, d**3 - 1)]).flatten()
+
     stats = {
         "ens": int(ens),
         "n1": int(n1),
@@ -270,30 +285,36 @@ def compute_h3_projections_streaming(
         "perp_dim": int(perp_dim),
         "h3": {
             "target": {
-                "mean": float(np.mean(proj3_target)),
-                "std": float(np.std(proj3_target)),
-                "var": float(np.var(proj3_target)),
+                "mean": float(torch.mean(proj3_target).item()),
+                "std": float(torch.std(proj3_target).item()),
+                "var": float(proj3_target.var().item()),
+                "second_moment": float(second_moment(proj3_target).item()),
             },
             "perp": {
-                "mean": float(np.mean(proj3_perp)),
-                "std": float(np.std(proj3_perp)),
-                "var": float(np.var(proj3_perp)),
+                "mean": float(torch.mean(proj3_perp).item()),
+                "std": float(torch.std(proj3_perp).item()),
+                "var": float(proj3_perp.var().item()),
+                "second_moment": float(second_moment(proj3_perp).item()),
             },
         },
         "h1": {
             "target": {
-                "mean": float(np.mean(proj1_target)),
-                "std": float(np.std(proj1_target)),
-                "var": float(np.var(proj1_target)),
+                "mean": float(torch.mean(proj1_target).item()),
+                "std": float(torch.std(proj1_target).item()),
+                "var": float(proj1_target.var().item()),
+                "second_moment": float(second_moment(proj1_target).item()),
             },
             "perp": {
-                "mean": float(np.mean(proj1_perp)),
-                "std": float(np.std(proj1_perp)),
-                "var": float(np.var(proj1_perp)),
+                "mean": float(torch.mean(proj1_perp).item()),
+                "std": float(torch.std(proj1_perp).item()),
+                "var": float(proj1_perp.var().item()),
+                "second_moment": float(second_moment(proj1_perp).item()),
             },
         },
+        "h3_eigenvalues": eigenvalues.tolist(),
+        "h3_target_eigenvalues": eig_target3.tolist(),
+        "h3_perp_eigenvalues": eig_perp3.tolist(),
     }
-
     return stats
 
 
@@ -302,6 +323,14 @@ def save_stats(run_dir: Path, stats: dict):
     with open(out_path, "w") as f:
         json.dump(stats, f, indent=2)
     print(f"Saved: {out_path}")
+
+
+def arcsin_kernel(X: torch.Tensor) -> torch.Tensor:
+    XXT = torch.einsum('ui,vi->uv', X, X) / X.shape[1]
+    diag = torch.sqrt((1 + 2 * XXT).diag())
+    denom = diag[:, None] * diag[None, :]
+    arg = 2 * XXT / denom
+    return (2 / torch.pi) * torch.arcsin(arg)
 
 
 def main():
@@ -321,13 +350,18 @@ def main():
     parser.add_argument("--batch_size", type=int, default=5000, help="Batch size for streaming")
     parser.add_argument("--perp_dim", type=int, default=1, help="Perpendicular dimension index")
     parser.add_argument("--device", type=str, default=None, help="Device (default: cuda if available)")
-    parser.add_argument("--use-cache", action="store_true", help="Skip computation and plot from cached JSON files")
+    parser.add_argument("--use-cache", action="store_true", help="Skip computation and plot from cached JSON files")when 
     args = parser.parse_args()
 
     device = torch.device(args.device) if args.device else (
         torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     )
-
+    
+    # args.runs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_0_eps_0.03']
+    # args.runs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_2_eps_0.03',
+    #             '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_1_eps_0.03',
+    #             '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_3_eps_0.03']
+    
     # Skip computation if using cache
     if not args.use_cache:
         for run in args.runs:
@@ -338,123 +372,184 @@ def main():
             print(f"Processing: {run_dir}")
             try:
                 model = load_model_from_run(run_dir, device)
-                d = model.d
                 stats = compute_h3_projections_streaming(
-                    model,
-                    d=d,
-                    P_total=args.P_total,
-                    batch_size=args.batch_size,
-                    device=device,
-                    perp_dim=args.perp_dim,
+                    model, 
+                    model.d, 
+                    args.P_total, 
+                    args.batch_size, 
+                    device, 
+                    args.perp_dim
                 )
-
-                # Compute theory via Julia solver
-                d_run, P_run, N_run, chi_run, kappa_run, eps_run = parse_run_params(run_dir)
-                d_theory = d_run if d_run is not None else d
-                P_theory = P_run if P_run is not None else args.P_total
-                n1_theory = N_run if N_run is not None else model.n1
-                chi_theory = chi_run if chi_run is not None else 1.0
-                kappa_theory = kappa_run if kappa_run is not None else (1.0 / chi_theory)
-                try:
-                    theory = compute_theory_with_julia(
-                        d_theory,
-                        n1_theory,
-                        P_theory,
-                        chi_theory,
-                        kappa_theory,
-                        eps_run,
-                    )
-                    stats["theory"] = theory
-                except Exception as e_compute:
-                    print(f"Theory computation failed for {run_dir}: {e_compute}")
-
-                # Add seed if parseable
-                mseed = re.search(r"seed_(\d+)", run_dir.name)
-                if mseed:
-                    stats["seed"] = int(mseed.group(1))
                 save_stats(run_dir, stats)
-                print(
-                    f"Summary - h3 perp var: {stats['h3']['perp']['var']:.6e}, h1 perp var: {stats['h1']['perp']['var']:.6e}"
-                )
             except Exception as e:
+                print(f"Error processing {run_dir}: {e}")
                 traceback.print_exc()
-                print(f"Failed on {run_dir}: {e}")
-    else:
-        print("Using cached projection data (--use-cache enabled)")
+                continue
+
+    # Process cached results and add theory
+    for run in args.runs:
+        run_dir = Path(run)
+        rp = run_dir / "h3_projections.json"
+        if not rp.exists():
+            print(f"No cached projections for {run_dir}")
+            continue
+        with open(rp, "r") as f:
+            stats = json.load(f)
+        
+        # Parse run params
+        d, P, N, chi, kappa, eps = parse_run_params(run_dir)
+        if d is None or P is None or N is None or chi is None or kappa is None:
+            print(f"Missing params for {run_dir}")
+            continue
+        
+        # --- Compute 5K x 5K arcsin kernel eigenvalues for kappa bare ---
+        np.random.seed(0)
+        X = np.random.randn(5000, d).astype(np.float32)
+        X_torch = torch.from_numpy(X)
+        K = arcsin_kernel(X_torch)
+        eigvals = torch.linalg.eigvalsh(K).cpu().numpy() / 5000.0
+        stats["arcsin_kernel_eigenvalues"] = eigvals.tolist()
+        
+        # --- Bare theory eigenvalues ---
+        try:
+            theory = compute_theory_with_julia(d, N, P, chi, kappa, eps)
+            stats["theory_bare"] = theory
+        except Exception as e:
+            print(f"Theory computation failed for {run_dir}: {e}")
+            continue
+        
+        # --- Kappa correction: run self-consistent solver ---
+        with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tf:
+            eig_json = tf.name
+        # Use arcsin kernel eigenvalues for kappa bare
+        eigenvalues = eigvals.tolist()
+        with open(eig_json, "w") as f2:
+            json.dump({"eigenvalues": eigenvalues, "kappa_bare": kappa}, f2)
+        sc_cmd = [
+            "julia", str(Path(__file__).parent.parent.parent / "julia_lib" / "self_consistent_kappa_solver.jl"),
+            eig_json, str(P)
+        ]
+        try:
+            sc_out = subprocess.check_output(sc_cmd, text=True)
+            match = re.search(r"kappa_eff = ([0-9.eE+-]+)", sc_out)
+            if match:
+                kappa_eff = float(match.group(1))
+                print(f"  Found kappa_eff: {kappa_eff:.6f} for {run_dir}")
+            else:
+                print(f"Warning: could not parse kappa_eff from self-consistent solver output for {run_dir}.")
+                kappa_eff = kappa
+        except Exception as e:
+            print(f"Self-consistent solver failed for {run_dir}: {e}")
+            kappa_eff = kappa
+        
+        # --- Rerun theory with kappa_eff ---
+        try:
+            theory_eff = compute_theory_with_julia(d, N, P, chi, kappa_eff, eps)
+            stats["theory_kappa_eff"] = theory_eff
+            stats["kappa_eff"] = kappa_eff
+        except Exception as e:
+            print(f"Theory (kappa_eff) computation failed for {run_dir}: {e}")
+        
+        # Save updated stats
+        save_stats(run_dir, stats)
 
     # Aggregate and plot across runs
-    try:
-        labels = []
-        h3_target_vars = []
-        h3_perp_vars = []
-        h1_target_vars = []
-        h1_perp_vars = []
-        theory_h3_target = None
-        theory_h3_perp = None
-        theory_h1_target = None
-        theory_h1_perp = None
-        for run in args.runs:
-            rp = Path(run) / "h3_projections.json"
-            if not rp.exists():
-                continue
-            with open(rp, "r") as f:
-                s = json.load(f)
-            lbl = re.search(r"seed_(\d+)", Path(run).name)
-            labels.append(lbl.group(1) if lbl else Path(run).name)
-            h3_target_vars.append(s["h3"]["target"]["var"])
-            h3_perp_vars.append(s["h3"]["perp"]["var"])
-            h1_target_vars.append(s["h1"]["target"]["var"])
-            h1_perp_vars.append(s["h1"]["perp"]["var"])
-            theory_block = s.get("theory", {})
-            target_block = theory_block.get("target", {}) if isinstance(theory_block, dict) else {}
-            perp_block = theory_block.get("perpendicular", {}) if isinstance(theory_block, dict) else {}
-            theory_h3_target = target_block.get("lJ3T", theory_h3_target)
-            theory_h1_target = target_block.get("lJ1T", theory_h1_target)
-            theory_h3_perp = perp_block.get("lJ3P", theory_h3_perp)
-            theory_h1_perp = perp_block.get("lJ1P", theory_h1_perp)
+    labels = []
+    h3_target_vars = []
+    h3_perp_vars = []
+    h1_target_vars = []
+    h1_perp_vars = []
+    theory_eff_h3_target = None
+    theory_eff_h3_perp = None
+    theory_eff_h1_target = None
+    theory_eff_h1_perp = None
+    theory_bare_h3_target = None
+    theory_bare_h3_perp = None
+    theory_bare_h1_target = None
+    theory_bare_h1_perp = None
+    
+    for run in args.runs:
+        rp = Path(run) / "h3_projections.json"
+        if not rp.exists():
+            continue
+        with open(rp, "r") as f:
+            s = json.load(f)
+        lbl = re.search(r"seed_(\d+)", Path(run).name)
+        labels.append(lbl.group(1) if lbl else Path(run).name)
+        h3_target_vars.append(s["h3"]["target"]["var"])
+        h3_perp_vars.append(s["h3"]["perp"]["var"])
+        h1_target_vars.append(s["h1"]["target"]["var"])
+        h1_perp_vars.append(s["h1"]["perp"]["var"])
+        
+        # Get theory_kappa_eff predictions
+        theory_eff_block = s.get("theory_kappa_eff", {})
+        target_eff_block = theory_eff_block.get("target", {}) if isinstance(theory_eff_block, dict) else {}
+        perp_eff_block = theory_eff_block.get("perpendicular", {}) if isinstance(theory_eff_block, dict) else {}
+        theory_eff_h3_target = target_eff_block.get("lJ3T", theory_eff_h3_target)
+        theory_eff_h1_target = target_eff_block.get("lJ1T", theory_eff_h1_target)
+        theory_eff_h3_perp = perp_eff_block.get("lJ3P", theory_eff_h3_perp)
+        theory_eff_h1_perp = perp_eff_block.get("lJ1P", theory_eff_h1_perp)
+        
+        # Get theory_bare predictions
+        theory_bare_block = s.get("theory_bare", {})
+        target_bare_block = theory_bare_block.get("target", {}) if isinstance(theory_bare_block, dict) else {}
+        perp_bare_block = theory_bare_block.get("perpendicular", {}) if isinstance(theory_bare_block, dict) else {}
+        theory_bare_h3_target = target_bare_block.get("lJ3T", theory_bare_h3_target)
+        theory_bare_h1_target = target_bare_block.get("lJ1T", theory_bare_h1_target)
+        theory_bare_h3_perp = perp_bare_block.get("lJ3P", theory_bare_h3_perp)
+        theory_bare_h1_perp = perp_bare_block.get("lJ1P", theory_bare_h1_perp)
 
-        if labels:
+    if labels:
+        try:
             x = np.arange(len(labels))
             fig, axes = plt.subplots(2, 2, figsize=(14, 10), sharex=True)
             
             # He3 Target subplot
             axes[0, 0].bar(x, h3_target_vars, color="#4C78A8")
-            if theory_h3_target is not None:
-                axes[0, 0].axhline(theory_h3_target, color="#E45756", linestyle="--", label="Theory (target)")
+            if theory_eff_h3_target is not None:
+                axes[0, 0].axhline(theory_eff_h3_target, color="#E45756", linestyle="--", label="Theory (κ_eff)")
+            if theory_bare_h3_target is not None:
+                axes[0, 0].axhline(theory_bare_h3_target, color="#F58518", linestyle=":", label="Theory (κ_bare)")
             axes[0, 0].set_title("He3 Projections (target)")
             axes[0, 0].set_ylabel("Variance")
-            if theory_h3_target is not None:
+            if theory_eff_h3_target is not None or theory_bare_h3_target is not None:
                 axes[0, 0].legend()
 
             # He3 Perp subplot
             axes[0, 1].bar(x, h3_perp_vars, color="#4C78A8")
-            if theory_h3_perp is not None:
-                axes[0, 1].axhline(theory_h3_perp, color="#E45756", linestyle="--", label="Theory (perp)")
+            if theory_eff_h3_perp is not None:
+                axes[0, 1].axhline(theory_eff_h3_perp, color="#E45756", linestyle="--", label="Theory (κ_eff)")
+            if theory_bare_h3_perp is not None:
+                axes[0, 1].axhline(theory_bare_h3_perp, color="#F58518", linestyle=":", label="Theory (κ_bare)")
             axes[0, 1].set_title("He3 Projections (perp)")
             axes[0, 1].set_ylabel("Variance")
-            if theory_h3_perp is not None:
+            if theory_eff_h3_perp is not None or theory_bare_h3_perp is not None:
                 axes[0, 1].legend()
 
             # He1 Target subplot
             axes[1, 0].bar(x, h1_target_vars, color="#72B7B2")
-            if theory_h1_target is not None:
-                axes[1, 0].axhline(theory_h1_target, color="#E45756", linestyle="--", label="Theory (target)")
+            if theory_eff_h1_target is not None:
+                axes[1, 0].axhline(theory_eff_h1_target, color="#E45756", linestyle="--", label="Theory (κ_eff)")
+            if theory_bare_h1_target is not None:
+                axes[1, 0].axhline(theory_bare_h1_target, color="#F58518", linestyle=":", label="Theory (κ_bare)")
             axes[1, 0].set_title("He1 Projections (target)")
             axes[1, 0].set_ylabel("Variance")
             axes[1, 0].set_xticks(x)
             axes[1, 0].set_xticklabels(labels)
-            if theory_h1_target is not None:
+            if theory_eff_h1_target is not None or theory_bare_h1_target is not None:
                 axes[1, 0].legend()
 
             # He1 Perp subplot
             axes[1, 1].bar(x, h1_perp_vars, color="#72B7B2")
-            if theory_h1_perp is not None:
-                axes[1, 1].axhline(theory_h1_perp, color="#E45756", linestyle="--", label="Theory (perp)")
+            if theory_eff_h1_perp is not None:
+                axes[1, 1].axhline(theory_eff_h1_perp, color="#E45756", linestyle="--", label="Theory (κ_eff)")
+            if theory_bare_h1_perp is not None:
+                axes[1, 1].axhline(theory_bare_h1_perp, color="#F58518", linestyle=":", label="Theory (κ_bare)")
             axes[1, 1].set_title("He1 Projections (perp)")
             axes[1, 1].set_ylabel("Variance")
             axes[1, 1].set_xticks(x)
             axes[1, 1].set_xticklabels(labels)
-            if theory_h1_perp is not None:
+            if theory_eff_h1_perp is not None or theory_bare_h1_perp is not None:
                 axes[1, 1].legend()
 
             fig.tight_layout()
@@ -462,8 +557,24 @@ def main():
             fig.savefig(out_plot, dpi=150)
             plt.close(fig)
             print(f"Saved summary plot: {out_plot}")
-    except Exception as e:
-        print(f"Plotting failed: {e}")
+
+            # Save a JSON config with the image path and models used
+            summary_json = Path(__file__).parent / "h_projections_summary.json"
+            from argparse import Namespace
+            # Try to get args from outer scope if possible
+            try:
+                models = args.runs if 'args' in locals() else []
+            except Exception:
+                models = []
+            summary = {
+                "image": str(out_plot.name),
+                "models": models
+            }
+            with open(summary_json, "w") as f:
+                json.dump(summary, f, indent=2)
+            print(f"Saved summary config: {summary_json}")
+        except Exception as e:
+            print(f"Plotting failed: {e}")
 
 
 if __name__ == "__main__":

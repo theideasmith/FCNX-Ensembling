@@ -24,17 +24,19 @@ import torch
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
-from FCN3Network import FCN3NetworkActivationGeneric
+from FCN2Network import FCN2NetworkActivationGeneric
 
 DEVICE_DEFAULT = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def parse_config_from_dirname(dirname: str) -> Dict[str, float]:
-    """Parse d, P, N, chi from directory name pattern: d<d>_P<P>_N<N>_chi<chi>..."""
+    """Parse d, P, N, chi, T from directory name pattern: d<d>_P<P>_N<N>_chi<chi>_lr<lr>_T<T>..."""
     import re
     dirname_str = str(Path(dirname).name) if Path(dirname).is_dir() else str(Path(dirname).parent.name)
-    pattern = r"d(\d+)_P(\d+)_N(\d+)_chi([\d.]+)"
+    pattern = r"d(\d+)_P(\d+)_N(\d+)_chi_([\d.]+).*_T_([\d.]+)"
+
     m = re.search(pattern, dirname_str)
+    print("FOUND MATCH:", m)
     if not m:
         raise ValueError(f"Could not parse config from {dirname}")
     
@@ -42,11 +44,12 @@ def parse_config_from_dirname(dirname: str) -> Dict[str, float]:
     P = int(m.group(2))
     N = int(m.group(3))
     chi = float(m.group(4))
+    T = float(m.group(5))
     
-    return {"d": d, "P": P, "N": N, "chi": chi}
+    return {"d": d, "P": P, "N": N, "chi": chi, "T": T}
 
 
-def load_model(model_dir: Path, config: Dict[str, int], device: torch.device) -> FCN3NetworkActivationGeneric:
+def load_model(model_dir: Path, config: Dict[str, int], device: torch.device) -> FCN2NetworkActivationGeneric:
     """Load FCN3 model from directory."""
     model_path = model_dir / "model.pt"
     if not model_path.exists():
@@ -62,9 +65,9 @@ def load_model(model_dir: Path, config: Dict[str, int], device: torch.device) ->
     state_dict = torch.load(model_path, map_location=device)
     ens = int(state_dict['W0'].shape[0])
     
-    weight_var = (1.0 / d, 1.0 / N, 1.0 / (N * chi))
-    model = FCN3NetworkActivationGeneric(
-        d=d, n1=N, n2=N, P=P, ens=ens,
+    weight_var = (1.0 / d, 1.0 / (N * chi))
+    model = FCN2NetworkActivationGeneric(
+        d=d, n1=N, P=P, ens=ens,
         activation="erf",
         weight_initialization_variance=weight_var,
     ).to(device)
@@ -75,97 +78,53 @@ def load_model(model_dir: Path, config: Dict[str, int], device: torch.device) ->
     return model
 
 
-def j_random_QB_activation_generic(model, X, k=2000, p=10):
-    """Low-rank QB approximation for J kernel using h0 activations."""
-    with torch.no_grad():
-        l = k + p
-        h0 = model.h0_activation(X)  # (N, ens, n1)
-        Omega = torch.randn((X.shape[0], l), device=model.device, dtype=h0.dtype)
-
-        res = torch.zeros((X.shape[0], l), device=model.device, dtype=h0.dtype)
-        chunk_size = 4096
-        N = X.shape[0]
-        for start in range(0, N, chunk_size):
-            end = min(start + chunk_size, N)
-            batch_h0 = h0[start:end]
-            res[start:end] = torch.einsum('bqk,Nqk,Nl->bl', batch_h0, h0, Omega) / (model.ens * model.n1)
-
-        Q, _ = torch.linalg.qr(res)
-
-        Z = torch.zeros((X.shape[0], l), device=model.device, dtype=h0.dtype)
-        for start in range(0, N, chunk_size):
-            end = min(start + chunk_size, N)
-            batch_h0 = h0[start:end]
-            K_uv = torch.einsum('bqk,Nqk->bN', batch_h0, h0) / (model.ens * model.n1)
-            Z[start:end] = torch.matmul(K_uv, Q)
-
-        return Q, Z
-
-
-def compute_empirical_j_eigenvalues(
-    model: FCN3NetworkActivationGeneric,
+def compute_empirical_eigenvalues(
+    model: FCN2NetworkActivationGeneric,
     d: int,
     device: torch.device,
     p_large: int = 10_000
-) -> Tuple[float, float, float, float]:
+) -> np.ndarray:
     """
-    Compute empirical J kernel eigenvalues (lJ1T, lJ1P, lJ3T, lJ3P).
+    Compute empirical H kernel eigenvalues.
+    
+    Generates random input data X, computes the H_Kernel (pre-activation kernel),
+    and returns all eigenvalues.
     
     Returns:
-        (lJ1T, lJ1P, lJ3T, lJ3P)
+        Array of all eigenvalues from torch.linalg.eigvalsh
     """
     with torch.no_grad():
         model.to(device)
         model.device = device
 
+        # Generate random input data
         X = torch.randn(p_large, d, device=device)
-        Y1 = X
-        Y3 = (X ** 3 - 3.0 * X) / 6.0**0.5
-
-        # Low-rank approximation QB for J kernel
-        Q, Z = j_random_QB_activation_generic(model, X, k=9000, p=10)
-        Ut, _S, V = torch.linalg.svd(Z.T)
-        m, n = Z.shape[1], Z.shape[0]
-        k_eff = min(m, n)
-        Sigma = torch.zeros(m, n, device=Z.device, dtype=Z.dtype)
-        Sigma[:k_eff, :k_eff] = torch.diag(_S[:k_eff])
-        U = torch.matmul(Q, Ut)
-
-        # Left eigenvalues for Y1 via J_eig
-        Y1_norm = Y1 / torch.norm(Y1, dim=0)
-        left_eigenvaluesY1 = model.J_eig(X, Y1_norm)
-
-        # Left eigenvalues for Y3 via projection through U, Sigma
-        Y3_norm = Y3 / torch.norm(Y3, dim=0)
-        proj = (Y3_norm.t() @ U)
-        left_Y3_mat = proj @ torch.diag(_S[:k_eff]) @ (U.t() @ Y3_norm)
-        left_eigenvaluesY3 = left_Y3_mat.diagonal() / torch.norm(Y3_norm, dim=0) / X.shape[0]
-
-        # Extract target (first) and perpendicular (rest) eigenvalues
-        # For Y1: target is first, perpendicular are indices 1:d
-        lJ1T = float(left_eigenvaluesY1[0].cpu().numpy())
-        lJ1P = float(left_eigenvaluesY1[1].cpu().numpy()) if len(left_eigenvaluesY1) > 1 else lJ1T
         
-        # For Y3: target is at index d, perpendicular are after that
-        lJ3T = float(left_eigenvaluesY3[d].cpu().numpy()) if len(left_eigenvaluesY3) > d else float('nan')
-        lJ3P = float(left_eigenvaluesY3[d + 1].cpu().numpy()) if len(left_eigenvaluesY3) > d + 1 else lJ3T
-
-        return lJ1T, lJ1P, lJ3T, lJ3P
+        # Compute H kernel
+        K = model.H_Kernel(X, avg_ens=True)  # (P, P)
+        
+        # Get all eigenvalues
+        eigs = torch.linalg.eigvalsh(K)  / p_large # (P,)
+        
+        return eigs.cpu().numpy()
 
 
 def call_self_consistent_solver(
-    d: int,
+    eigenvalues: np.ndarray,
     P: int,
-    N: int,
-    chi: float,
-    lJ1T: float,
-    lJ1P: float,
-    lJ3T: float,
-    lJ3P: float,
-    epsilon: float = 0.03,
+    kappa_bare: float = None,
 ) -> Optional[float]:
     """
     Call self_consistent_kappa_solver.jl and extract the resulting kappa.
+    
+    The solver expects:
+    - A JSON file with {"eigenvalues": [...], "kappa_bare": <value>}
+    - P as a command-line argument
+    
+    Args:
+        eigenvalues: Array of eigenvalues from H_Kernel
+        P: Number of samples used to compute kernel
+        kappa_bare: Bare kappa value. If None, uses mean of eigenvalues.
     
     Returns:
         kappa value from solver output, or None if solver failed
@@ -176,48 +135,51 @@ def call_self_consistent_solver(
         print(f"Warning: Julia solver not found at {julia_script}")
         return None
     
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
-        out_path = Path(tf.name)
-    
-    cmd = [
-        "julia",
-        str(julia_script),
-        f"--d={d}",
-        f"--P={P}",
-        f"--n1={N}",
-        f"--n2={N}",
-        f"--chi={chi}",
-        f"--epsilon={epsilon}",
-        f"--lJ1T={lJ1T}",
-        f"--lJ1P={lJ1P}",
-        f"--lJ3T={lJ3T}",
-        f"--lJ3P={lJ3P}",
-        f"--to={out_path}",
-    ]
+
+    # Create JSON file with eigenvalues and kappa_bare
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode='w') as tf:
+        json.dump({
+            "eigenvalues": eigenvalues.tolist(),
+            "kappa_bare": float(kappa_bare)
+        }, tf)
+        eig_json = Path(tf.name)
     
     try:
+        cmd = [
+            "julia",
+            str(julia_script),
+            str(eig_json),
+            str(P)
+        ]
+        
+        print(f"Running Julia command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, timeout=300, text=True)
         print(f"Julia solver output:\n{result.stdout}")
         
-        with open(out_path, "r") as f:
-            output = json.load(f)
-        
-        kappa = output.get("kappa")
-        if kappa is not None:
+        # Parse kappa_eff from stdout (format: "kappa_eff = <value>")
+        import re
+        match = re.search(r"kappa_eff\s*=\s*([-0-9.eE+]+)", result.stdout)
+        if match:
+            kappa = float(match.group(1))
             print(f"Self-consistent kappa: {kappa}")
-            return float(kappa)
+            return kappa
         else:
-            print("Warning: kappa not found in solver output")
+            print("Warning: kappa_eff not found in solver output")
             return None
     except subprocess.TimeoutExpired:
         print("Error: Julia solver timed out")
+        return None
+    except subprocess.CalledProcessError as e:
+        print(f"Error calling Julia solver: {e}")
+        print(f"stderr: {e.stderr}")
+        print(f"stdout: {e.stdout}")
         return None
     except Exception as e:
         print(f"Error calling Julia solver: {e}")
         return None
     finally:
         try:
-            out_path.unlink(missing_ok=True)
+            eig_json.unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -229,7 +191,6 @@ def main():
     parser.add_argument("--model-dir", type=Path, required=True, help="Path to model directory")
     parser.add_argument("--dataset-size", type=int, required=True, help="Size of original dataset (not used currently)")
     parser.add_argument("--device", type=str, default=None, help="Device string (cuda:0 or cpu)")
-    parser.add_argument("--epsilon", type=float, default=0.03, help="Cubic coupling parameter")
     parser.add_argument("--p-large", type=int, default=10000, help="Size of random dataset for eigenvalue computation")
     
     args = parser.parse_args()
@@ -241,30 +202,28 @@ def main():
     config = parse_config_from_dirname(str(model_dir))
     print(f"Parsed config: {config}")
     
+    # Extract kappa_bare from T/2
+    kappa_bare = config["T"] / 2.0
+    print(f"Extracted kappa_bare = T/2 = {config['T']}/2 = {kappa_bare}")
+    
     model = load_model(model_dir, config, device)
     print(f"Model loaded: {model}")
     
-    print(f"\nComputing empirical J eigenvalues (p_large={args.p_large})...")
-    lJ1T, lJ1P, lJ3T, lJ3P = compute_empirical_j_eigenvalues(
+    print(f"\nComputing empirical H kernel eigenvalues (p_large={args.p_large})...")
+    eigenvalues = compute_empirical_eigenvalues(
         model, config["d"], device, p_large=args.p_large
     )
-    print(f"Empirical eigenvalues:")
-    print(f"  lJ1T = {lJ1T:.6e}")
-    print(f"  lJ1P = {lJ1P:.6e}")
-    print(f"  lJ3T = {lJ3T:.6e}")
-    print(f"  lJ3P = {lJ3P:.6e}")
+    print(f"Eigenvalues computed:")
+    print(f"  Shape: {eigenvalues.shape}")
+    print(f"  Max: {eigenvalues.max():.6e}")
+    print(f"  Min: {eigenvalues.min():.6e}")
+    print(f"  Mean: {eigenvalues.mean():.6e}")
     
     print(f"\nCalling self-consistent kappa solver...")
     kappa = call_self_consistent_solver(
-        d=config["d"],
+        eigenvalues=eigenvalues,
         P=config["P"],
-        N=config["N"],
-        chi=config["chi"],
-        lJ1T=lJ1T,
-        lJ1P=lJ1P,
-        lJ3T=lJ3T,
-        lJ3P=lJ3P,
-        epsilon=args.epsilon,
+        kappa_bare=kappa_bare,
     )
     
     if kappa is not None:
