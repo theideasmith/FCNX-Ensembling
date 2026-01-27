@@ -55,6 +55,7 @@ def call_julia_theory(script_name, args_dict, quiet=True):
         cmd += ['--to', str(tmp_path)]
         if quiet:
             cmd.append('--quiet')
+        print("Running Julia command:", ' '.join(cmd))
         subprocess.run(cmd, check=True, capture_output=True)
         with open(tmp_path, 'r') as f:
             result = json.load(f)
@@ -67,9 +68,9 @@ def call_julia_theory(script_name, args_dict, quiet=True):
             pass
 
 def compute_fcn2_erf_cubic_eigs(d, n1, P, chi, kappa, epsilon=0.0, quiet=True):
-    args = dict(d=d, n1=n1, P=P, chi=chi, kappa=kappa, epsilon=epsilon)
+    args = dict(d=str(d), n1=str(n1), P=str(P), chi=str(chi), kappa=str(kappa), epsilon=str(epsilon))
     return call_julia_theory('compute_fcn2_erf_cubic_eigs.jl', args, quiet=quiet)
 
 def compute_fcn2_erf_eigs(d, n1, P, chi, kappa, epsilon=0.0, quiet=True):
-    args = dict(d=d, n1=n1, P=P, chi=chi, kappa=kappa, epsilon=epsilon)
+    args = dict(d=str(d), n1=str(n1), P=str(P), chi=str(chi), kappa=str(kappa), epsilon=str(epsilon))
     return call_julia_theory('compute_fcn2_erf_eigs.jl', args, quiet=quiet)

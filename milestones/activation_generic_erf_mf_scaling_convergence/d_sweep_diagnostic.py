@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 import subprocess
 import tempfile
 from typing import Dict, Optional
-
+import traceback
 # Set default dtype to float32
 torch.set_default_dtype(torch.float32)
 
@@ -171,7 +171,7 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 print(f"  Epoch {0:7d} (init): max_eig={eigenvalues.max():.6f}, mean_eig={eigenvalues[1:].mean():.6f}")
             except Exception as e:
                 print(f"  Warning: Could not compute initial eigenvalues at epoch 0: {e}")
-    
+    loss = None
     for epoch in range(start_epoch, epochs + 1):  # Resume from start_epoch
         # Forward pass (skip for epoch 0)
         if epoch > 0:
@@ -217,27 +217,13 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                     param.add_(-lr * wd * param.data)
                     param.add_(noise)
                         # TensorBoard logging
-        if epoch > 0:
-            writer.add_scalar('Loss/train', loss.item(), epoch)
-        import traceback
+
         # Logging and eigenvalue computation
         log_interval = 5000
-        if epoch % log_interval == 0:
+        if epoch % log_interval == 0 and epoch > 0:
             with torch.no_grad():
-                # Compute eigenvalues
-                try:
-                    
-                    eigenvalues = model.H_eig(Xinf, Xinf).cpu().numpy()
-                    try:
-                        eigenvalues_over_time[epoch] = eigenvalues.tolist()
-                    except Exception as e:
-                        print(f"  Warning: Could not store eigenvalues at epoch {epoch}: {e}")
-                    
-                except Exception as e:
-                    traceback.print_exc()
-                    print(f"  Warning: Could not compute eigenvalues at epoch {epoch}: {e}")
-                    eigenvalues = None
-                
+                writer.add_scalar('Loss/train', loss.item(), epoch)
+
                 # Compute eigenvalues of covariance matrix of readin weights and log to tensorboard
                 # Along ens*N dimension, and choose the d=0, and the average over the remainder
                 try:
@@ -252,106 +238,6 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                     traceback.print_exc()
                     print(f"  Warning: Could not compute/log W0 covariance eigenvalues at epoch {epoch}: {e}")
 
-
-                # Compute and log He1 and He3 projections
-                if False:
-                    try:
-                        output = model.h1_preactivation(Xinf)  # shape: (P, ensemble)
-                        P_dim = output.shape[0]
-                        
-                        # Compute projection directions
-                        x0_target = Xinf[:, 0]
-                        x0_target_normed = x0_target / x0_target.norm() 
-                        x3_perp = Xinf[:, 3] if d > 3 else torch.randn_like(Xinf[:, 0])
-                        x3_perp_normed = x3_perp / x3_perp.norm() 
-                        
-                        # Hermite cubic polynomials for target and perp: (x^3 - 3x)/sqrt(6)
-                        h3_target = (x0_target**3 - 3.0 * x0_target) 
-                        h3_target_normed = h3_target / h3_target.norm() 
-                        h3_perp = (x3_perp**3 - 3.0 * x3_perp)
-                        h3_perp_normed = h3_perp / h3_perp.norm() 
-                        
-                        # Project outputs onto target/perp directions per ensemble
-                        proj_lin_target = torch.einsum('pqn,p->qn', output, x0_target_normed) 
-                        proj_lin_perp = torch.einsum('pqn,p->qn', output, x3_perp_normed) 
-                        proj_cubic_target = torch.einsum('pqn,p->qn', output, h3_target_normed) 
-                        proj_cubic_perp = torch.einsum('pqn,p->qn', output, h3_perp_normed) 
-                        
-                        # Compute variances
-                        var_lin_target = float(torch.var(proj_lin_target).item())
-                        var_lin_perp = float(torch.var(proj_lin_perp).item())
-                        var_cubic_target = float(torch.var(proj_cubic_target).item())
-                        var_cubic_perp = float(torch.var(proj_cubic_perp).item())
-                        
-                        # Log variances to TensorBoard
-                        writer.add_scalar('Projections/He1_target_var', var_lin_target, epoch)
-                        writer.add_scalar('Projections/He1_perp_var', var_lin_perp, epoch)
-                        writer.add_scalar('Projections/He3_target_var', var_cubic_target, epoch)
-                        writer.add_scalar('Projections/He3_perp_var', var_cubic_perp, epoch)
-                        
-                        # Log histograms to TensorBoard
-                        writer.add_histogram('Projections/He1_target', proj_lin_target, epoch)
-                        writer.add_histogram('Projections/He1_perp', proj_lin_perp, epoch)
-                        writer.add_histogram('Projections/He3_target', proj_cubic_target, epoch)
-                        writer.add_histogram('Projections/He3_perp', proj_cubic_perp, epoch)
-                        
-                        print(f"  Variances - He1_target: {var_lin_target:.3g} (theory: {theory_H.get('lH1T', float('nan')):.3g}), He1_perp: {var_lin_perp:.3g} (theory: {theory_H.get('lH1P', float('nan')):.3g}), He3_target: {var_cubic_target:.3g} (theory: {theory_H.get('lH3T', float('nan')):.3g}), He3_perp: {var_cubic_perp:.3g} (theory: {theory_H.get('lH3P', float('nan')):.3g})")
-                    except Exception as e:
-                        traceback.print_exc()
-                        print(f"  Warning: Could not compute/log projections at epoch {epoch}: {e}")
-                
-                # Check if eigenvalues exist before using
-                try:
-                    eigenvalues_exist = eigenvalues is not None
-                except:
-                    eigenvalues_exist = False
-
-
-                if eigenvalues_exist:
-                    writer.add_scalar('Eigenvalues/max', eigenvalues.max(), epoch)
-                    writer.add_scalar('Eigenvalues/mean', eigenvalues[1:].mean(), epoch)
-                
-                if epoch > 0 and epoch % (5 * log_interval) == 0:
-                    losses[epoch] = float(loss_avg)
-                    loss_stds[epoch] = float(loss_std)
-                    
-                    if eigenvalues_exist:
-                        try:
-                            print(f"  Epoch {epoch:7d}: loss={loss_avg:.6e}±{loss_std:.6e}, "
-                                  f"max_eig={eigenvalues.max():.6f}, mean perpeig={eigenvalues[1:].mean():.6f}")
-                        except:
-                            print(f"  Epoch {epoch:7d}: loss={loss_avg:.6e}±{loss_std:.6e}")
-                    else:
-                        print(f"  Epoch {epoch:7d}: loss={loss_avg:.6e}±{loss_std:.6e}")
-                else:
-                    if eigenvalues_exist:
-                        try:
-                            print(f"  Epoch {epoch:7d} (init): max_eig={eigenvalues.max():.6f}, mean perp eig={eigenvalues[1:].mean():.6f}")
-                        except:
-                            pass
-                
-                # Save checkpoint
-                if epoch > 0:
-                    torch.save(model.state_dict(), seed_dir / "model.pt")
-
-                    # Also save intermediate results periodically
-                    try:
-                        with open(seed_dir / "eigenvalues_over_time.json", "w") as f:
-                            json.dump(eigenvalues_over_time, f, indent=2)
-                    except Exception as save_e:
-                        print(f"  Warning: Could not save eigenvalues: {save_e}")
-
-                    with open(seed_dir / "losses.json", "w") as f:
-                        json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
-
-                    # Update config with current epoch and lr
-                    config = {
-                        "d": d, "P": P, "N": N, "kappa": float(kappa),
-                        "lr": float(lr), "epochs": epochs, "chi": chi,
-                        "seed": seed, "ens": ens, "current_epoch": epoch
-                    }
-                    with open(seed_dir / "config.json", "w") as f:
-                        json.dump(config, f, indent=2)
     
     # Save final model
     torch.save(model.state_dict(), seed_dir / "model_final.pt")
