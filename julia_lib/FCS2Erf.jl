@@ -144,7 +144,7 @@ function nlsolve_solver(initial_guess;
             prev_sol = sol.zero
 
             if j == anneal_steps
-                result = sol
+                result = sol.zero
             end
         end
     else 

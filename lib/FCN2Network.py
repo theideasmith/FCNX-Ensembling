@@ -79,27 +79,32 @@ class FCN2NetworkActivationGeneric(nn.Module):
         path_f, _ = contract_path(eq_f, *dummy_f)
         self.forward_path_f = path_f
     
-    def h0_preactivation(self, X):
+    def h0_preactivation(self, X, optimize=True):
         """Compute pre-activation of hidden layer: W0 @ X
         
         Returns:
             h0: shape (P, ens, n1) - pre-activations before activation function
         """
+        if optimize == False:
+            path = None
+        else:
+            path = self.forward_path_h0
+
         h0 = contract(
             'qkl,ul->uqk',
             self.W0, X,
-            optimize=self.forward_path_h0 if self.forward_path_h0 is not None else None,
+            optimize=path,
             backend='torch'
         )
         return h0
     
-    def h0_activation(self, X):
+    def h0_activation(self, X, optimize=True):
         """Compute activation of hidden layer.
         
         Returns:
             a0: shape (P, ens, n1) - activations after activation function
         """
-        h0 = self.h0_preactivation(X)
+        h0 = self.h0_preactivation(X, optimize=optimize)
         
         if self.activation_name == "erf":
             return torch.erf(h0)
@@ -126,7 +131,40 @@ class FCN2NetworkActivationGeneric(nn.Module):
         )
         return output
 
+    def K_eig(self, X, Y, std=False):
+        """Compute trace-normalized eigenvalues of the output kernel K. """
+        
+        with torch.no_grad():
+            f = self.forward(X)  # (P, ens)
+            P_actual = f.shape[0]
+            K_per_ens = contract(
+                'up,vp->uvp',
+                f, f,
+                backend='torch'
+            ) / P_actual  # (P, P, ens)
 
+            # Handle Y shape
+            is_1d = Y.dim() == 1
+            if is_1d:
+                M = Y.shape[0]  # P eigenfunctions
+                Y_matrix = torch.diag(Y)  # (P, P) diagonal matrix
+            else:
+                Y_matrix = Y
+                M = Y.shape[1]  # number of eigenfunction columns
+            # Compute Rayleigh quotients per ensemble: lambda_q[m] = Y[:,m]^T K_q Y[:,m] / ||Y[:,m]||^2
+            numerator = torch.zeros(self.ens, M, device=self.device)
+            for m in range(M):
+                y_m = Y_matrix[:, m]  # (P,)
+                Ky = torch.einsum('uvp,v->up', K_per_ens, y_m)
+                numerator[:, m] = torch.einsum('u,up->p', y_m, Ky) / P_actual
+            y_norms_sq = torch.sum(Y_matrix * Y_matrix, dim=0) / P_actual  # (M,)
+            eigenvalues_per_ens = numerator / y_norms_sq.unsqueeze(0)
+            eigenvalues_mean = torch.mean(eigenvalues_per_ens, dim=0)  # (M,)
+            if std and self.ens > 1:
+                eigenvalues_std = torch.std(eigenvalues_per_ens, dim=0)  / (self.ens) ** 0.5  # (M,)
+                return eigenvalues_mean, eigenvalues_std
+            else:
+                return eigenvalues_mean
     def H_eig(self, X, Y, std=False):
         """Compute trace-normalized eigenvalues of the pre-activation kernel H for hidden layer.
         
@@ -163,7 +201,10 @@ class FCN2NetworkActivationGeneric(nn.Module):
                 'uqk,vqk->quv',
                 h0, h0,
                 backend='torch'
-            ) / (self.n1 * P_actual)
+            ) / (self.n1 * P_actual) 
+
+
+
             
             # Handle Y shape
             is_1d = Y.dim() == 1

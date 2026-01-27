@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Compute batched cubic (He3) projections of hidden-layer activations for saved FCN2 ERF models.
+Compute batched cubic (He3) projections of hidden-layer preactivations for saved FCN3 models.
 
 Loads models from given run directories (containing model state and config),
-streams random inputs X in batches, computes a0 = erf(W0 @ X), and projects onto
-Hermite cubic features in target and perpendicular directions.
+streams random inputs X in batches, computes a1 = preactivation at second layer,
+and projects onto Hermite cubic features in target and perpendicular directions.
 
-Outputs JSON summary per run with mean/std/variance of projections.
+Outputs JSON summary per run with mean/std/variance of projections and comparison plots.
 """
 
 import argparse
@@ -21,114 +21,79 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
-from FCN2Network import FCN2NetworkActivationGeneric
-# Add lib to path
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 from typing import Optional
 import subprocess
 import tempfile
 
 
-def load_model_from_run(run_dir: Path, device: torch.device) -> FCN2NetworkActivationGeneric:
-    """Recreate model from run directory by inferring dimensions and loading weights.
-
-    Prefers config.json if present. Otherwise parses d/N/P/chi from directory name
-    and infers (ens, n1, d) directly from the saved state dict.
-    """
-    # Optional: parse from config.json
-    d = None
-    N = None
-    P = None
-    chi = 1.0
+def load_model_from_run(run_dir: Path, device: torch.device):
+    """Recreate FCN3 model from run directory by loading config and weights."""
     config_path = run_dir / "config.json"
-    if config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                cfg = json.load(f)
-            d = int(cfg.get("d")) if cfg.get("d") is not None else None
-            P = int(cfg.get("P", 0)) or None
-            N = int(cfg.get("N")) if cfg.get("N") is not None else None
-            chi = float(cfg.get("chi", 1.0))
-        except Exception:
-            pass
-
-    # Fallback: parse from directory name
-    if d is None or N is None:
-        m = re.match(
-            r"^d(?P<d>\d+)_P(?P<P>\d+)_N(?P<N>\d+)_chi_(?P<chi>[-+]?\d*\.?\d+)(?:_lr_[^_]+)?(?:_T_[-+]?\d*\.?\d+)?(?:_seed_\d+)?(?:_eps_[-+]?\d*\.?\d+)?$",
-            run_dir.name,
-        )
-        if m:
-            try:
-                d = int(m.group("d"))
-                P = int(m.group("P")) if m.group("P") else None
-                N = int(m.group("N"))
-                chi = float(m.group("chi"))
-            except Exception:
-                # leave as None; will infer from weights
-                pass
-
-    # Locate a saved state dict
+    if not config_path.exists():
+        raise FileNotFoundError(f"No config.json found in {run_dir}")
+    
+    with open(config_path, "r") as f:
+        cfg = json.load(f)
+    
+    d = int(cfg.get("d"))
+    N = int(cfg.get("N"))
+    P = int(cfg.get("P"))
+    ens = int(cfg.get("ens", 1))
+    activation = cfg.get("activation", "erf")
+    
+    # Import FCN3Network
+    from FCN3Network import FCN3NetworkActivationGeneric
+    
+    # Find model file
     state_paths = [
         run_dir / "model_final.pt",
         run_dir / "model.pt",
         run_dir / "checkpoint.pt",
     ]
-    sd = None
+    
+    model_path = None
     for sp in state_paths:
         if sp.exists():
-            sd_raw = torch.load(sp, map_location=device)
-            sd = sd_raw["model_state_dict"] if isinstance(sd_raw, dict) and "model_state_dict" in sd_raw else sd_raw
+            model_path = sp
             break
-    if sd is None or not isinstance(sd, dict):
+    
+    if model_path is None:
         raise FileNotFoundError(f"No loadable model state found in {run_dir}")
-
-    # Infer dimensions from weights if needed
-    if "W0" not in sd:
-        raise KeyError(f"State dict missing 'W0' in {run_dir}")
-    w_shape = sd["W0"].shape  # (ens, n1, d)
-    ens = int(w_shape[0])
-    n1 = int(w_shape[1])
-    d_from_weights = int(w_shape[2])
-    if d is None:
-        d = d_from_weights
-    if N is None:
-        N = n1
-
-    # Standard scaling variances (not used directly since we load weights)
-    sigma_W0_sq = 1.0 / d
-    sigma_A_sq = 1.0 / (N * chi)
-
-    # Instantiate model with inferred dims
-    model = FCN2NetworkActivationGeneric(
-        d=d,
-        n1=N,
-        P=None,
+    
+    # Instantiate model
+    model = FCN3NetworkActivationGeneric(
+        d,
+        N,
+        N,
+        P,
         ens=ens,
-        activation="erf",
-        weight_initialization_variance=(sigma_W0_sq, sigma_A_sq),
-        device=device,
+        activation=activation,
+        device=device
     ).to(device)
-
+    
     # Load weights
-    model.load_state_dict(sd)
-
+    state = torch.load(model_path, map_location=device)
+    if isinstance(state, dict) and "model_state_dict" in state:
+        state = state["model_state_dict"]
+    model.load_state_dict(state)
+    
     # Use float64 for projection accuracy
     model = model.double()
     model.eval()
     return model
 
 
-def parse_run_params(run_dir: Path):
-    """Parse d, P, N, chi, T, kappa, epsilon from directory name or config."""
-    d = None
-    P = None
-    N = None
-    chi = None
-    T = None
-    epsilon = None
+import re
+import json
+from pathlib import Path
 
+def parse_run_params(run_dir: Path):
+    """Parse d, P, N, chi, kappa, epsilon from directory name or config."""
+    # Initialize with default epsilon
+    d = P = N = chi = kappa = None
+    epsilon = 0.03 
+    
+    # 1. Try loading from config.json
     config_path = run_dir / "config.json"
     if config_path.exists():
         try:
@@ -138,57 +103,77 @@ def parse_run_params(run_dir: Path):
             P = int(cfg.get("P")) if cfg.get("P") is not None else None
             N = int(cfg.get("N")) if cfg.get("N") is not None else None
             chi = float(cfg.get("chi")) if cfg.get("chi") is not None else None
-            T = float(cfg.get("temperature")) if cfg.get("temperature") is not None else None
-            epsilon = float(cfg.get("eps")) if cfg.get("eps") is not None else None
+            kappa = float(cfg.get("kappa")) if cfg.get("kappa") is not None else None
+            if cfg.get("eps") is not None:
+                epsilon = float(cfg.get("eps"))
         except Exception:
             pass
 
-    if d is None or N is None or P is None or chi is None:
-        m = re.match(
-            r"^d(?P<d>\d+)_P(?P<P>\d+)_N(?P<N>\d+)_chi_(?P<chi>[-+]?\d*\.?\d+)(?:_lr_[^_]+)?(?:_T_(?P<T>[-+]?\d*\.?\d+))?(?:_seed_\d+)?(?:_eps_(?P<eps>[-+]?\d*\.?\d+))?",
-            run_dir.name,
-        )
-        if m:
-            d = int(m.group("d")) if d is None else d
-            P = int(m.group("P")) if P is None else P
-            N = int(m.group("N")) if N is None else N
-            chi = float(m.group("chi")) if chi is None else chi
-            if T is None and m.group("T") is not None:
-                T = float(m.group("T"))
-            if epsilon is None and m.group("eps") is not None:
-                epsilon = float(m.group("eps"))
+    # 2. Regex fallback for: d100_P1200_N1000_chi10_kappa2.0
+    # Matches integers for d, P, N and floats for chi, kappa
+    pattern = (
+        r"d(?P<d>\d+)_"
+        r"P(?P<P>\d+)_"
+        r"N(?P<N>\d+)_"
+        r"chi(?P<chi>[-+]?\d*\.?\d+)_"
+        r"kappa(?P<kappa>[-+]?\d*\.?\d+)"
+        r"(?:_eps_(?P<eps>[-+]?\d*\.?\d+))?" # Still checks for eps just in case
+    )
 
-    kappa = T / 2.0 if T is not None else (1.0 / chi if chi else None)
+    m = re.search(pattern, run_dir.name)
+    if m:
+        if d is None: d = int(m.group("d"))
+        if P is None: P = int(m.group("P"))
+        if N is None: N = int(m.group("N"))
+        if chi is None: chi = float(m.group("chi"))
+        if kappa is None: kappa = float(m.group("kappa"))
+        # Only override default eps if it exists in the filename
+        if m.group("eps"): epsilon = float(m.group("eps"))
+
+    # 3. Final safety for kappa
+    if kappa is None and chi is not None:
+        kappa = 1.0 / chi
+    
     return d, P, N, chi, kappa, epsilon
 
 
 def compute_theory_with_julia(d: int, n1: int, P: int, chi: float, kappa: float, epsilon: Optional[float] = None):
-    """Invoke Julia cubic eigensolver and return parsed JSON results."""
-    julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "compute_fcn2_erf_cubic_eigs.jl"
+    """Invoke Julia FCN3 eigensolver and return parsed JSON results."""
+    julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf.jl"
     if epsilon is None:
         epsilon = 0.0
+    n2 = n1  # For FCN3, n2 = n1 (unless otherwise specified)
+    b = 4.0 / (3.0 * np.pi)
+    lr = 1e-6
+    max_iter = 6_000_000
+    anneal = True
+    anneal_steps = 30000
+    tol = 1e-12
+    precision = 8
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
         cmd = [
             "julia",
             str(julia_script),
-            "--d",
-            str(d),
-            "--n1",
-            str(n1),
-            "--P",
-            str(P),
-            "--chi",
-            str(chi),
-            "--kappa",
-            str(kappa),
-            "--epsilon",
-            str(epsilon),
-            "--to",
-            str(tmp_path),
-            "--quiet",
+            "--d", str(d),
+            "--kappa", str(kappa),
+            "--epsilon", str(epsilon),
+            "--P", str(P),
+            "--n1", str(n1),
+            "--n2", str(n2),
+            "--chi", str(chi),
+            "--b", str(b),
+            "--lr", str(lr),
+            "--max-iter", str(max_iter),
+            "--anneal-steps", str(anneal_steps),
+            "--tol", str(tol),
+            "--precision", str(precision),
+            "--to", str(tmp_path),
+            "--quiet"
         ]
+        if not anneal:
+            cmd.append("--no-anneal")
         subprocess.run(cmd, check=True, capture_output=True)
         with open(tmp_path, "r") as f:
             result = json.load(f)
@@ -199,12 +184,14 @@ def compute_theory_with_julia(d: int, n1: int, P: int, chi: float, kappa: float,
         except OSError:
             pass
 
+
 def second_moment(projections):
     k = projections.flatten().shape[0]
     return torch.sum(projections**2) / k
-    
+
+
 def compute_h3_projections_streaming(
-    model: FCN2NetworkActivationGeneric,
+    model,
     d: int,
     P_total: int = 2_000_000,
     batch_size: int = 100_000,
@@ -212,8 +199,8 @@ def compute_h3_projections_streaming(
     perp_dim: int = 1,
 ):
     """
-    Stream random inputs and compute cubic projections of hidden-layer activations.
-
+    Stream random inputs and compute cubic projections of hidden-layer preactivations.
+    Uses model.h1_preactivation for FCN3.
     Returns a dict with mean/std/var for target and perpendicular projections.
     """
     assert perp_dim >= 0 and perp_dim < d, f"perp_dim {perp_dim} out of range for d={d}"
@@ -222,6 +209,7 @@ def compute_h3_projections_streaming(
     ens = model.ens
     n1 = model.n1
     model.to(dtype)
+    
     # Accumulators for summed projections over P (He3 and He1)
     proj3_target_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
     proj3_perp_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
@@ -247,16 +235,16 @@ def compute_h3_projections_streaming(
             phi1_target = x0
             phi1_perp = x_perp
             
-            # Hidden activations a0: (bs, ens, n1)
-            a0 = model.h0_activation(X_batch)
+            # Hidden preactivations a1: (bs, ens, n1) - FCN3 uses h1_preactivation
+            a1 = model.h1_preactivation(X_batch)
 
             # Accumulate projections (sum over samples)
-            proj3_target_sum += torch.einsum('pqn,p->qn', a0, phi3_target) / P_total
-            proj3_perp_sum += torch.einsum('pqn,p->qn', a0, phi3_perp) / P_total
-            proj1_target_sum += torch.einsum('pqn,p->qn', a0, phi1_target) / P_total
-            proj1_perp_sum += torch.einsum('pqn,p->qn', a0, phi1_perp) / P_total
+            proj3_target_sum += torch.einsum('pqn,p->qn', a1, phi3_target) / P_total
+            proj3_perp_sum += torch.einsum('pqn,p->qn', a1, phi3_perp) / P_total
+            proj1_target_sum += torch.einsum('pqn,p->qn', a1, phi1_target) / P_total
+            proj1_perp_sum += torch.einsum('pqn,p->qn', a1, phi1_perp) / P_total
             torch.cuda.empty_cache()
-            del X_batch, x0, x_perp, phi3_target, phi3_perp, phi1_target, phi1_perp, a0
+            del X_batch, x0, x_perp, phi3_target, phi3_perp, phi1_target, phi1_perp, a1
     
     # Normalize by total P to get expectation
     proj3_target = proj3_target_sum
@@ -265,16 +253,19 @@ def compute_h3_projections_streaming(
     proj1_perp = proj1_perp_sum
 
     # Save all h3 projections as eigenvalues: target and d-1 degenerate perp
-    # For each ensemble and neuron, treat target as the first eigenvalue, and perp as (d-1) degenerate eigenvalues
-    # Shape: (ens, n1)
-    eig_target1 = proj1_target.var().cpu().numpy().flatten()  # shape (ens*n1,)
-    eig_perp1 = proj1_perp.var().cpu().numpy().flatten()      # shape (ens*n1,)
-    eig_target3 = proj3_target.var().cpu().numpy().flatten()  # shape (ens*n1,)
-    eig_perp3 = proj3_perp.var().cpu().numpy().flatten()      # shape (ens*n1,)
+    eig_target1 = proj1_target.var().cpu().numpy().flatten()
+    eig_perp1 = proj1_perp.var().cpu().numpy().flatten()
+    eig_target3 = proj3_target.var().cpu().numpy().flatten()
+    eig_perp3 = proj3_perp.var().cpu().numpy().flatten()
     d_minus_1 = d - 1
 
     # Eigenvalues: [target, perp, perp, ..., perp] (d-1 times)
-    eigenvalues = np.concatenate([eig_target1, np.tile(eig_perp1, d_minus_1), eig_target3, np.tile(eig_perp3, d**3 - 1)]).flatten()
+    eigenvalues = np.concatenate([
+        eig_target1, 
+        np.tile(eig_perp1, d_minus_1), 
+        eig_target3, 
+        np.tile(eig_perp3, d**3 - 1)
+    ]).flatten()
 
     stats = {
         "ens": int(ens),
@@ -319,7 +310,7 @@ def compute_h3_projections_streaming(
 
 
 def save_stats(run_dir: Path, stats: dict):
-    out_path = run_dir / "h3_projections.json"
+    out_path = run_dir / "h3_projections_fcn3.json"
     with open(out_path, "w") as f:
         json.dump(stats, f, indent=2)
     print(f"Saved: {out_path}")
@@ -334,33 +325,27 @@ def arcsin_kernel(X: torch.Tensor) -> torch.Tensor:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compute He3 projections for FCN2 ERF runs")
+    parser = argparse.ArgumentParser(description="Compute He3 projections for FCN3 runs")
     parser.add_argument(
         "--runs",
         nargs="*",
-        default=[
-            "/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_0_eps_0.03",
-            "/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_1_eps_0.03",
-            "/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_2_eps_0.03",
-            "/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3_eps_0.03",
-        ],
+        default=[],
         help="Run directories to process",
     )
     parser.add_argument("--P_total", type=int, default=2_000_000, help="Total samples (streamed)")
-    parser.add_argument("--batch_size", type=int, default=5000, help="Batch size for streaming")
+    parser.add_argument("--batch_size", type=int, default=100_000, help="Batch size for streaming")
     parser.add_argument("--perp_dim", type=int, default=1, help="Perpendicular dimension index")
     parser.add_argument("--device", type=str, default=None, help="Device (default: cuda if available)")
-    parser.add_argument("--use-cache", action="store_true", help="Skip computation and plot from cached JSON files")when 
+    parser.add_argument("--use-cache", action="store_true", help="Skip computation and plot from cached JSON files")
     args = parser.parse_args()
 
     device = torch.device(args.device) if args.device else (
         torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     )
     
-    # args.runs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_0_eps_0.03']
-    # args.runs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_2_eps_0.03',
-    #             '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_1_eps_0.03',
-    #             '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_3_eps_0.03']
+    if not args.runs:
+        print("No runs specified. Use --runs to provide run directories.")
+        return
     
     # Skip computation if using cache
     if not args.use_cache:
@@ -389,7 +374,7 @@ def main():
     # Process cached results and add theory
     for run in args.runs:
         run_dir = Path(run)
-        rp = run_dir / "h3_projections.json"
+        rp = run_dir / "h3_projections_fcn3.json"
         if not rp.exists():
             print(f"No cached projections for {run_dir}")
             continue
@@ -469,7 +454,7 @@ def main():
     theory_bare_h1_perp = None
     
     for run in args.runs:
-        rp = Path(run) / "h3_projections.json"
+        rp = Path(run) / "h3_projections_fcn3.json"
         if not rp.exists():
             continue
         with open(rp, "r") as f:
@@ -485,19 +470,19 @@ def main():
         theory_eff_block = s.get("theory_kappa_eff", {})
         target_eff_block = theory_eff_block.get("target", {}) if isinstance(theory_eff_block, dict) else {}
         perp_eff_block = theory_eff_block.get("perpendicular", {}) if isinstance(theory_eff_block, dict) else {}
-        theory_eff_h3_target = target_eff_block.get("lJ3T", theory_eff_h3_target)
-        theory_eff_h1_target = target_eff_block.get("lJ1T", theory_eff_h1_target)
-        theory_eff_h3_perp = perp_eff_block.get("lJ3P", theory_eff_h3_perp)
-        theory_eff_h1_perp = perp_eff_block.get("lJ1P", theory_eff_h1_perp)
+        theory_eff_h3_target = target_eff_block.get("lH3T", theory_eff_h3_target)
+        theory_eff_h1_target = target_eff_block.get("lH1T", theory_eff_h1_target)
+        theory_eff_h3_perp = perp_eff_block.get("lH3P", theory_eff_h3_perp)
+        theory_eff_h1_perp = perp_eff_block.get("lH1P", theory_eff_h1_perp)
         
         # Get theory_bare predictions
         theory_bare_block = s.get("theory_bare", {})
         target_bare_block = theory_bare_block.get("target", {}) if isinstance(theory_bare_block, dict) else {}
         perp_bare_block = theory_bare_block.get("perpendicular", {}) if isinstance(theory_bare_block, dict) else {}
-        theory_bare_h3_target = target_bare_block.get("lJ3T", theory_bare_h3_target)
-        theory_bare_h1_target = target_bare_block.get("lJ1T", theory_bare_h1_target)
-        theory_bare_h3_perp = perp_bare_block.get("lJ3P", theory_bare_h3_perp)
-        theory_bare_h1_perp = perp_bare_block.get("lJ1P", theory_bare_h1_perp)
+        theory_bare_h3_target = target_bare_block.get("lH3T", theory_bare_h3_target)
+        theory_bare_h1_target = target_bare_block.get("lH1T", theory_bare_h1_target)
+        theory_bare_h3_perp = perp_bare_block.get("lH3P", theory_bare_h3_perp)
+        theory_bare_h1_perp = perp_bare_block.get("lH1P", theory_bare_h1_perp)
 
     if labels:
         try:
@@ -553,28 +538,28 @@ def main():
                 axes[1, 1].legend()
 
             fig.tight_layout()
-            out_plot = Path(__file__).parent / "h_projections_summary.png"
+            # Save plot to parent directory of first run
+            if args.runs:
+                parent_dir = Path(args.runs[0]).parent
+            else:
+                parent_dir = Path(__file__).parent
+            out_plot = parent_dir / "h_projections_summary_fcn3.png"
             fig.savefig(out_plot, dpi=150)
             plt.close(fig)
             print(f"Saved summary plot: {out_plot}")
 
             # Save a JSON config with the image path and models used
-            summary_json = Path(__file__).parent / "h_projections_summary.json"
-            from argparse import Namespace
-            # Try to get args from outer scope if possible
-            try:
-                models = args.runs if 'args' in locals() else []
-            except Exception:
-                models = []
+            summary_json = parent_dir / "h_projections_summary_fcn3.json"
             summary = {
                 "image": str(out_plot.name),
-                "models": models
+                "models": args.runs
             }
             with open(summary_json, "w") as f:
                 json.dump(summary, f, indent=2)
             print(f"Saved summary config: {summary_json}")
         except Exception as e:
             print(f"Plotting failed: {e}")
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

@@ -30,7 +30,20 @@ model_dirs = [
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_1',
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_2',
 '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3']
+model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_0_eps_0.03', 
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_2_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_1_eps_0.03',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_3_eps_0.03']
+model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/Chi=10/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_0_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/Chi=10/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_2_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/Chi=10/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_1_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/Chi=10/d100_P1500_N1600_chi_10.0_lr_3e-05_T_8.0_seed_3_eps_0.03'] 
 
+
+model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_0_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_2_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_1_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_3_eps_0.03']
 def parse_config_from_dirname(dirname):
     # Example: d150_P600_N700_chi_700.0_lr_0.0003_T_2.0_seed_0
     parts = Path(dirname).name.split('_')
@@ -39,10 +52,13 @@ def parse_config_from_dirname(dirname):
     P = int(parts[1][1:])
     N = int(parts[2][1:])
     chi = float(parts[4][:])
-    return d, P, N, chi
+
+    kappa = float(parts[8]) / 2.0  # kappa = T/2
+
+    return d, P, N, chi, kappa
 
 def load_model(model_dir, device):
-    d, P, N, chi = parse_config_from_dirname(model_dir)
+    d, P, N, chi, kappa = parse_config_from_dirname(model_dir)
     model_path = Path(model_dir) / "model.pt"
     if not model_path.exists():
         model_path = Path(model_dir) / "model_final.pt"
@@ -50,15 +66,15 @@ def load_model(model_dir, device):
         print(f"Model not found in {model_dir}")
         return None, None
     model = FCN2NetworkActivationGeneric(
-        d=d, n1=N, P=P, ens=10, activation="erf",
+        d=d, n1=N, P=P, ens=5, activation="erf",
         weight_initialization_variance=(1/d, 1/(N*chi)), device=device
     )
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict)
     model.eval()
-    return model, (d, P, N, chi)
+    return model, (d, P, N, chi, kappa)
 
-def compute_eigenvalues(model, d, device, num_samples=600):
+def compute_eigenvalues(model, d, device, num_samples=30000):
     X = torch.randn(num_samples, d, device=device)
     eigs = []
     with torch.no_grad():
@@ -86,24 +102,24 @@ def main():
         model, config = load_model(model_dir, device)
         if model is None:
             continue
-        d, P, N, chi = config
-        eigs, stds = compute_eigenvalues(model, d, device, num_samples=5000)
+        d, P, N, chi, kappa = config
+        eigs, stds = compute_eigenvalues(model, d, device, num_samples=10000)
         print(eigs)
         print(model_dir)
         results[model_dir] = {"eigenvalues": eigs, "stds": stds, "config": config}
-        print(f"  P:{P} N:{N} max eig: {np.max(eigs):.6f}, max std: {stds[0]:.6f}, mean eig: {np.mean(eigs[1:(d-1)]):.6f}, std eig: {np.mean(stds[1:(d-1)]):.6f}")
-        xvals.append( P / 600 )
+        print(f"  P:{P} N:{N} kappa:{kappa} max eig: {np.max(eigs):.6f}, max std: {stds[0]:.6f}, mean eig: {np.mean(eigs[1:(d-1)]):.6f}, std eig: {np.mean(stds[1:(d-1)]):.6f}")
+        xvals.append( kappa )
         yvals.append(np.max(eigs))
         ystds.append(stds[0])
         labels.append(f"P: {P}, N:{N}")
         
         # Store per-seed eigenvalues for dataset averaging
-        config_key = (d, P, N, chi)
+        config_key = (d, P, N, chi, kappa)
         if config_key not in results_by_config:
             results_by_config[config_key] = []
         results_by_config[config_key].append(np.max(eigs))
         
-        EK_kappa = 2.0 #P / 600 * 1.0
+        EK_kappa = kappa  # Use experimental kappa from model config
         # --- Run Julia theory solver for kappa=1.0 ---
         import time
         t0 = time.time()
@@ -115,7 +131,7 @@ def main():
         ]
         subprocess.run(julia_cmd, check=True)
         t1 = time.time()
-        print(f"Theory solver (kappa=1.0) took {t1-t0:.2f} seconds.")
+        print(f"Theory solver (kappa={EK_kappa}) took {t1-t0:.2f} seconds.")
         with open(theory_json, "r") as f:
             theory_data = f.read()
         import json
@@ -183,7 +199,7 @@ def main():
     # Solve theory for EK_kappa
     julia_cmd_target = [
         "julia", str(Path(__file__).parent.parent.parent / "julia_lib" / "compute_fcn2_erf_eigs.jl"),
-        "--d", str(100), "--n1", str(800), "--P", str(1200), "--chi", str(80.0), "--kappa", str(2.0), "--output", "theory_target.json"
+        "--d", str(d), "--n1", str(N), "--P", str(P), "--chi", str(chi), "--kappa", str(kappa), "--output", "theory_target.json"
     ]
     subprocess.run(julia_cmd_target, check=True)
     with open("theory_target.json", "r") as f:
@@ -206,8 +222,8 @@ def main():
         config_sterrs = []
         for config_key in sorted(results_by_config.keys()):
             vals = np.array(results_by_config[config_key])
-            d, P, N, chi = config_key
-            config_xvals.append(P / 600)
+            d, P, N, chi, kappa = config_key
+            config_xvals.append(kappa)
             config_means.append(np.mean(vals))
             config_sterrs.append(np.std(vals) / np.sqrt(len(vals)))
         plt.errorbar(config_xvals, config_means, yerr=config_sterrs, fmt='s', color='g', 

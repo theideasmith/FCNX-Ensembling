@@ -26,7 +26,7 @@ from FCN3Network import FCN3NetworkActivationGeneric
 from Experiment import Experiment
 
 POLL_INTERVAL = 5.0  # seconds
-DIMS_DEFAULT = [150]
+DIMS_DEFAULT = [100]
 DEVICE_DEFAULT = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 

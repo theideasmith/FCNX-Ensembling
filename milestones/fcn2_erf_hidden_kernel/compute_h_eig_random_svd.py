@@ -54,12 +54,13 @@ def load_model(run_dir: Path, device: torch.device):
     d = int(config["d"])
     P = int(config["P"])
     N = int(config["N"])
+    chi = float(config.get("chi", 1))
     ens = int(config.get("ens", 50))
 
     model = FCN2NetworkActivationGeneric(
         d, N, P, ens=ens,
         activation="erf",
-        weight_initialization_variance=(1/d, 1/N),
+        weight_initialization_variance=(1/d, 1/(N*chi)),
         device=device,
     ).to(device)
 
@@ -69,12 +70,11 @@ def load_model(run_dir: Path, device: torch.device):
     return model, config
 
 
-def compute_fcs2_eigs(d: int, n1: int, P: int):
+def compute_fcs2_eigs(d: int, n1: int, P: int, kappa: float = 1.0, chi: float = 1.0):
     if not HAS_JULIA:
         raise RuntimeError(f"Julia unavailable: {_JULIA_ERR}")
 
-    chi = float(n1)
-    kappa = 1.0
+    chi = float(chi)
     b = 4.0 / (3.0 * math.pi)
 
     def solve(delta: float, kappa_val: float):
@@ -105,7 +105,7 @@ def compute_fcs2_eigs(d: int, n1: int, P: int):
 
 def julia_init_guess(d: int):
     # Simple positive init to help convergence
-    return juliacall.convert(jl.Vector[jl.Float64], [1.0 / d, 1.0 / d])
+    return juliacall.convert(jl.Vector[jl.Float64], [1.0 / d, 1.0 / d, 1.0/d])
 
 
 def main():
@@ -123,7 +123,10 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() or args.device.startswith("cpu") else "cpu")
 
     # Load model
-    model, config = load_model(run_dir, torch.device("cpu"))  # CPU for stability
+    model, config = load_model(run_dir, device)  # CPU for stability
+    print("Model configuration: ")
+    for k, v in config.items():
+        print(f"  {k}: {v}")
     d = int(config["d"])
 
     print(f"\nComputing H eigenvalues for {run_dir.name}")
@@ -132,7 +135,7 @@ def main():
 
     # Generate test data
     torch.manual_seed(args.seed)
-    X = torch.randn(args.num_samples, d, device=torch.device("cpu"))
+    X = torch.randn(args.num_samples, d, device=device)
 
     # Compute eigenvalues
     print("\nComputing eigenvalues...")
@@ -146,7 +149,7 @@ def main():
         else:
             try:
                 print("\nComputing Julia FCS2 eigenvalues (delta=1.0 target, delta=0.0 perp)...")
-                julia_eigs = compute_fcs2_eigs(d=d, n1=int(config["N"]), P=int(config["P"]))
+                julia_eigs = compute_fcs2_eigs(d=d, n1=int(config["N"]), P=int(config["P"]), kappa=float(config.get("temperature", 1.0))/2.0, chi=config.get("chi", 1.0))
                 print(f"  delta=1.0: lJ={julia_eigs['delta1']['lJ']:.6e}")
                 print(f"  delta=0.0: lJ={julia_eigs['delta0']['lJ']:.6e}")
             except Exception as _e:

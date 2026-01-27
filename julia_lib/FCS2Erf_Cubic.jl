@@ -95,7 +95,7 @@ function residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b)
     # Training modifies weights: Σ_T = Σ_0 + δ·training_contribution
     # For FCN2: lV1 = effect of training on kernel = lT1·gammaYh/(n1·chi)
 
-    rlWT = lWT - 1 / (d + epsilon^2 * gammaYh * (lT1)/ ( n1 * chi))
+    rlWT = lWT -  1 / (d + epsilon^2 * gammaYh * (lT1)/ ( n1 * chi))
     
     return [rj1, rj3, rlWT]
 end

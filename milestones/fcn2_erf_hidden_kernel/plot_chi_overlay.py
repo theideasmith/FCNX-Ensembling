@@ -308,12 +308,12 @@ def main(recompute_theory=False):
     model_dirs_A = [d for d in model_dirs_A if os.path.isdir(d)]
     model_dirs_A = model_dirs_A[:1]
     # Model set B: chi=80 models
-    # model_dirs_B = [
-    #     '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_0',
-    #     '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_1',
-    #     '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_2',
-    #     '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3'
-    # ]
+    model_dirs_B = [
+        '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_0',
+        '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_1',
+        '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_2',
+        '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3'
+    ]
 
 
     model_dirs_B = [
@@ -327,12 +327,22 @@ def main(recompute_theory=False):
         '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P1200_N800_chi_80.0_lr_3e-05_T_4.0_seed_3']
 
     model_dirs_C = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P7000_N600_chi_60.0_lr_3e-05_T_8.0_seed_0_eps_0.0',
-    '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P7000_N600_chi_60.0_lr_3e-05_T_8.0_seed_1_eps_0.0',  
-    '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P7000_N600_chi_60.0_lr_3e-05_T_8.0_seed_2_eps_0.0']
-    
+    '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/DivergingLossDuetoLRChange/d50_P7000_N600_chi_60.0_lr_3e-05_T_8.0_seed_1_eps_0.0',  
+    '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/DivergingLossDuetoLRChange/d50_P7000_N600_chi_60.0_lr_3e-05_T_8.0_seed_2_eps_0.0']
+
+    model_dirs_C += ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/DivergingLossDuetoLRChange/d30_P3000_N600_chi_60.0_lr_3e-05_T_2.0_seed_0_eps_0.0',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/DivergingLossDuetoLRChange/d30_P3000_N600_chi_60.0_lr_3e-05_T_2.0_seed_1_eps_0.0',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/DivergingLossDuetoLRChange/d30_P3000_N600_chi_60.0_lr_3e-05_T_2.0_seed_2_eps_0.0']
+    model_dirs_C += ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d20_P100_N400_chi_400.0_lr_1e-05_T_1.0_seed_42_eps_0.03']
     # Combine both sets
-    model_dirs = model_dirs_A + model_dirs_C #+ model_dirs_B + 
+    model_dirs = model_dirs_A + model_dirs_B + model_dirs_C
     
+
+    model_dirs = ['/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_0_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_2_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_1_eps_0.03',
+                '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d100_P3000_N800_chi_10.0_lr_1e-05_T_16.0_seed_3_eps_0.03']
+    model_dirs = model_dirs_A
     # Parse and organize by (P, chi)
     model_data = defaultdict(list)
     theory_data = {}  # Store theoretical variances by (d, P, chi)
@@ -349,7 +359,8 @@ def main(recompute_theory=False):
         
         # Compute empirical J eigenvalues and self-consistent kappa
         print(f"  Computing self-consistent kappa via empirical eigenvalues...")
-        kappa_sc = get_self_consistent_kappa(model_dir, d, P, N, chi)
+        # kappa_sc = get_self_consistent_kappa(model_dir, d, P, N, chi)
+        kappa_sc = kappa
         if kappa_sc is not None:
             kappa_corrected = kappa_sc
             print(f"  Using self-consistent kappa={kappa_corrected:.6f}")
@@ -391,22 +402,38 @@ def main(recompute_theory=False):
     # Save theory cache
     save_theory_cache(theory_data, THEORY_CACHE_FILE)
     
+    # Generate colors dynamically for all unique parameter combinations
+    # Sort keys to ensure consistent coloring
+    sorted_keys = sorted(model_data.keys())
+    
+    # Use a colormap with enough distinct colors
+    n_unique = len(sorted_keys)
+    if n_unique <= 10:
+        cmap = cm.get_cmap('tab10')
+        param_colors = {key: cmap(i / max(n_unique - 1, 1)) for i, key in enumerate(sorted_keys)}
+    else:
+        cmap = cm.get_cmap('hsv')
+        param_colors = {key: cmap(i / n_unique) for i, key in enumerate(sorted_keys)}
+    
+    # Convert to hex for easier handling
+    param_colors_hex = {key: plt.matplotlib.colors.rgb2hex(param_colors[key]) for key in param_colors}
+    
+    print(f"\nParameter combinations and their colors:")
+    for key, color in param_colors_hex.items():
+        print(f"  {key}: {color}")
+    
     # Create overlay plots with professional sizing
     fig, axes = plt.subplots(1, 2, figsize=(16, 7.0))
     fig.suptitle('Action for Readin Layer Weights \n'+ r'$S[w] = -\log P(w\cdot v_k)$ for FCN2 $f(x) = \mathbf{a}\cdot \mathrm{erf}(\mathbf{W}\cdot \mathbf{x}),\; x\in \mathbb{R}^d,\; d=100$', fontsize=14, fontweight='normal', y=1.00)
     
-    # Hardcode colors for each chi value
-    chi_colors = {
-        800.0: '#1f77b4',   # dark blue
-        10.0: '#d62728',    # red
-        80.0: '#ff7f0e'     # orange
-    }
+    # Use dynamically generated colors
+    chi_colors = param_colors_hex
     
     # Plot target weights (W[:, :, 0])
     ax_target = axes[0]
     
     for (P, chi), data_list in sorted(model_data.items()):
-        color = chi_colors.get(chi, '#000000')  # default to black if chi not in dict
+        color = param_colors_hex.get((P, chi), '#000000')  # default to black if not in dict
         linestyle = '-' if chi < data_list[0]['N'] else '--'
         
         # Get N from first data element
@@ -439,7 +466,7 @@ def main(recompute_theory=False):
         kappa = data_list[0]['kappa']
         kappa_corrected = data_list[0]['kappa_corrected']
         label = f'P={P}, $\chi={chi}$, $\kappa={kappa_corrected:.2f}$\nN={N}, σ²={avg_target_var:.4f}'
-        if chi == 80.0:
+        if chi < N:
             label += f'\n{num_seeds} seeds (Grokking)'
         elif chi != N:
             label += f'\n{num_seeds} seeds (GFL)'
@@ -473,7 +500,7 @@ def main(recompute_theory=False):
     ax_perp = axes[1]
     
     for (P, chi), data_list in sorted(model_data.items()):
-        color = chi_colors.get(chi, '#000000')  # default to black if chi not in dict
+        color = param_colors_hex.get((P, chi), '#000000')  # default to black if not in dict
         linestyle = '-' if chi == 80.0 else '--'
         
         # Get N and d from first data element
@@ -513,7 +540,7 @@ def main(recompute_theory=False):
         label_base = f'P={P}, $\chi={chi}$, $\kappa={kappa_corrected:.2f}$\nN={N}'
         if avg_perp_var is not None:
             label_base += f', σ²={avg_perp_var:.4f}'
-        if chi == 80.0:
+        if chi < N:
             label_base += f'\n{num_seeds} seeds (Grokking)'
         elif chi != N:
             label_base += f'\n{num_seeds} seeds (GFL)'
@@ -569,7 +596,7 @@ def main(recompute_theory=False):
     fig_target.suptitle('Action for Readin Layer Weights \n'+ r'$S[w] = -\log P(w\cdot v_k)$ for FCN2 $f(x) = \mathbf{a}\cdot \mathrm{erf}(\mathbf{W}\cdot \mathbf{x}),\; x\in \mathbb{R}^d,\; d=100$', fontsize=14, fontweight='normal', y=0.98)
     
     for (P, chi), data_list in sorted(model_data.items()):
-        color = chi_colors.get(chi, '#000000')  # default to black if chi not in dict
+        color = param_colors_hex.get((P, chi), '#000000')  # default to black if not in dict
         linestyle = '-' if chi < data_list[0]['N'] else '--'
         
         # Get N from first data element
@@ -602,9 +629,9 @@ def main(recompute_theory=False):
         kappa = data_list[0]['kappa']
         kappa_corrected = data_list[0]['kappa_corrected']
         label = f'P={P}, $\chi={chi}$, $\kappa={kappa_corrected:.2f}$\nN={N}, σ²={avg_target_var:.4f}'
-        if chi == 80.0:
+        if chi < N:
             label += f'\n{num_seeds} seeds (Grokking)'
-        elif chi < N:
+        elif chi != N:
             label += f'\n{num_seeds} seeds (GFL)'
         else:
             label += '\n(Grokking)'
