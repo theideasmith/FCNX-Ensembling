@@ -23,7 +23,7 @@ plotting = true
 Nds = 5
 d_vals = exp.(range(log(25), log(200), length=Nds))
 
-kappa = 1.0
+kappa = 0.1
 delta = 1.0
 b = 4 / (3 * pi)
 Nas = 20
@@ -36,9 +36,9 @@ for (i, d) in enumerate(d_vals)
     println("Processing d = ", d)
     i0 = []
     if delta == 0.0
-        i0 = [1 / d, d^3, 1 / d, d^3]
+        i0 = [1 / d, 1/d^3, 1 / d, 1/d^3, 1/d^3]
     else
-        i0 = [1 / d^0.5, 1 / d^1.5, 1 / d^0.5, 1 / d^1.5]
+        i0 = [1 / d^0.5, 1 / d^1.5, 1 / d^0.5, 1 / d^1.5, 1 /d^1.5]
     end
 
     n = 10*d  # your scaling rule

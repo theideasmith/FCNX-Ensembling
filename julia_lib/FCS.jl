@@ -376,7 +376,8 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
     learnabilities_3 = Float64[]
 
     x = copy(initial_guess)  # warm-start
-
+    n1 = n
+    n2 = n
     for P in P_vals
         sol = nlsolve_solver(
             x,
