@@ -322,7 +322,7 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, e
                 except Exception as e:
                     traceback.print_exc()
                     print(f"  Warning: Could not compute/log W0 covariance eigenvalues at epoch {epoch}: {e}")
-    
+            torch.save(model.state_dict(), seed_dir / "model.pt")
     # Save final model
     torch.save(model.state_dict(), seed_dir / "model_final.pt")
     
