@@ -1062,19 +1062,19 @@ class FCN3NetworkActivationGeneric(nn.Module):
                 losses.append(loss.item())
                 print(f"Epoch {epoch} loss: {loss.item():.6f}")
         return losses
-
 class FCN3NetworkErfOptimized(torch.nn.Module):
     """
-    Highly optimized three-layer FCN with ERF activation.
-    Eliminates unnecessary function calls and intermediate computations.
+    Three-layer FCN with ERF activation supporting multiple dataset seeds.
+    Each seed has its own ensemble of networks.
     """
     
-    def __init__(self, d, n1, n2, P, ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device='cuda'):
+    def __init__(self, d, n1, n2, P, num_seeds=1, ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device='cuda'):
         super().__init__()
         
         self.d = d
         self.n1 = n1
         self.n2 = n2
+        self.num_seeds = num_seeds
         self.ens = ens
         self.ensembles = ens
         self.num_samples = P
@@ -1082,65 +1082,81 @@ class FCN3NetworkErfOptimized(torch.nn.Module):
         
         v0, v1, v2 = weight_initialization_variance
         
-        # Initialize weights directly with correct std
+        # Initialize weights with seed dimension: (num_seeds, ens, ...)
         self.W0 = torch.nn.Parameter(
-            torch.randn(ens, n1, d, device=device, dtype=torch.float32) * (v0 ** 0.5),
+            torch.randn(num_seeds, ens, n1, d, device=device, dtype=torch.float32) * (v0 ** 0.5),
             requires_grad=True
         )
         self.W1 = torch.nn.Parameter(
-            torch.randn(ens, n2, n1, device=device, dtype=torch.float32) * (v1 ** 0.5),
+            torch.randn(num_seeds, ens, n2, n1, device=device, dtype=torch.float32) * (v1 ** 0.5),
             requires_grad=True
         )
         self.A = torch.nn.Parameter(
-            torch.randn(ens, n2, device=device, dtype=torch.float32) * (v2 ** 0.5),
+            torch.randn(num_seeds, ens, n2, device=device, dtype=torch.float32) * (v2 ** 0.5),
             requires_grad=True
         )
     
     def forward(self, X):
         """
-        Optimized forward pass: X -> erf(W0@X) -> erf(W1@h0) -> A@h1
-        X shape: (P, d)
-        Output shape: (P, ens)
+        Forward pass with seed dimension.
+        X shape: (num_seeds, P, d)
+        Output shape: (num_seeds, P, ens)
         """
-        # h0 = erf(W0 @ X)  shape: (P, ens, n1)
-        h0 = torch.erf(torch.einsum('qkl,ul->uqk', self.W0, X))
+        # h0 = erf(W0 @ X)  shape: (num_seeds, P, ens, n1)
+        h0 = torch.erf(torch.einsum('sqkl,sul->suqk', self.W0, X))
         
-        # h1 = erf(W1 @ h0)  shape: (P, ens, n2)
-        h1 = torch.erf(torch.einsum('qkj,uqj->uqk', self.W1, h0))
+        # h1 = erf(W1 @ h0)  shape: (num_seeds, P, ens, n2)
+        h1 = torch.erf(torch.einsum('sqkj,suqj->suqk', self.W1, h0))
         
-        # output = A @ h1  shape: (P, ens)
-        return torch.einsum('qk,uqk->uq', self.A, h1)
+        # output = A @ h1  shape: (num_seeds, P, ens)
+        return torch.einsum('sqk,suqk->suq', self.A, h1)
     
     def H_eig(self, X, Y, std=False):
         """
         Compute H kernel eigenvalues efficiently.
-        H kernel is based on h1_preactivation (before final erf).
+        X shape: (num_seeds, P, d)
+        Y shape: (num_seeds, P, 1)
+        Returns eigenvalues averaged over seeds.
         """
         with torch.no_grad():
             # Compute h0 activation
-            h0 = torch.erf(torch.einsum('qkl,ul->uqk', self.W0, X))
+            h0 = torch.erf(torch.einsum('sqkl,sul->suqk', self.W0, X))
             
-            # Compute h1 preactivation (no final erf)
-            h1_pre = torch.einsum('qkj,uqj->uqk', self.W1, h0)
+            # Compute h1 preactivation
+            h1_pre = torch.einsum('sqkj,suqj->suqk', self.W1, h0)
             
-            # Kernel per ensemble: K_i[u,v] = sum_m h1_pre[u,i,m] * h1_pre[v,i,m]
-            # Shape: (ens, P, P)
-            hh_inf_i = torch.einsum('uqm,vqm->quv', h1_pre, h1_pre) / (self.n1 * X.shape[0])
+            # Kernel per seed and ensemble: K[s,q,u,v] = sum_m h1_pre[s,u,q,m] * h1_pre[s,v,q,m]
+            # Shape: (num_seeds, ens, P, P)
+            hh_inf_i = torch.einsum('suqm,svqm->squv', h1_pre, h1_pre) / (self.n1 * X.shape[1])
             
-            # Average over ensembles
-            hh_inf = torch.mean(hh_inf_i, dim=0)
+            # Average over ensembles for each seed
+            hh_inf = torch.mean(hh_inf_i, dim=1)  # shape: (num_seeds, P, P)
             
-            # Compute eigenvalue: lambda = Y^T K Y / (Y^T Y)
-            Y_flat = Y.squeeze()
-            norm = torch.sum(Y_flat * Y_flat, dim=0) / X.shape[0]
+            # Average over seeds
+            hh_inf = torch.mean(hh_inf, dim=0)  # shape: (P, P)
+            
+            # Compute eigenvalue
+            Y_flat = Y.squeeze()  # shape: (num_seeds, P)
+            Y_mean = Y_flat.mean(dim=0)  # Average over seeds: shape (P,)
+            
+            norm = torch.sum(Y_mean * Y_mean) / X.shape[1]
             
             # Ls = Y^T @ K @ Y
-            Ls = torch.einsum('ul,uv,vl->l', Y_flat, hh_inf, Y_flat) / X.shape[0]
+            Ls = torch.einsum('u,uv,v->', Y_mean, hh_inf, Y_mean) / X.shape[1]
             lsT = Ls / norm
             
             if std:
-                Ls_i = torch.einsum('ul,quv,vl->ql', Y_flat, hh_inf_i, Y_flat) / X.shape[0]
-                std_ls = torch.std(Ls_i / norm, dim=0)
+                # Compute std over seeds
+                Ls_per_seed = []
+                for s in range(self.num_seeds):
+                    Y_s = Y_flat[s]
+                    norm_s = torch.sum(Y_s * Y_s) / X.shape[1]
+                    # Use per-seed kernel averaged over ensembles
+                    hh_s = torch.mean(hh_inf_i[s], dim=0)
+                    Ls_s = torch.einsum('u,uv,v->', Y_s, hh_s, Y_s) / X.shape[1]
+                    Ls_per_seed.append(Ls_s / norm_s)
+                
+                std_ls = torch.std(torch.stack(Ls_per_seed))
                 return lsT, std_ls
             
             return lsT
