@@ -18,10 +18,10 @@ seeds = 5
 kappa = 0.1
 N=800
 lr=1e-3
-device='cuda:1'
+device='cuda:0'
 ens = 5
-chi = 1.0
-epochs = 5_000_000
+chi = N
+epochs = 3_000_000
 max_parallel_jobs = 4  # Launch jobs at both ends
 train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_seeds.py')
 
