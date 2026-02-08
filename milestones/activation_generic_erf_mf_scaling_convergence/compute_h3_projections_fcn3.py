@@ -75,6 +75,11 @@ def load_model_from_run(run_dir: Path, device: torch.device):
     state = torch.load(model_path, map_location=device)
     if isinstance(state, dict) and "model_state_dict" in state:
         state = state["model_state_dict"]
+    
+    if len(state["W0"].shape) == 4:
+        state["W0"] = state["W0"].squeeze(0)  # Remove num_seeds dim if present
+        state["W1"] = state["W1"].squeeze(0)
+        state["A"] = state["A"].squeeze(0)
     model.load_state_dict(state)
     
     # Use float64 for projection accuracy

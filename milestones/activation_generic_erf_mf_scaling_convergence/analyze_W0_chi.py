@@ -1,6 +1,5 @@
 import os
 import json
-import glob
 import subprocess
 import tempfile
 import torch
@@ -20,15 +19,13 @@ matplotlib.use('Agg')
 DEVICE = 'cuda:0'
 CACHE_NAME = "analysis_results_cache.json"
 RESULTS_DIR = Path("/home/akiva/FCNX-Ensembling/milestones/activation_generic_erf_mf_scaling_convergence/p_scan_erf_results")
-HISTS_DIR = RESULTS_DIR / "W0_hists"
 
-# --- Theory Worker (Top Level for Pickling) ---
+# --- Theory Worker ---
 
 def theory_worker_task(task_info):
     """Runs the Julia solver for a specific parameter set."""
-    P, d, N, chi, kappa, eps = task_info
+    P, d, N, chi, kappa, eps, cache_key = task_info
     
-    # Path to your Julia script
     julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf.jl"
     
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
@@ -38,7 +35,6 @@ def theory_worker_task(task_info):
         "julia", str(julia_script), f"--d={d}", f"--P={P}", f"--n1={N}", f"--n2={N}",
         f"--chi={chi}", f"--kappa={kappa}", f"--epsilon={eps}", f"--to={to_path}", "--quiet"
     ]
-    print(' '.join(cmd))
     
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=300)
@@ -46,29 +42,26 @@ def theory_worker_task(task_info):
             data = json.load(f)
         
         tgt = data.get("target", {})
-        lK1T = tgt.get("lK1T")
-        lH3T = tgt.get("lH3T")
-        lWT = tgt.get("lWT")  # Weight variance eigenvalue
-        
-        # Calculate learnability immediately
-        h1_learn = lK1T / (lK1T + kappa / P) if lK1T is not None else 0.0
-        h3_learn = lH3T / (lH3T + kappa / P) if lH3T is not None else 0.0
-        
-        return P, {"h1_learn": h1_learn, "h3_learn": h3_learn, "lWT": lWT}
+        return cache_key, {
+            "h1_learn": tgt.get('mu1'), 
+            "h3_learn": tgt.get('mu3'), 
+            "lWT": tgt.get("lWT")
+        }
     except Exception as e:
-        print(f"Theory failed for P={P}: {e}")
-        return P, None
+        print(f"Theory error for {cache_key}: {e}")
+        return cache_key, None
     finally:
-        to_path.unlink(missing_ok=True)
+        if to_path.exists():
+            to_path.unlink()
 
-# --- Projection Worker (Unchanged but included for context) ---
+# --- Projection Worker ---
 
 def projection_worker_task(args):
-    model_path, config, P_total, batch_size, device = args
+    model_path, config, P_total, batch_size, device, cache_key = args
     import sys
     sys.path.insert(0, '/home/akiva/FCNX-Ensembling/lib')
     from FCN3Network import FCN3NetworkErfOptimized
-    
+
     try:
         checkpoint = torch.load(model_path, map_location=device)
         state_dict = checkpoint.get('model_state_dict', checkpoint)
@@ -79,178 +72,176 @@ def projection_worker_task(args):
         )
         model.load_state_dict(state_dict)
         model.to(device).eval()
-        torch.manual_seed(config['base_seed'])
-        h1_sum, h3_sum = torch.zeros((config['num_seeds'], model.ens), device=device, dtype=torch.float32), torch.zeros((config['num_seeds'], model.ens), device=device, dtype=torch.float32)
-        num_batches = P_total // batch_size
-        # Compute W0 variance for first dimension
-        W0 = model.W0# shape: (num_seeds, ens, n1, d)
-        W0_first_dim = W0[:, :, :, 0]  # shape: (num_seeds, ens, n1)
-        W0_var = torch.var(W0_first_dim).item()
-
+        num_seeds, ens, N, d = config['num_seeds'], config['ens'], config['N'], config['d']
 
         with torch.no_grad():
+            W0 = model.W0  # shape: (num_seeds, ens, N, d)
+            W0_reshaped = W0.view(num_seeds * ens * N, d)  # shape: (num_seeds*ens*N, d)
+            cov_W0 = torch.matmul(W0_reshaped.t(), W0_reshaped) / (num_seeds * ens * N)
+            W0_var = torch.linalg.eigvalsh(cov_W0).sort(descending=True).values.cpu().numpy().max()
+
+            h1_sum, h3_sum = torch.zeros(config['num_seeds'], config['ens'], device=device), torch.zeros(config['num_seeds'], config['ens'], device=device)
+            num_batches = P_total // batch_size
+            x0_norm = torch.zeros(config['num_seeds'], device=device)
             for _ in range(num_batches):
-                print("BATCH!")
                 X = torch.randn(config['num_seeds'], batch_size, config['d'], device=device)
-                out = model(X)
+                out = model(X) 
                 x0 = X[:, :, 0]
-                h1_sum += torch.einsum('sbe,sb->se', out, x0)
+                x0_norm+=x0.norm(dim=1)
+                h1_sum += torch.einsum('sbe,sb->se', out, x0) 
                 h3_sum += torch.einsum('sbe,sb->se', out, (x0**3 - 3*x0))
         
-        norm = (P_total)
-        return config['P'], {"h1": h1_sum.mean().item() / norm, "h3": h3_sum.mean().item() / norm, "W0_var": W0_var}
+        return cache_key, {"h1": (h1_sum.mean() / P_total).item(), "h3": (h3_sum.mean(dim=1) / x0_norm).mean().item(), "W0_var": W0_var}
     except Exception as e:
-        print(e)
-        return config['P'], f"Error: {str(e)}"
+        return cache_key, {"error": str(e)}
 
-# --- Main Logic Class ---
+# --- Analyzer Class ---
 
 class ModelAnalyzer:
     def __init__(self, use_cache=False):
         self.use_cache = use_cache
         self.cache_path = RESULTS_DIR / CACHE_NAME
-        HISTS_DIR.mkdir(exist_ok=True)
+        self.results_cache = self._load_cache()
+
+    def _load_cache(self) -> Dict:
+        if self.use_cache and self.cache_path.exists():
+            print(f"Loading existing cache from {self.cache_path}")
+            with open(self.cache_path, "r") as f:
+                return json.load(f)
+        return {}
+
+    def _save_cache(self, new_results: Dict):
+        self.results_cache.update(new_results)
+        with open(self.cache_path, "w") as f:
+            json.dump(self.results_cache, f, indent=4)
+        print(f"Cache updated at {self.cache_path}")
+
+    def _generate_cache_key(self, config: Dict) -> str:
+        """Creates a unique ID based on P, chi, d, and kappa."""
+        return f"P{config['P']}_chi{config['chi']}_d{config['d']}_kappa{config['kappa']}"
 
     def get_models(self) -> List[Path]:
         return sorted([d for d in RESULTS_DIR.iterdir() if d.is_dir() and d.name.startswith('d')])
     
-    def extract_chi(self, model_dir: Path) -> Optional[float]:
-        """Extract chi value from directory name like d50_P20_N1000_chi80_kappa0.1_nseeds10_ens20"""
+    def parse_config(self, model_dir: Path) -> Dict:
         parts = model_dir.name.split('_')
-        for part in parts:
-            if part.startswith('chi'):
-                try:
-                    return float(part[3:])
-                except ValueError:
-                    return None
-        return None
+        config = {'num_seeds': 1, 'ens': 1, 'chi': 1.0, 'kappa': 0.0} # Defaults
+        for p in parts:
+            try:
+                if p.startswith('d'): config['d'] = int(p[1:])
+                elif p.startswith('P'): config['P'] = int(p[1:])
+                elif p.startswith('N'): config['N'] = int(p[1:])
+                elif p.startswith('chi'): config['chi'] = float(p[3:])
+                elif p.startswith('kappa'): config['kappa'] = float(p[5:])
+                elif p.startswith('nseeds'): config['num_seeds'] = int(p[6:])
+                elif p.startswith('ens'): config['ens'] = int(p[3:])
+            except: continue
+        return config
 
-    def run_analysis(self, model_dirs, P_total=50_000):
-        if self.use_cache and self.cache_path.exists():
-            print("Using cached results.")
-            with open(self.cache_path, 'r') as f: return json.load(f)
-
-        proj_tasks = []
+    def run_analysis(self, model_dirs: List[Path]) -> Dict:
+        final_results = {}
         theory_tasks = []
-        model_config_map = {}  # Store config info for each model
+        proj_tasks = []
+        configs_to_process = {}
 
-        for mdir in model_dirs:
-            config_path = mdir / "base_seed0" / "config.json"
-            model_path = mdir / "base_seed0" / "model_final.pt"
-            if not config_path.exists(): continue
-            
-            with open(config_path, 'r') as f:
-                cfg = json.load(f)
-            
-            chi = self.extract_chi(mdir)
-            if chi is None:
-                print(f"Warning: Could not extract chi from {mdir.name}")
+        for md in model_dirs:
+            print(md.name)
+            config = self.parse_config(md)
+            cache_key = self._generate_cache_key(config)
+            print(cache_key)
+            if self.use_cache and cache_key in self.results_cache:
+                final_results[cache_key] = self.results_cache[cache_key]
                 continue
             
-            # Setup Empirical tasks (GPU/CPU bound)
-            proj_tasks.append((str(model_path), cfg, P_total, 5_000, DEVICE))
-            
-            # Setup Theory tasks (Subprocess bound)
-            theory_tasks.append((cfg['P'], cfg['d'], cfg['N'], chi, cfg['kappa'], 0.03))
-            
-            # Store config info for later
-            model_config_map[str(cfg['P'])] = {
-                "d": cfg['d'],
-                "N": cfg['N'],
-                "chi": chi,
-                "kappa": cfg['kappa']
+            checkpoint = next(md.rglob("model_final.pt"), None)
+            if not checkpoint:
+                continue
+
+
+            configs_to_process[cache_key] = config
+            theory_tasks.append((config['P'], config['d'], config['N'], config['chi'], config['kappa'], 1e-3, cache_key))
+            proj_tasks.append((checkpoint, config, 1000000, 10000, DEVICE, cache_key))
+
+        if not theory_tasks and not proj_tasks:
+            print("No new models to analyze (all loaded from cache or none found).")
+            return final_results
+
+        # Execute Theory tasks
+        t_results_map = {}
+        if theory_tasks:
+            print(f"Processing {len(theory_tasks)} theory tasks...")
+            with Pool() as pool:
+                t_results_map = dict(list(tqdm(pool.imap(theory_worker_task, theory_tasks), 
+                                             total=len(theory_tasks), desc="Theory")))
+
+        # Execute Empirical tasks
+        e_results_map = {}
+        if proj_tasks:
+            print(f"Processing {len(proj_tasks)} empirical tasks...")
+            for task in tqdm(proj_tasks, desc="Empirical"):
+                ckey, res = projection_worker_task(task)
+                e_results_map[ckey] = res
+
+        # Combine and Update
+        new_batch = {}
+        for ckey, cfg in configs_to_process.items():
+            combined = {
+                "config": cfg,
+                "empirical": e_results_map.get(ckey),
+                "theory": t_results_map.get(ckey)
             }
+            final_results[ckey] = combined
+            new_batch[ckey] = combined
 
-        # 1. Parallel Projections
-        print(f"Starting Projections on {DEVICE}...")
-        with Pool(processes=4) as pool:
-            proj_results = dict(list(tqdm(pool.imap(projection_worker_task, proj_tasks), total=len(proj_tasks))))
+        if new_batch:
+            try:
+                self._save_cache(new_batch)
+            except Exception as e:
 
-        # 2. Parallel Theory
-        print("Starting Theory Computations (Julia Parallel)...")
-        with Pool(processes=os.cpu_count() // 2) as pool:
-            theory_results = dict(list(tqdm(pool.imap(theory_worker_task, theory_tasks), total=len(theory_tasks))))
+                print(f"  Warning: failed to save cache: {e}")
 
-        # 3. Merge
-        final_data = {}
-        for p_val in proj_results.keys():
-            if isinstance(proj_results[p_val], str): continue # Handle errors
-            final_data[str(p_val)] = {
-                "empirical": proj_results[p_val],
-                "theory": theory_results.get(p_val),
-                "config": model_config_map.get(str(p_val))
-            }
+        return final_results
 
-        with open(self.cache_path, 'w') as f:
-            json.dump(final_data, f, indent=4)
-        return final_data
+    def log_tensorboard(self, data: Dict):
+        log_path = RESULTS_DIR / "tensorboard" / "hermite_analysis"
+        writer = SummaryWriter(str(log_path))
 
-    def log_tensorboard(self, data):
-        writer = SummaryWriter(str(RESULTS_DIR / "tensorboard" / "hermite_analysis"))
-        print("logging results to TensorBoard: ", RESULTS_DIR / "tensorboard" / "hermite_analysis")
-
-        # Collect data for W0 variance plot, organized by chi
-        chi_data = {}
-
-        for p_str in sorted(data.keys(), key=lambda x: float(x)):
-            P = float(p_str)
-            vals = data[p_str]
-            cfg = vals.get("config", {})
+        group_map = {}
+        for ckey, vals in data.items():
+            if not vals.get('empirical') or not vals.get('theory') or 'error' in vals['empirical']:
+                continue
             
-            print(f"Logging results for P={P}, empirical: ", vals['empirical']['h1'], "theory: ", vals['theory']['h1_learn'])
-            if not vals['empirical']: raise ValueError(f"Empirical results missing for P={P}")
-            if not vals['theory']: raise ValueError(f"Theory results missing for P={P}")
-
-            writer.add_scalars('Projection/H1', {'emp': vals['empirical']['h1'], 'theory': vals['theory']['h1_learn']}, P)
-            writer.add_scalars('Projection/H3', {'emp': vals['empirical']['h3'], 'theory': vals['theory']['h3_learn']}, P)
+            cfg = vals['config']
+            group_key = (cfg['chi'], cfg['d'], cfg['kappa'])
+            if group_key not in group_map:
+                group_map[group_key] = []
             
-            # Add W0 variance comparison
-            if 'W0_var' in vals['empirical'] and vals['theory']['lWT'] is not None:
-                writer.add_scalars('W0_Variance', {'emp': vals['empirical']['W0_var'], 'theory': vals['theory']['lWT']}, P)
-                
-                chi = cfg.get('chi')
-                if chi not in chi_data:
-                    chi_data[chi] = {"P_vals": [], "W0_vars": [], "lWT_vals": [], "configs": []}
-                
-                chi_data[chi]["P_vals"].append(P)
-                chi_data[chi]["W0_vars"].append(vals['empirical']['W0_var'])
-                chi_data[chi]["lWT_vals"].append(vals['theory']['lWT'])
-                chi_data[chi]["configs"].append(cfg)
+            group_map[group_key].append({
+                'P': cfg['P'],
+                'h1_emp': vals['empirical'].get('h1'),
+                'h1_theory': vals['theory'].get('h1_learn'),
+                'w0_emp': vals['empirical'].get('W0_var'),
+                'w0_theory': vals['theory'].get('lWT')
+            })
         
-        # Create separate W0 variance scatter plots for each chi value
-        for chi, plot_data in sorted(chi_data.items()):
-            P_vals = plot_data["P_vals"]
-            W0_vars = plot_data["W0_vars"]
-            lWT_vals = plot_data["lWT_vals"]
-            configs = plot_data["configs"]
-            
-            if P_vals:
-                fig, ax = plt.subplots(figsize=(10, 7))
-                ax.scatter(lWT_vals, W0_vars, s=100, alpha=0.7, edgecolors='k')
-                
-                # Add diagonal reference line
-                min_val = min(min(lWT_vals), min(W0_vars))
-                max_val = max(max(lWT_vals), max(W0_vars))
-                ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5, label='y=x')
-                
-                # Label points with d, P, chi
-                for p, lwt, w0v, cfg in zip(P_vals, lWT_vals, W0_vars, configs):
-                    d = cfg.get('d')
-                    label = f'd={d}, P={int(p)}, χ={chi}'
-                    ax.annotate(label, (lwt, w0v), fontsize=9, alpha=0.8, xytext=(5, 5), textcoords='offset points')
-                
-                ax.set_xlabel('Theory lWT', fontsize=12)
-                ax.set_ylabel('Empirical W0[:,:,0] Variance', fontsize=12)
-                ax.set_title(f'W0 Weight Variance vs Theory (χ={chi})', fontsize=14)
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-                
-                writer.add_figure(f'W0_Variance/Scatter_chi_{chi}', fig)
-                plt.close(fig)
+        for (chi, d, kappa), points in group_map.items():
+            print(f"Logging for chi={chi}, d={d}, kappa={kappa} with {len(points)} points")
+            sorted_points = sorted(points, key=lambda x: x['P'])
+            tag_suffix = f"chi_{chi}_d_{d}_kappa_{kappa}"
+
+            for pt in sorted_points:
+                try:
+                    writer.add_scalars(f'Learnability/H1/{tag_suffix}', 
+                                    {'empirical': pt['h1_emp'], 'theory': pt['h1_theory']}, pt['P'])
+                    writer.add_scalars(f'W0_Variance/{tag_suffix}', 
+                                    {'empirical': pt['w0_emp'], 'theory': pt['w0_theory']}, pt['P'])
+                except Exception as e:
+                    print(f"  Warning: failed to log point P={pt['P']} for {tag_suffix}: {e}")
+
         
         writer.flush()
-
-# --- Execution ---
+        writer.close()
+        print(f"TensorBoard logging complete: {log_path}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -260,7 +251,9 @@ def main():
     analyzer = ModelAnalyzer(use_cache=args.use_cache)
     model_dirs = analyzer.get_models()
     results = analyzer.run_analysis(model_dirs)
-    analyzer.log_tensorboard(results)
+    print(f"Analysis complete for {len(results)} configurations.")
+    if results:
+        analyzer.log_tensorboard(results)
 
 if __name__ == "__main__":
     main()

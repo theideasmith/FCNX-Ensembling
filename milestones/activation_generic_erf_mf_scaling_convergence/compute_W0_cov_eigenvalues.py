@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-
+import glob
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 from FCN3Network import FCN3NetworkActivationGeneric
@@ -30,13 +30,15 @@ DEVICE_DEFAULT = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def find_run_dirs(base: Path, dims: Optional[List[int]] = None, suffix: str = "") -> List[Tuple[Path, Dict[str, int]]]:
     """Locate seed directories that contain model.pt and match the naming convention."""
     selected: List[Tuple[Path, Dict[str, int]]] = []
-    pattern = r"d(\d+)_P(\d+)_N(\d+)_chi(\d+(?:\.\d+)?)"
+    pattern = r"d(\d+)_P(\d+)_N(\d+)_chi(\d+(?:\.\d+)?).*"
+    model_files = glob.glob(str(base / f"**/*seed*/model_final.pt"), recursive=True) 
 
-    model_files = list(base.glob(f"**/*{suffix}*/model.pt")) if suffix else list(base.glob("**/model.pt"))
     for model_file in model_files:
-        seed_dir = model_file.parent
+
+        seed_dir = Path(model_file).parent
+        print(seed_dir)
         seed_name = seed_dir.name
-        m_seed = re.match(r"seed(\d+)", seed_name)
+        m_seed = re.match(r".*seed(\d+)", seed_name)
         if not m_seed:
             continue
         seed = int(m_seed.group(1))
@@ -76,15 +78,22 @@ def load_model(run_dir: Path, config: Dict[str, int], device: torch.device) -> O
     chi = int(config.get("chi", N))
 
     state_dict = torch.load(model_path, map_location=device)
-    ens = int(state_dict['W0'].shape[0])
 
+
+    if len(state_dict['W0'].shape) == 4:
+        # 
+        state_dict['W0'] = state_dict['W0'].squeeze(0)
+        state_dict['W1'] = state_dict['W1'].squeeze(0)
+        state_dict['A'] = state_dict['A'].squeeze(0)
+    ens = int(state_dict['W0'].shape[0])
+    print(state_dict['W0'].shape)
+    print("Loading model from", model_path, f"with W0 shape {state_dict['W0'].shape} and ensemble size {ens}")
     weight_var = (1.0 / d, 1.0 / N, 1.0 / (N * chi))
     model = FCN3NetworkActivationGeneric(
         d=d, n1=N, n2=N, P=P, ens=ens,
         activation="erf",
         weight_initialization_variance=weight_var,
     ).to(device)
-    
     model.load_state_dict(state_dict)
     model.eval()
     model.device = device
@@ -208,7 +217,13 @@ def main():
         return
 
     for run_dir, cfg in runs:
-        model = load_model(run_dir, cfg, device)
+        try:
+            model = load_model(run_dir, cfg, device)
+        except:
+            print(f"Error loading model for {run_dir}, skipping. Exception:")
+            import traceback
+            traceback.print_exc()
+
         if model is None:
             print(f"Skipping {run_dir}: model not found")
             continue
