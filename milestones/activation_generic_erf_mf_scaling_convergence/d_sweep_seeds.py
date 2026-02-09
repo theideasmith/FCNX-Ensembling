@@ -29,7 +29,7 @@ class FCN3NetworkErfOptimized(torch.nn.Module):
     Each seed has its own ensemble of networks.
     """
     
-    def __init__(self, d, n1, n2, P, num_seeds=1, ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device='cuda'):
+    def __init__(self, d, n1, n2, P, num_seeds=1, ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device='cuda:1'):
         super().__init__()
         
         self.d = d
@@ -42,7 +42,7 @@ class FCN3NetworkErfOptimized(torch.nn.Module):
         self.device = device
         
         v0, v1, v2 = weight_initialization_variance
-        
+
         # Initialize weights with seed dimension: (num_seeds, ens, ...)
         self.W0 = torch.nn.Parameter(
             torch.randn(num_seeds, ens, n1, d, device=device, dtype=torch.float32) * (v0 ** 0.5),
@@ -219,8 +219,9 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, e
     torch.manual_seed(70)
     model = FCN3NetworkErfOptimized(
         d, N, N, P, num_seeds=num_seeds, ens=ens,
-        weight_initialization_variance=(1/d, 1/N, 1/(N * chi))
-    ).to(device)
+        weight_initialization_variance=(1/d, 1/N, 1/(N * chi)), 
+        device=device
+    )
     
     # Check if resuming from checkpoint
     model_checkpoint = seed_dir / "model.pt"
