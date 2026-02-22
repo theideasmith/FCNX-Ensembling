@@ -96,7 +96,7 @@ def parse_run_params(run_dir: Path):
     """Parse d, P, N, chi, kappa, epsilon from directory name or config."""
     # Initialize with default epsilon
     d = P = N = chi = kappa = None
-    epsilon = 0.03 
+    epsilon = 0.074
     
     # 1. Try loading from config.json
     config_path = run_dir / "config.json"
@@ -202,6 +202,7 @@ def compute_h3_projections_streaming(
     batch_size: int = 100_000,
     device: torch.device = torch.device("cpu"),
     perp_dim: int = 1,
+    all_eigs: bool = True,
 ):
     """
     Stream random inputs and compute cubic projections of hidden-layer preactivations.
@@ -234,8 +235,8 @@ def compute_h3_projections_streaming(
             # Cubic Hermite features (normalized to project; scaling by P later)
             x0 = X_batch[:, 0]
             x_perp = X_batch[:, perp_dim]
-            phi3_target = (x0**3 - 3.0 * x0) 
-            phi3_perp = (x_perp**3 - 3.0 * x_perp) 
+            phi3_target = (x0**3 - 3.0 * x0) / 6**0.5
+            phi3_perp = (x_perp**3 - 3.0 * x_perp) / 6**0.5
             # Linear features (He1)
             phi1_target = x0
             phi1_perp = x_perp
@@ -265,12 +266,37 @@ def compute_h3_projections_streaming(
     d_minus_1 = d - 1
 
     # Eigenvalues: [target, perp, perp, ..., perp] (d-1 times)
-    eigenvalues = np.concatenate([
-        eig_target1, 
-        np.tile(eig_perp1, d_minus_1), 
-        eig_target3, 
-        np.tile(eig_perp3, d**3 - 1)
-    ]).flatten()
+    if all_eigs:
+        eigenvalues = np.concatenate([
+            eig_target1, 
+            np.tile(eig_perp1, d_minus_1), 
+            eig_target3, 
+            np.tile(eig_perp3, d**3 - 1)
+        ]).flatten()
+    else:
+        eigenvalues = np.concatenate([])
+
+    # Compute per-ensemble statistics (mean across neurons for each ensemble)
+    # proj3_target: shape (ens, n1)
+    proj3_target_per_ens = proj3_target.mean(dim=1) if proj3_target.numel() > 0 else torch.tensor([])
+    proj3_perp_per_ens = proj3_perp.mean(dim=1) if proj3_perp.numel() > 0 else torch.tensor([])
+    proj1_target_per_ens = proj1_target.mean(dim=1) if proj1_target.numel() > 0 else torch.tensor([])
+    proj1_perp_per_ens = proj1_perp.mean(dim=1) if proj1_perp.numel() > 0 else torch.tensor([])
+
+    # Ensemble-level moments
+    def ens_stats(tensor_per_ens):
+        if tensor_per_ens.numel() == 0:
+            return {"ens_mean": None, "ens_std": None, "ens_sem": None}
+        ens_mean = float(torch.mean(tensor_per_ens).item())
+        ens_std = float(torch.std(tensor_per_ens).item())
+        ens = tensor_per_ens.shape[0]
+        ens_sem = float(ens_std / (ens ** 0.5)) if ens > 0 else None
+        return {"ens_mean": ens_mean, "ens_std": ens_std, "ens_sem": ens_sem}
+
+    proj3_target_ens = ens_stats(proj3_target_per_ens)
+    proj3_perp_ens = ens_stats(proj3_perp_per_ens)
+    proj1_target_ens = ens_stats(proj1_target_per_ens)
+    proj1_perp_ens = ens_stats(proj1_perp_per_ens)
 
     stats = {
         "ens": int(ens),
@@ -285,12 +311,18 @@ def compute_h3_projections_streaming(
                 "std": float(torch.std(proj3_target).item()),
                 "var": float(proj3_target.var().item()),
                 "second_moment": float(second_moment(proj3_target).item()),
+                "ens_mean": proj3_target_ens["ens_mean"],
+                "ens_std": proj3_target_ens["ens_std"],
+                "ens_sem": proj3_target_ens["ens_sem"],
             },
             "perp": {
                 "mean": float(torch.mean(proj3_perp).item()),
                 "std": float(torch.std(proj3_perp).item()),
                 "var": float(proj3_perp.var().item()),
                 "second_moment": float(second_moment(proj3_perp).item()),
+                "ens_mean": proj3_perp_ens["ens_mean"],
+                "ens_std": proj3_perp_ens["ens_std"],
+                "ens_sem": proj3_perp_ens["ens_sem"],
             },
         },
         "h1": {
@@ -299,12 +331,18 @@ def compute_h3_projections_streaming(
                 "std": float(torch.std(proj1_target).item()),
                 "var": float(proj1_target.var().item()),
                 "second_moment": float(second_moment(proj1_target).item()),
+                "ens_mean": proj1_target_ens["ens_mean"],
+                "ens_std": proj1_target_ens["ens_std"],
+                "ens_sem": proj1_target_ens["ens_sem"],
             },
             "perp": {
                 "mean": float(torch.mean(proj1_perp).item()),
                 "std": float(torch.std(proj1_perp).item()),
                 "var": float(proj1_perp.var().item()),
                 "second_moment": float(second_moment(proj1_perp).item()),
+                "ens_mean": proj1_perp_ens["ens_mean"],
+                "ens_std": proj1_perp_ens["ens_std"],
+                "ens_sem": proj1_perp_ens["ens_sem"],
             },
         },
         "h3_eigenvalues": eigenvalues.tolist(),
@@ -488,7 +526,8 @@ def main():
         theory_bare_h1_target = target_bare_block.get("lH1T", theory_bare_h1_target)
         theory_bare_h3_perp = perp_bare_block.get("lH3P", theory_bare_h3_perp)
         theory_bare_h1_perp = perp_bare_block.get("lH1P", theory_bare_h1_perp)
-
+        print("Bare theory all: ")
+        print(s["theory_bare"])
     if labels:
         try:
             x = np.arange(len(labels))

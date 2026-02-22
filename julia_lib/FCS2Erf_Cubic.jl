@@ -95,7 +95,7 @@ function residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b)
     # Training modifies weights: Σ_T = Σ_0 + δ·training_contribution
     # For FCN2: lV1 = effect of training on kernel = lT1·gammaYh/(n1·chi)
 
-    rlWT = lWT -  1 / (d + epsilon^2 * gammaYh * (lT1)/ ( n1 * chi))
+    rlWT = lWT -  1 / (d + epsilon^2 * gammaYh * (lT1)/ ( n1 * chi)) / 6.0
     
     return [rj1, rj3, rlWT]
 end
@@ -121,7 +121,7 @@ function residuals_fcn2_fixed_TrSigma(x, P, chi, d, kappa, delta, epsilon, n1, b
     
     # Equations of state (J equations only, lWT is fixed)
     rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma_val)) * lWT)
-    rj3 = lJ3 - (16 / (π * (1 + 2 * TrSigma_val)^3) * 15 * (lWT^3))
+    rj3 = lJ3 - (16 / (π * (1 + 2 * TrSigma_val)^3) * 15 * (lWT^3)) / 6.0
     
     return [rj1, rj3]
 end

@@ -1,9 +1,6 @@
 using ArgParse
 using ForwardDiff
 using LinearAlgebra
-using Plots
-using Colors
-using LaTeXStrings
 using Printf
 using JSON
 

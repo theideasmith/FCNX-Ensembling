@@ -174,12 +174,19 @@ def plot_W1_weight_distribution(
         W1 = model.W0.detach().cpu().numpy()  # shape (ens, n2, n1)
 
         w1_feature0 = W1[:, :, 0].flatten()
+        
+        # For lWP: compute variance per d channel and average them
         if W1.shape[2] > 1:
-            w1_mean_across_input = W1[:, :, 1:].mean(axis=2).flatten()
-            mean_label = 'W1.mean over input cols 1:'
+            # Compute variance for each of the perpendicular dimensions (1 through d-1)
+            perp_variances = np.array([W1[:, :, i].flatten().var() for i in range(1, W1.shape[2])])
+            empirical_lWP = np.mean(perp_variances)
+            # For histogram, use all perpendicular weights flattened
+            w1_mean_across_input = W1[:, :, 1:].flatten()
+            mean_label = f'W1 perpendicular (cols 1:), avg_var={empirical_lWP:.4e}'
         else:
-            w1_mean_across_input = W1.mean(axis=2).flatten()
-            mean_label = 'W1.mean over input cols (single col)'
+            empirical_lWP = 0.0
+            w1_mean_across_input = np.array([])
+            mean_label = 'No perpendicular dimensions'
         
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -203,13 +210,17 @@ def plot_W1_weight_distribution(
         else:
             print(f"    Skipping Gaussian overlay: lWT={lWT}")
 
-        # Plot mean across input columns with Gaussian overlay
-        counts1, bins1, _ = axes[1].hist(w1_mean_across_input, bins=50, color='tab:orange', alpha=0.7, edgecolor='black', density=True)
-        axes[1].set_xlabel('Weight value')
-        axes[1].set_ylabel('Frequency')
-        axes[1].set_title(
-            f'{mean_label}\nVar={w1_mean_across_input.var():.4e}, Mean={w1_mean_across_input.mean():.4e}'
-        )
+        # Plot perpendicular with Gaussian overlay
+        if len(w1_mean_across_input) > 0:
+            counts1, bins1, _ = axes[1].hist(w1_mean_across_input, bins=50, color='tab:orange', alpha=0.7, edgecolor='black', density=True)
+            axes[1].set_xlabel('Weight value')
+            axes[1].set_ylabel('Frequency')
+            axes[1].set_title(
+                f'{mean_label}\nVar={empirical_lWP:.4e}, Mean={w1_mean_across_input.mean():.4e}'
+            )
+        else:
+            axes[1].text(0.5, 0.5, 'No data', ha='center', va='center')
+            axes[1].set_title(mean_label)
         axes[1].grid(True, alpha=0.3)
         
         # Overlay Gaussian if lWP is available
@@ -255,15 +266,29 @@ def plot_W1_weight_distribution_aggregate(
         
         # Collect all weights across seeds
         all_w1_feature0 = []
-        all_w1_mean_across_input = []
+        all_w1_perpendicular = []
+        all_channel_variances = []
         
         for seed_weights in models_data[config_key]:
-            w1_feature0, w1_mean_across_input = seed_weights
+            w1_feature0, w1_perpendicular = seed_weights
             all_w1_feature0.extend(w1_feature0.flatten())
-            all_w1_mean_across_input.extend(w1_mean_across_input.flatten())
+            
+            # Compute per-channel variances for this seed if perpendicular data exists
+            if w1_perpendicular.size > 0:
+                channel_vars = np.array([w1_perpendicular[:, :, i].flatten().var() for i in range(w1_perpendicular.shape[2])])
+                all_channel_variances.append(channel_vars)
+            
+            # Also collect raw perpendicular weights for histogram
+            all_w1_perpendicular.extend(w1_perpendicular.flatten())
         
         all_w1_feature0 = np.array(all_w1_feature0)
-        all_w1_mean_across_input = np.array(all_w1_mean_across_input)
+        all_w1_perpendicular = np.array(all_w1_perpendicular)
+        
+        # Compute empirical lWP as average of per-channel variances across all seeds
+        if len(all_channel_variances) > 0:
+            empirical_lWP_aggregate = np.mean(np.concatenate(all_channel_variances))
+        else:
+            empirical_lWP_aggregate = 0.0
         
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         
@@ -283,19 +308,20 @@ def plot_W1_weight_distribution_aggregate(
             axes[0].legend(fontsize=10)
         
         # Aggregate plot for mean across input columns
-        axes[1].hist(all_w1_mean_across_input, bins=100, color='tab:orange', alpha=0.7, edgecolor='black', density=True)
+        axes[1].hist(all_w1_perpendicular, bins=100, color='tab:orange', alpha=0.7, edgecolor='black', density=True)
         axes[1].set_xlabel('Weight value')
         axes[1].set_ylabel('Frequency')
         axes[1].set_title(
-            f'Aggregate W1.mean over input (all seeds)\nVar={all_w1_mean_across_input.var():.4e}, Mean={all_w1_mean_across_input.mean():.4e}'
+            f'Aggregate W1 perpendicular (cols 1:, all seeds)\nAvg_var={empirical_lWP_aggregate:.4e}, Mean={all_w1_perpendicular.mean():.4e}'
         )
         axes[1].grid(True, alpha=0.3)
         
         if lWP is not None and lWP > 0:
-            x_range = np.linspace(all_w1_mean_across_input.min(), all_w1_mean_across_input.max(), 200)
-            gaussian_wp = (1.0 / np.sqrt(2 * np.pi * lWP)) * np.exp(-x_range**2 / (2 * lWP))
-            axes[1].plot(x_range, gaussian_wp, 'r-', linewidth=2.5, label=f'Theory Gaussian (σ²={lWP:.4e})', zorder=5)
-            axes[1].legend(fontsize=10)
+            if len(all_w1_perpendicular) > 0:
+                x_range = np.linspace(all_w1_perpendicular.min(), all_w1_perpendicular.max(), 200)
+                gaussian_wp = (1.0 / np.sqrt(2 * np.pi * lWP)) * np.exp(-x_range**2 / (2 * lWP))
+                axes[1].plot(x_range, gaussian_wp, 'r-', linewidth=2.5, label=f'Theory Gaussian (σ²={lWP:.4e})', zorder=5)
+                axes[1].legend(fontsize=10)
         
         fig.suptitle(
             f'Aggregate W1 Weight Distributions (d={d}, P={P}, N={N}, chi={chi})',
@@ -356,12 +382,13 @@ def main():
         W1 = model.W0.detach().cpu().numpy()
         w1_feature0 = W1[:, :, 0]
         
+        # Store full perpendicular weight matrix for per-channel variance computation in aggregate
         if W1.shape[2] > 1:
-            w1_mean_across_input = W1[:, :, 1:].mean(axis=2)
+            w1_perpendicular = W1[:, :, 1:]
         else:
-            w1_mean_across_input = W1.mean(axis=2)
+            w1_perpendicular = np.array([])
         
-        config_to_weights[config_key].append((w1_feature0, w1_mean_across_input))
+        config_to_weights[config_key].append((w1_feature0, w1_perpendicular))
         
         # Compute theory and plot individual run
         config_theory_key = (cfg["d"], cfg["P"], cfg["N"], cfg["chi"], cfg.get("kappa", 0.07))
