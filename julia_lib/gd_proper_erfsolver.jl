@@ -117,8 +117,8 @@ lJ3T / lJ3P
 log10(lWP)
 log10(lWT)
 
-lJ1T
-lJ1P
+lH1T
+lH1P
 
 lJ3T
 lJ3P

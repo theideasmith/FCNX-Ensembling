@@ -44,6 +44,7 @@ using Base: @kwdef
     n1::Float32
     χ::Float32
     b::Float32 = 4/(3*π)
+    δ::Float32 = 1.0
 end
 
 @kwdef mutable struct Solution2
@@ -89,13 +90,13 @@ function residuals_fcn2(x, P, chi, d, kappa, delta, epsilon, n1, b)
     rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma_val)) * lWT)
     
     # J3: Cubic feature kernel from first layer
-    rj3 = lJ3 - (16 / (π * (1 + 2 * TrSigma_val)^3) * 15 * (lWT^3)) 
+    rj3 = lJ3 - (16 / (π * (1 + 2 * TrSigma_val)^3) * 15 * (lWT^3)) /6.0
     
     # WT: Target weight variance with training feedback
     # Training modifies weights: Σ_T = Σ_0 + δ·training_contribution
     # For FCN2: lV1 = effect of training on kernel = lT1·gammaYh/(n1·chi)
 
-    rlWT = lWT -  1 / (d + epsilon^2 * gammaYh * (lT1)/ ( n1 * chi)) / 6.0
+    rlWT = lWT -  1 / (d + epsilon^2 * gammaYh * (lT1)/ ( n1 * chi)) 
     
     return [rj1, rj3, rlWT]
 end
@@ -196,7 +197,7 @@ end
 function nlsolve_solver_fcn2(initial_guess;
     anneal=false,
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, b=1.0,
-    P=nothing, anneal_steps=30000,
+    P=nothing, anneal_steps=300,
     TrSigma_fixed=nothing,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
     
@@ -296,8 +297,8 @@ function populate_solution_fcn2(sol_vec, params::ProblemParams2)
     
     gammaYh = (4 / π) / (1 + 2 * TrSigma_val)
     
-    lK1 = gammaYh * lJ1 / params.χ
-    lK3 = gammaYh * lJ3 / params.χ
+    lK1 = gammaYh * lJ1 
+    lK3 = gammaYh * lJ3 
     
     learnability1 = lK1 / (lK1 + params.κ / params.P)
     learnability3 = lK3 / (lK3 + params.κ / params.P)
@@ -324,7 +325,7 @@ function solve_FCN2_Erf(problem_params::ProblemParams2, initial_guess;
         chi=problem_params.χ,
         d=problem_params.d,
         kappa=problem_params.κ,
-        delta=problem_params.ϵ,
+        delta=problem_params.δ,
         epsilon=problem_params.ϵ,
         n1=problem_params.n1,
         b=problem_params.b,

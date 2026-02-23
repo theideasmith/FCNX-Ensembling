@@ -491,7 +491,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
             timeend = torch.cuda.Event(enable_timing=True)
             timestart.record()
             # 1) large-batch H3 projections (use 200 million total samples as requested)
-            stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=100_000_000, batch_size=10000, device=device)
+            stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=3_000_000, batch_size=10000, device=device)
             results_map["h_proj"][idx] = {
                 "lH1_T": (stats["h1"]["target"]["second_moment"], 0.0),
                 "lH1_P": (stats["h1"]["perp"]["second_moment"], 0.0),
@@ -989,7 +989,7 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
             try:
                 model = compute_mod.load_model_from_run(seed_dir, device)
                 d = int(getattr(model, "d", None) or 0)
-                stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=10_000_000, batch_size=1000, device=device)
+                stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=100_000_000, batch_size=100000, device=device)
                 # Save the computed projections for future use
                 compute_mod.save_stats(seed_dir, stats)
             except Exception as e:
@@ -1010,7 +1010,25 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
     if not seed_eigenvalues:
         print("No seed eigenvalues collected. Exiting.")
         return
-    
+
+    # Generate arXiv-style aggregate plot
+    results_map = {'h_proj': {}}
+    for i, seed_name in enumerate(sorted(seed_eigenvalues.keys())):
+        vals = seed_eigenvalues[seed_name]
+        results_map['h_proj'][i] = {
+            "lH1_T": (vals["lH1T"], 0.0),
+            "lH1_P": (vals["lH1P"], 0.0),
+            "lH3_T": (vals["lH3T"], 0.0),
+            "lH3_P": (vals["lH3P"], 0.0),
+        }
+    t_vals = {
+        "lH1_T": theory_lh1t,
+        "lH1_P": theory_lh1p,
+        "lH3_T": theory_lh3t,
+        "lH3_P": theory_lh3p,
+    }
+    plot_projections_arxiv_fcn3(results_map, t_vals, out_path, param_title)
+
     # Create aggregate plot: scatter per seed (color-coded), mean dots, theory lines
     eig_types = ["lH1T", "lH1P", "lH3T", "lH3P"]
     eig_labels = [r"$\lambda_{H1}^T$", r"$\lambda_{H1}^{\perp}$", r"$\lambda_{H3}^T$", r"$\lambda_{H3}^{\perp}$"]
