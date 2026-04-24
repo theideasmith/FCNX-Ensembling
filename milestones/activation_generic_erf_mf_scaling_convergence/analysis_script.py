@@ -5,6 +5,7 @@ import sys
 import re
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import cm
 import torch
 import torch.multiprocessing as mp
 import argparse
@@ -14,6 +15,8 @@ from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from collections import defaultdict
 import traceback
+from matplotlib.markers import MarkerStyle
+torch.set_float32_matmul_precision('high')
 # Set publication-quality styling
 plt.rcParams.update({
     'font.size': 16,
@@ -203,17 +206,16 @@ def run_empirical_task(task_info):
             #    torch.manual_seed(cfg['seed'])  # Reset seed for reproducibility
             # else:
             #     torch.manual_seed(cfg['base_seed'])  # Default seed if not specified
-            # for _ in range(P_total // batch_size):
-            #     X_batch = torch.randn(batch_size, d, device=device)
-            #     out = model(X_batch)
-
-            #     x0 = X_batch[:, 0]
-            #     h3_comp = (x0**3 - 3*x0) / 6**0.5
-            #     # Graham-Schmidt orthogonalization to get h3 component
-            #     remainder = out - (h1_sum * x0).unsqueeze(-1)
-            #     proj3_target_sum = torch.einsum('pq,p->q', remainder, h3_comp).sum().item() / model.ensembles  # Average over ensembles
-            #     # print(d_h3_sum)
-            #     h3_sum += proj3_target_sum
+            for _ in range(P_total // batch_size):
+                X_batch = torch.randn(batch_size, d, device=device)
+                out = model(X_batch)
+                x0 = X_batch[:, 0]
+                h3_comp = (x0**3 - 3*x0) / 6**0.5
+                # Graham-Schmidt orthogonalization to get h3 component
+                remainder = out - (h1_sum * x0).unsqueeze(-1)
+                proj3_target_sum = torch.einsum('pq,p->q', remainder, h3_comp).sum().item() / model.ensembles  # Average over ensembles
+                # print(d_h3_sum)
+                h3_sum += proj3_target_sum
             # print("H3 Sum is: ", h3_sum / P_total)
             # Projection using graham schmidt orthogonalization to get h3 component
             torch.manual_seed(int(cfg['seed'] * 3.14) if 'seed' in cfg else 4324)  # Reset seed for reproducibility
@@ -223,16 +225,19 @@ def run_empirical_task(task_info):
             h3_comp = (x0[:,0]**3 - 3*x0[:,0]) / 6**0.5
             h1_sum = torch.einsum('pq,p->q', out, x0[:,0]).sum().item() / model.ensembles / x0.shape[0]
             remainder = out - linear_component
-            proj3_target_sum = torch.einsum('pq,p->q', remainder, h3_comp).sum().item() / model.ensembles  # Average over ensembles
-            h3_sum = proj3_target_sum / x0.shape[0] / (0.03 * 6**0.5)  # Normalize by target scaling and number of samples
-            print("H3 Sum is: ", h3_sum)
-        
+            # proj3_target_sum = torch.einsum('pq,p->q', remainder, h3_comp).sum().item() / model.ensembles  # Average over ensembles
+            # # y_k is the projection of the target h3 component onto the normalized target, which is 1/sqrt(6) for the standard normal distribution   
+            # y_k = torch.einsum('p,p->', h3_comp, x0[:,0] + 0.03 * h3_comp).item() / x0.shape[0]  # Average over samples
+            # h3_sum = proj3_target_sum / x0.shape[0] / 0.03  # Normalize by target scaling and number of samples
+            # print("y_k is: ", y_k)
+            # print("H3 Sum is: ", h3_sum)
+        P_total = 100_000_000
         # Compute h3 eigenvalues using high-precision streaming (P_total=200M)
-        print(f"Computing h3 projections with P_total=200_000_000 for d={cfg['d']}, P={cfg['P']}...")
+        print(f"Computing h3 projections with P_total={P_total} for d={cfg['d']}, P={cfg['P']}...")
         h3_stats = compute_h3_projections_streaming(
             model, 
             d=cfg['d'],
-            P_total=200_000_000,
+            P_total=10_000_000,
             batch_size=10_000,
             device=device
         )
@@ -266,6 +271,7 @@ if __name__ == "__main__":
     RESULTS_DIR = results_dir  # Update global variable with argument value
     mp.set_start_method('spawn', force=True)
     all_dirs = sorted(list(results_dir.glob("d*/*seed*")))
+    
 
     print(all_dirs)
     final_data = []
@@ -285,7 +291,8 @@ if __name__ == "__main__":
             print("Skipping due to large P: ", cfg['P'])
             continue
         # Filtering logic
-        if not any(abs(float(cfg.get("chi", 0)) - c) < 1e-6 for c in args.chi): continue
+        if not any(abs(float(cfg.get("chi", 0)) - c) < 1e-6 for c in args.chi): 
+            continue
         if args.kappa and not any(abs(float(cfg.get("kappa", 0)) - k) < 1e-6 for k in args.kappa): continue
         
 
@@ -371,7 +378,7 @@ if __name__ == "__main__":
             if emp is None: continue
             
             res = {**to_compute_dirs[i]['cfg'], **emp, 
-                   "theo_h": float(theo.get("lH1T", np.nan)), "theo_w": float(theo.get("lWT", np.nan)),
+                   "theo_h": float(theo.get("lH1T", np.nan)), "theo_w": float(theo.get("lWT", np.nan)), "theo_h3": float(theo.get("lH3T", np.nan)),
                    "h1_theory": float(theo.get("mu1", np.nan)), "h3_theory": float(theo.get("mu3", np.nan)),
                    "kappa_eff": kappa_effs[i]}
             CacheManager.save_result(to_compute_hashes[i], res)
@@ -383,26 +390,40 @@ if __name__ == "__main__":
 
     unique_kappas = sorted(set(r["kappa"] for r in final_data))
     unique_chis = sorted(set(r["chi"] for r in final_data))
-    color_by = "kappa" if len(unique_kappas) > 1 else "chi"
+    multi_chi_mode = len(args.chi) > 1 and len(unique_chis) > 1
+    # If multiple chi values are explicitly requested, color by chi using viridis.
+    color_by = "chi" if multi_chi_mode else ("kappa" if len(unique_kappas) > 1 else "chi")
     unique_vals = unique_kappas if color_by == "kappa" else unique_chis
     groups = {val: [r for r in final_data if r[color_by] == val] 
               for val in unique_vals}
     
     num_colors = len(unique_vals)
-    if num_colors < 5:
-        colors_list = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']  # blue, orange, green, red, purple
+    if multi_chi_mode:
+        cmap = cm.get_cmap("viridis")
+        color_positions = np.linspace(0.1, 0.9, max(num_colors, 1))
+        colors = [cmap(v) for v in color_positions]
+    elif num_colors < 5:
+        colors_list = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         colors = colors_list[:num_colors]
     else:
-        cmap = plt.cm.get_cmap("plasma", num_colors)
-        colors = [cmap(i) for i in range(num_colors)]
+        cmap = cm.get_cmap("plasma")
+        color_positions = np.linspace(0.1, 0.9, max(num_colors, 1))
+        colors = [cmap(v) for v in color_positions]
+
+    exp_marker = MarkerStyle("o")
+    theo_marker = MarkerStyle("s") if multi_chi_mode else MarkerStyle("o")
+
+    def series_color(i):
+        return colors[i]
 
     # Eigenvalues
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
         p_vals = [r["P"] for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-        ax1.scatter(p_vals, [r["emp_h"] for r in res], color='red', label=label, alpha=0.7, s=50)
-        ax2.scatter(p_vals, [r["emp_w0"] for r in res], color='red', label=label, alpha=0.7, s=50)
+        ax1.scatter(p_vals, [r["emp_h"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
+        ax2.scatter(p_vals, [r["emp_w0"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
         
         # Mean lines
         p_to_emp_h = defaultdict(list)
@@ -419,15 +440,15 @@ if __name__ == "__main__":
         mean_theo_h = [np.mean(p_to_theo_h[p]) for p in unique_p]
         mean_emp_w = [np.mean(p_to_emp_w[p]) for p in unique_p]
         mean_theo_w = [np.mean(p_to_theo_w[p]) for p in unique_p]
-        ax1.plot(unique_p, mean_emp_h, '-', color='red', linewidth=3, alpha=0.8)
-        ax1.plot(unique_p, mean_theo_h, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
-        ax2.plot(unique_p, mean_emp_w, '-', color='red', linewidth=3, alpha=0.8)
-        ax2.plot(unique_p, mean_theo_w, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
+        ax1.plot(unique_p, mean_emp_h, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        ax1.plot(unique_p, mean_theo_h, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
+        ax2.plot(unique_p, mean_emp_w, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        ax2.plot(unique_p, mean_theo_w, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
     # Dummy plot for legend
-    ax1.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    ax1.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
-    ax2.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    ax2.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+    ax1.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    ax1.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
+    ax2.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    ax2.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
     d = final_data[0]["d"] if final_data else 0
     ax1.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d")
     ax2.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d")
@@ -442,9 +463,10 @@ if __name__ == "__main__":
     # Lambda H
     fig_h = plt.figure(figsize=(10, 6))
     for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
         p_vals = [r["P"] for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-        plt.scatter(p_vals, [r["emp_h"] for r in res], color='red', label=label, alpha=0.7, s=50)
+        plt.scatter(p_vals, [r["emp_h"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
         # Mean lines
         p_to_emp_h = defaultdict(list)
         p_to_theo_h = defaultdict(list)
@@ -454,10 +476,10 @@ if __name__ == "__main__":
         unique_p = sorted(p_to_emp_h.keys())
         mean_emp_h = [np.mean(p_to_emp_h[p]) for p in unique_p]
         mean_theo_h = [np.mean(p_to_theo_h[p]) for p in unique_p]
-        plt.plot(unique_p, mean_emp_h, '-', color='red', linewidth=3, alpha=0.8)
-        plt.plot(unique_p, mean_theo_h, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
-    plt.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    plt.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+        plt.plot(unique_p, mean_emp_h, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        plt.plot(unique_p, mean_theo_h, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
+    plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
     plt.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d")
     plt.title(r"Linear Target Eigenvalues ($\lambda_H^*$)" + f" d={d}, $\\kappa_{{eff}}={kappa_eff:.2g}$, N={N}")
     plt.xlabel("P (dataset size)"); plt.legend(); plt.grid(True, alpha=0.3); plt.xscale('log')
@@ -466,9 +488,10 @@ if __name__ == "__main__":
     # Lambda W
     fig_w = plt.figure(figsize=(10, 6))
     for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
         p_vals = [r["P"] for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-        plt.scatter(p_vals, [r["emp_w0"] for r in res], color='red', label=label, alpha=0.7, s=50)
+        plt.scatter(p_vals, [r["emp_w0"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
         # Mean lines
         p_to_emp_w = defaultdict(list)
         p_to_theo_w = defaultdict(list)
@@ -478,10 +501,10 @@ if __name__ == "__main__":
         unique_p = sorted(p_to_emp_w.keys())
         mean_emp_w = [np.mean(p_to_emp_w[p]) for p in unique_p]
         mean_theo_w = [np.mean(p_to_theo_w[p]) for p in unique_p]
-        plt.plot(unique_p, mean_emp_w, '-', color='red', linewidth=3, alpha=0.8)
-        plt.plot(unique_p, mean_theo_w, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
-    plt.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    plt.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+        plt.plot(unique_p, mean_emp_w, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        plt.plot(unique_p, mean_theo_w, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
+    plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
     plt.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d")
     plt.title(r"Linear Target Eigenvalues ($\lambda_W^*$)" + f" d={d}, $\\kappa_{{eff}}={kappa_eff:.2g}$, N={N}")
     plt.ylabel(r"$\lambda_W^* = v^T \Sigma_w v$");
@@ -493,9 +516,10 @@ if __name__ == "__main__":
     for mode in ["h1", "h3"]:
         plt.figure(figsize=(14, 8))
         for i, (val, res) in enumerate(groups.items()):
+            c = series_color(i)
             p_vals = [r["P"] for r in res]
             label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-            plt.scatter(p_vals, [r[f"{mode}_emp"] for r in res], color='red', label=label, alpha=0.7, s=50)
+            plt.scatter(p_vals, [r[f"{mode}_emp"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
             d = res[0]["d"] if res else 0
             plt.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d" if i == 0 else None)
 
@@ -508,11 +532,11 @@ if __name__ == "__main__":
             unique_p = sorted(p_to_emp.keys())
             mean_emp = [np.mean(p_to_emp[p]) for p in unique_p]
             mean_theo = [np.mean(p_to_theo[p]) for p in unique_p]
-            plt.plot(unique_p, mean_emp, '-', color='red', linewidth=3, alpha=0.8)
-            plt.plot(unique_p, mean_theo, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
+            plt.plot(unique_p, mean_emp, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+            plt.plot(unique_p, mean_theo, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
         # Dummy plot for legend
-        plt.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-        plt.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+        plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+        plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
         d = res[0]["d"] if res else 0
         kappa = res[0]['kappa'] if res else 0
         kappa_eff = res[0]['kappa_eff'] if res else 0
@@ -527,10 +551,11 @@ if __name__ == "__main__":
     # Eigenvalues with alpha
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
         alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-        ax1.scatter(alpha_vals, [r["emp_h"] for r in res], color='red', label=label, alpha=0.7, s=50)
-        ax2.scatter(alpha_vals, [r["emp_w0"] for r in res], color='red', label=label, alpha=0.7, s=50)
+        ax1.scatter(alpha_vals, [r["emp_h"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
+        ax2.scatter(alpha_vals, [r["emp_w0"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
         
         # Mean lines
         alpha_to_emp_h = defaultdict(list)
@@ -548,16 +573,16 @@ if __name__ == "__main__":
         mean_theo_h = [np.mean(alpha_to_theo_h[a]) for a in unique_alpha]
         mean_emp_w = [np.mean(alpha_to_emp_w[a]) for a in unique_alpha]
         mean_theo_w = [np.mean(alpha_to_theo_w[a]) for a in unique_alpha]
-        ax1.plot(unique_alpha, mean_emp_h, '-', color='red', linewidth=3, alpha=0.8)
-        ax1.plot(unique_alpha, mean_theo_h, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
-        ax2.plot(unique_alpha, mean_emp_w, '-', color='red', linewidth=3, alpha=0.8)
-        ax2.plot(unique_alpha, mean_theo_w, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
+        ax1.plot(unique_alpha, mean_emp_h, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        ax1.plot(unique_alpha, mean_theo_h, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
+        ax2.plot(unique_alpha, mean_emp_w, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        ax2.plot(unique_alpha, mean_theo_w, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
         ax1.set_ylim(0, None); ax2.set_ylim(0, None)
     # Dummy plot for legend
-    ax1.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    ax1.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
-    ax2.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    ax2.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+    ax1.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    ax1.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
+    ax2.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    ax2.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
     ax1.axvline(1, color='gray', linestyle='--', alpha=0.5, linewidth=2, label=r"$\alpha=1$")
     ax2.axvline(1, color='gray', linestyle='--', alpha=0.5, linewidth=2, label=r"$\alpha=1$")
     ax1.set_title(r"$\lambda_H$ Eigenvalue"); ax2.set_title(r"$\lambda_W$ Eigenvalue")
@@ -568,9 +593,10 @@ if __name__ == "__main__":
     # Lambda H alpha
     fig_h = plt.figure(figsize=(8, 8))
     for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
         alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-        plt.scatter(alpha_vals, [r["emp_h"] for r in res], color='red', label=label, alpha=0.7, s=50)
+        plt.scatter(alpha_vals, [r["emp_h"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
         # Mean lines
         alpha_to_emp_h = defaultdict(list)
         alpha_to_theo_h = defaultdict(list)
@@ -581,21 +607,62 @@ if __name__ == "__main__":
         unique_alpha = sorted(alpha_to_emp_h.keys())
         mean_emp_h = [np.mean(alpha_to_emp_h[a]) for a in unique_alpha]
         mean_theo_h = [np.mean(alpha_to_theo_h[a]) for a in unique_alpha]
-        plt.plot(unique_alpha, mean_emp_h, '-', color='red', linewidth=3, alpha=0.8)
-        plt.plot(unique_alpha, mean_theo_h, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
-    plt.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    plt.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+        plt.plot(unique_alpha, mean_emp_h, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        plt.plot(unique_alpha, mean_theo_h, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
+    plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
     plt.axvline(1, color='gray', linestyle='--', alpha=0.5, linewidth=2, label=r"$\alpha=1$")
     plt.title("Preactivation Target Eigenvalues "+ r"$\lambda^{H,He1}_*$"  + "\n" + f" d={d}, $\\kappa_{{eff}}={kappa_eff:.2g}$, N={N}")
     plt.xlabel(r"$\alpha$"); plt.legend(); plt.grid(True, alpha=0.3)
     plt.ylim(0, None)
     plt.tight_layout(); plt.savefig(RESULTS_DIR / f"eigenvalues_H_alpha_linear_d{d}_N{N}_kappa_bare{kappa:.2g}_kappa_eff{kappa_eff:.2g}.png", dpi=300)
+      # He3 Lambda H (target) vs P
+    fig_h3 = plt.figure(figsize=(10, 6))
+    for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
+        p_vals = [r["P"] for r in res]
+        label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
+
+        # scatter of empirical He3 target eigenvalues
+        plt.scatter(p_vals, [r["h3_target_eig"] for r in res],
+                    color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
+
+        # mean lines over seeds
+        p_to_emp_h3 = defaultdict(list)
+        p_to_theo_h3 = defaultdict(list)
+        for r in res:
+            p_to_emp_h3[r["P"]].append(r["h3_target_eig"])
+            p_to_theo_h3[r["P"]].append(r["theo_h3"])
+        unique_p = sorted(p_to_emp_h3.keys())
+        mean_emp_h3 = [np.mean(p_to_emp_h3[p]) for p in unique_p]
+        mean_theo_h3 = [np.mean(p_to_theo_h3[p]) for p in unique_p]
+        plt.plot(unique_p, mean_emp_h3, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        plt.plot(unique_p, mean_theo_h3, '--', color=c, linewidth=3,
+             marker=theo_marker, markersize=8, alpha=0.8)
+
+    # dummy handles for legend
+    plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
+    plt.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d")
+
+    plt.title(r"He3 Target Eigenvalues ($\lambda^{H,He3}_*$)" +
+            f" d={d}, $\\kappa_{{eff}}={kappa_eff:.2g}$, N={N}")
+    plt.xlabel("P (dataset size)")
+    plt.ylabel(r"$\lambda^{H,He3}_*$")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.xscale('log')
+    plt.ylim(0, None)
+    plt.tight_layout()
+    plt.savefig(RESULTS_DIR / f"eigenvalues_He3_d{d}_N{N}_kappa_bare{kappa:.2g}_kappa_eff{kappa_eff:.2g}.png", dpi=300)
+
     # Lambda W alpha
     fig_w = plt.figure(figsize=(8, 8))
     for i, (val, res) in enumerate(groups.items()):
+        c = series_color(i)
         alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-        plt.scatter(alpha_vals, [r["emp_w0"] for r in res], color='red', label=label, alpha=0.7, s=50)
+        plt.scatter(alpha_vals, [r["emp_w0"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
         # Mean lines
         alpha_to_emp_w = defaultdict(list)
         alpha_to_theo_w = defaultdict(list)
@@ -606,12 +673,12 @@ if __name__ == "__main__":
         unique_alpha = sorted(alpha_to_emp_w.keys())
         mean_emp_w = [np.mean(alpha_to_emp_w[a]) for a in unique_alpha]
         mean_theo_w = [np.mean(alpha_to_theo_w[a]) for a in unique_alpha]
-        plt.plot(unique_alpha, mean_emp_w, '-', color='red', linewidth=3, alpha=0.8)
-        plt.plot(unique_alpha, mean_theo_w, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
+        plt.plot(unique_alpha, mean_emp_w, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+        plt.plot(unique_alpha, mean_theo_w, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
     # Y minimum is 0
     plt.ylim(0, None)
-    plt.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-    plt.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+    plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+    plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
     plt.ylabel(r"$\lambda_W^* = v^T \Sigma_w v$");
     plt.axvline(1, color='gray', linestyle='--', alpha=0.5, linewidth=2, label=r"$\alpha=1$")
     plt.title(r"$\lambda_W$ Eigenvalue" + f" d={d}, $\\kappa_{{eff}}={kappa_eff:.2g}$, N={N}")
@@ -623,9 +690,10 @@ if __name__ == "__main__":
     for mode in ["h1", "h3"]:
         plt.figure(figsize=(8, 8))
         for i, (val, res) in enumerate(groups.items()):
+            c = series_color(i)
             alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
             label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
-            plt.scatter(alpha_vals, [r[f"{mode}_emp"] for r in res], color='red', label=label, alpha=0.7, s=50)
+            plt.scatter(alpha_vals, [r[f"{mode}_emp"] for r in res], color=c, label=label, alpha=0.7, s=50, marker=exp_marker)
             plt.axvline(1, color='gray', linestyle='--', alpha=0.5, linewidth=2, label=r"$\alpha=1$" if i == 0 else None)
 
             # Mean lines
@@ -638,11 +706,11 @@ if __name__ == "__main__":
             unique_alpha = sorted(alpha_to_emp.keys())
             mean_emp = [np.mean(alpha_to_emp[a]) for a in unique_alpha]
             mean_theo = [np.mean(alpha_to_theo[a]) for a in unique_alpha]
-            plt.plot(unique_alpha, mean_emp, '-', color='red', linewidth=3, alpha=0.8)
-            plt.plot(unique_alpha, mean_theo, '--', color='blue', linewidth=3, marker='o', markersize=8, alpha=0.8)
+            plt.plot(unique_alpha, mean_emp, '-', color=c, linewidth=3, alpha=0.8, marker=exp_marker, markersize=6)
+            plt.plot(unique_alpha, mean_theo, '--', color=c, linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
         # Dummy plot for legend
-        plt.plot([], [], '-', color='red', linewidth=3, label="Experiment")
-        plt.plot([], [], '--', color='blue', linewidth=3, marker='o', markersize=8, label="Theory")
+        plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Experiment")
+        plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory")
         d = res[0]["d"] if res else 0
         kappa = res[0]['kappa'] if res else 0
         kappa_eff = res[0]['kappa_eff'] if res else 0

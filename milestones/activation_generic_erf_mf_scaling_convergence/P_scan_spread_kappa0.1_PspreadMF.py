@@ -5,24 +5,18 @@ import os
 import heapq
 from collections import deque
 
-# I am deliberating on the goal of this experiment. To scan across multiple values of P
-# or to scan multiple values of chi is more important? 
-
 # 1. Generate all possible combinations
-d_values = [150] #np.unique(np.sort(np.logspace(np.log10(50), np.log10(250), num=3, dtype=int)))
-P_values = [3000] #np.unique(np.sort(np.logspace(np.log10(min(d_values)), np.log10(20*max(d_values)), num=10, dtype=int)))
-seeds = range(3)
-N = 1600
-num_ensembles = 5
-chi_values = [20, 40, 160, 320]
-total_epochs = 2_000_000
-gpu = 'cuda:1'
+d_values = [10] #np.unique(np.sort(np.logspace(np.log10(50), np.log10(250), num=3, dtype=int)))
+P_values = [1200, 1500, 1800, 2000, 2500, 2800, 3000, 3500] #np.unique(np.sort(np.logspace(np.log10(min(d_values)), np.log10(1500), num=5, dtype=int)))
+seeds = range(1)
+N = 128
+chi = 20.0
+
 all_jobs = []
 for p_val in P_values:
     for d_val in d_values:
-        for c in chi_values:
-            for s in seeds:
-                all_jobs.append({'P': p_val, 'd': d_val, 'chi': c, 'seed': s})
+        for s in seeds:
+            all_jobs.append({'P': p_val, 'd': d_val, 'seed': s})
 
 # 2. Assign a "Spread Priority"
 # We use a simple trick: assign a score based on the fractional binary representation 
@@ -39,21 +33,20 @@ n_d = len(d_values)
 scored_jobs = []
 for i, p_val in enumerate(P_values):
     for j, d_val in enumerate(d_values):
-        for k, c in enumerate(chi_values):
-            for s in seeds:
-                # The priority key: (Seed first to get one of each seed ASAP, 
-                # then a bit-reversal style spread for P and d)
-                # We use a tuple for the priority to handle tie-breaking
-                priority = (s, (i % 2), (j % 2), i, j) 
-                scored_jobs.append((priority, {'P': p_val, 'd': d_val, 'chi': c, 'seed': s}))
+        for s in seeds:
+            # The priority key: (Seed first to get one of each seed ASAP, 
+            # then a bit-reversal style spread for P and d)
+            # We use a tuple for the priority to handle tie-breaking
+            priority = (s, (i % 2), (j % 2), i, j) 
+            scored_jobs.append((priority, {'P': p_val, 'd': d_val, 'seed': s}))
 
 # Sort by our spread-based priority
 scored_jobs.sort(key=lambda x: x[0])
 job_queue = deque([job[1] for job in scored_jobs])
 
-lr_base = (1e-1 / 3000 / 3) 
+lr_base = (1e-2 / P_values[-1]) 
 train_script = 'd_sweep.py'
-def make_cmd(d, P, chi, seed):
+def make_cmd(d, P, seed):
     return [
         'python3', train_script,
         '--d', str(d),
@@ -62,19 +55,19 @@ def make_cmd(d, P, chi, seed):
         '--kappa',str( 0.1 ),
         '--N', str(int(N)),
         '--lr', str(lr_base * P), # So that P-adjusted learning rate remain constant
-        '--device', str(gpu)    ,
-        '--epochs', str(total_epochs),
+        '--device', 'cuda:1',
+        '--epochs', '20000000',
         '--seed', str(seed),
-        '--ens', str(num_ensembles),
-        '--to', 'chi_scan_kappa_0.1',
+        '--ens', '3',
+        '--to', 'd10_P_scan_kappa_0.1',
         '--eps', '0.03'
     ]
 
 running_procs = []
-max_parallel_jobs = 4
+max_parallel_jobs = 3
 print(f"Total jobs to run: {len(job_queue)}")
 print(f"P values being scanned: {P_values}")
-print(f"Chi values being scanned: {chi_values}")    
+
 # --- Main Execution Loop ---
 while job_queue or running_procs:
     # 1. Check for finished processes
@@ -87,7 +80,7 @@ while job_queue or running_procs:
     # 2. Fill the buffer up to max_parallel_jobs
     while len(running_procs) < max_parallel_jobs and job_queue:
         next_job = job_queue.popleft()
-        cmd = make_cmd(next_job['d'], next_job['P'], next_job['chi'], next_job['seed'])
+        cmd = make_cmd(next_job['d'], next_job['P'], next_job['seed'])
         
         print(f"[Launching] P={next_job['P']}, Seed={next_job['seed']}")
         proc = subprocess.Popen(cmd)

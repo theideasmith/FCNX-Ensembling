@@ -119,7 +119,12 @@ function main()
     )
 
     lJP = sol === nothing ? NaN : sol[1]
+    lT = -chi^2 / (kappa / P + lJ)^2 * delta
 
+    # Residual: fixed point for lJ (no erf nonlinearity)
+    lWT = 1 / (d + delta * lT / (chi * n1))
+
+    lWP = 1 / (d)
     result = Dict(
         "d"=>d,
         "n1"=>n1,
@@ -130,6 +135,8 @@ function main()
         "b"=>b,
         "lJ"=>lJ,
         "lJP"=>lJP,
+        "lWT" => lWT,
+        "lWP" => lWP
 
 
     )

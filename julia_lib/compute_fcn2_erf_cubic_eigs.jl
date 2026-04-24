@@ -49,7 +49,7 @@ function parse_cli_args()
         "--epsilon"
         help = "epsilon (cubic target strength)"
         arg_type = Float64
-        default = 0.00
+        default = 0.03
         
         "--b"
         help = "erf constant b"
@@ -122,11 +122,12 @@ function main()
     params_target = FCS2Erf_Cubic.ProblemParams2(
         d=Float32(d),
         κ=Float32(kappa),
-        ϵ=Float32(1.0),  # delta for target
+        ϵ=Float32(epsilon),  # delta for target
         P=Float32(P),
         n1=Float32(n1),
         χ=Float32(chi),
-        b=Float32(b)
+        b=Float32(b),
+        δ=1.0
     )
     
     sol_target = FCS2Erf_Cubic.solve_FCN2_Erf(
@@ -144,11 +145,12 @@ function main()
     params_perp = FCS2Erf_Cubic.ProblemParams2(
         d=Float32(d),
         κ=Float32(kappa),
-        ϵ=Float32(0.0),  # delta for perp
+        ϵ=Float32(epsilon),  # delta for perp
         P=Float32(P),
         n1=Float32(n1),
         χ=Float32(chi),
-        b=Float32(b)
+        b=Float32(b),
+        δ=0.0
     )
     
     sol_perp = FCS2Erf_Cubic.solve_FCN2_Erf(

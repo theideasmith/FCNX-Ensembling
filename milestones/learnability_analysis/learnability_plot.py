@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 # Parameters
 d = 150
-chi = 50
+chi = 10
 N_list = [200, 1600]
 P_list = np.logspace(np.log10(50), np.log10(3000), 10)  # 50 points from 50 to 3000
 
