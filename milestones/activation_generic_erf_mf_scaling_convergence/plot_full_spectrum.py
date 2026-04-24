@@ -128,7 +128,18 @@ def find_run_dirs(base: Path, dims: Optional[List[int]] = None, suffix: str = ""
         chi = int(float(m_cfg.group(4)))
 
         cfg = {"d": d, "P": P, "N": N, "chi": chi, "seed": seed}
+
+        # Load the config.json if it exists to get additional parameters like kappa and epsilon
+        config_path = seed_dir / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    config_data = json.load(f)
+                cfg.update(config_data)
+            except Exception as e:
+                print(f"  Warning: failed to read config.json for {seed_dir}: {e}")
         selected.append((seed_dir, cfg))
+
 
     selected.sort(key=lambda x: (x[1]["d"], x[1]["seed"]))
     print(f"Found {len(selected)} runs with model.pt")
@@ -203,9 +214,12 @@ def compute_empirical_spectrum_activation(
             Y1 = X
             Y3 = (X ** 3 - 3.0 * X) / 6.0**0.5
 
+
             # Low-rank approximation QB for J kernel
-            Q, Z = j_random_QB_activation_generic(model, X, k=9000, p=10)
+            Q, Z = h_random_QB_activation_generic(model, X, k=9000, p=10)
             Ut, _S, V = torch.linalg.svd(Z.T)
+
+            return _S.cpu().numpy() / p_large # Return singular values as a proxy for the spectrum
             m, n = Z.shape[1], Z.shape[0]
             k_eff = min(m, n)
             Sigma = torch.zeros(m, n, device=Z.device, dtype=Z.dtype)
@@ -214,7 +228,7 @@ def compute_empirical_spectrum_activation(
 
             # Left eigenvalues for Y1 via J_eig
             Y1_norm = Y1 / torch.norm(Y1, dim=0)
-            left_eigenvaluesY1 = model.J_eig(X, Y1_norm)
+            left_eigenvaluesY1 = model.H_eig(X, Y1_norm)
 
             # Left eigenvalues for Y3 via projection through U, Sigma
             Y3_norm = Y3 / torch.norm(Y3, dim=0)
@@ -237,7 +251,7 @@ def compute_theory(cfg: Dict[str, int], device: torch.device) -> Dict[str, Dict[
     chi = float(cfg.get("chi"))
     kappa = float(cfg.get("kappa", 2.0))
     eps = float(cfg.get("epsilon", 0.03))
-
+    print("Computing with kappa:", kappa, "epsilon:", eps, "chi:", chi)
     julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf.jl"
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
@@ -256,6 +270,7 @@ def compute_theory(cfg: Dict[str, int], device: torch.device) -> Dict[str, Dict[
         f"--to={to_path}",
         "--quiet",
     ]
+    print(' '.join(cmd))
 
     try:
         subprocess.run(cmd, check=True, capture_output=True)
@@ -279,6 +294,7 @@ def compute_theory(cfg: Dict[str, int], device: torch.device) -> Dict[str, Dict[
             "lH1P": perp.get("lH1P"),
             "lH3T": tgt.get("lH3T"),
             "lH3P": perp.get("lH3P"),
+
         },
         "J": {
             "lJ1T": tgt.get("lJ1T"),
@@ -554,6 +570,7 @@ def main():
     theory_first = None
 
     for run_dir, cfg in runs:
+
         model = load_model(run_dir, cfg, device)
         if model is None:
             print(f"Skipping {run_dir}: model not found")
@@ -569,7 +586,26 @@ def main():
             for k in aggregated_samples:
                 if k in collected:
                     aggregated_samples[k].append(collected[k])
+    
 
+    for run_dir, cfg in runs:
+        spectrum = compute_empirical_spectrum_activation(model, cfg['d'], cfg['P'], device)
+        if spectrum is not None:
+            out_path = run_dir / "plots" / "full_spectrum_sorted.png"
+            plot_full_spectrum(run_dir, cfg, spectrum, theory_first["H"], out_path)
+
+        # Save theory and computed eigenvalues for this run to a JSON for later analysis
+        theory_out_path = run_dir / "plots" / "theory_and_spectrum.json"
+        theory_out_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(theory_out_path, "w") as f:
+                json.dump({
+                    "theory": theory,
+                    "spectrum": spectrum.tolist() if spectrum is not None else None,
+                }, f, indent=2)
+            print(f"Saved theory and spectrum data to {theory_out_path}")
+        except Exception as e:
+            print(f"  Warning: failed to save theory and spectrum data for {run_dir}: {e}")
     # Aggregate across seeds and plot dataset-averaged action
     combined = {k: np.concatenate(v) if v else np.array([]) for k, v in aggregated_samples.items()}
     if any(arr.size > 0 for arr in combined.values()):

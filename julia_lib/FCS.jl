@@ -38,28 +38,19 @@ module FCS
 
 export residuals, gradient_descent_solver, compute_lK_ratio, sweep_learnabilities, nlsolve_solver
 
-
-using Pkg
 using ForwardDiff
 using LinearAlgebra
-using Plots  # for plotting
-
-using ForwardDiff
-using LinearAlgebra
-using Plots
-using Colors   # for distinguishable_colors
 using NLsolve
-using ForwardDiff
-using LinearAlgebra
-using Plots
-using Colors   # for distinguishable_colors
-using ColorSchemes
-using LaTeXStrings
+
+
+
+
+
 
 
 is_physical(sol) = all(sol .> 0)
 using Base: @kwdef
-Pkg.instantiate()
+
 
 
 
@@ -154,8 +145,8 @@ end
 function nlsolve_solver(initial_guess;
     anneal= false,
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
-    P=nothing,anneal_steps = 30000,
-    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
+    P=nothing, anneal_steps = 30000,
+    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, normalized::Bool=true)
     x = copy(initial_guess)
     if P === nothing
         P = d^1.2 # default
@@ -163,7 +154,7 @@ function nlsolve_solver(initial_guess;
 
 
     function res_func!(F, x, c)
-        F[:] = residuals(x, P, c, d, kappa, delta, epsilon, n1, n2, b)
+        F[:] = residuals(x, P, c, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized)
     end
 
     result = nothing
@@ -199,15 +190,15 @@ end
 
 
 # -------------------------
-# Residual function
+# Residual helper functions
 # -------------------------
-# Given a guess x = [lH1, lJ1, lH3, lJ3], returns the residuals of the 4 equations
-function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
+
+# Legacy residuals function (current implementation, without 1/6 normalization)
+function residuals_legacy(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
     lJ1, lJ3, lH1, lH3, lWT = x  # current variables
     lWP =  1.0 / d
     
     TrSigma = lWT + lWP * (d - 1)
-
 
     # Conjugate inter-layer discrepancies by the inverse kernels
     # J : Downstream ↦ Upstream
@@ -234,9 +225,60 @@ function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
     rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma)) * lWT)
     rh1 = lH1 - 1 / (1 / lJ1 + gammaYh2 * lT1 / (n2 * chi))
     rh3 = lH3 - ( 1 / (1 / lJ3 +  gammaYh2 * lT3 * epsilon^2 / (n2 * chi)) )
-    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) ) 
+    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) ) / 6
     rlWT = lWT - 1 / (d + delta * b * (n2 / n1) * lV1)
     return [rj1, rj3, rh1, rh3, rlWT]
+end
+
+# Normalized residuals function (with 1/6 factor applied to all l3 eigenvalues)
+function residuals_normalized(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
+    lJ1, lJ3, lH1, lH3, lWT = x  # current variables
+    lWP =  1.0 / d
+    
+    # Apply 1/6 normalization to all l3 eigenvalues
+    lJ3 = lJ3 
+    lH3 = lH3 
+    
+    TrSigma = lWT + lWP * (d - 1)
+
+    # Conjugate inter-layer discrepancies by the inverse kernels
+    lV1 =    - lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)   # Apply 1/6 normalization to lV1 as well, since it depends on lH1 and lJ1
+    lV3 =    - lJ3^(-1) * (lH3  - lJ3) * lJ3^(-1) 
+    b = 4 / (π) * 1/ ( 1 + 2 * TrSigma)
+
+    EChh = lH1 + lH3 +
+        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3))  * (d - 1) +
+        (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
+
+    gammaYh2 = (4 / π) / (1 + 2 * EChh)
+    lK1 = gammaYh2 * lH1 
+    lK3 = gammaYh2 * lH3 
+
+    lT1 = -(chi^2 / (kappa / P + lK1)^2 * delta) - chi^2 * kappa / (P * chi) * lK1 / (lK1 + kappa / P)
+
+    lT3 =   -(chi^2 / (kappa / P + lK3)^2 * delta) - chi^2 * kappa / (P * chi) * lK3 / (lK3 + kappa / P)
+    # lT3 = lT3 / 6.0  # Apply 1/6 normalization to lT3 as well, since it depends on lK3 which depends on lH3
+
+    # Residuals
+    rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma)) * lWT)
+    rh1 = lH1 - 1 / (1 / lJ1 + gammaYh2 * lT1 / (n2 * chi))
+    rh3 = lH3 - ( 1 / (1 / lJ3 +  gammaYh2 * lT3 * epsilon^2 / (n2 * chi)) ) 
+    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) ) / 6.0
+    rlWT = lWT - 1 / (d + delta * b * (n2 / n1) * lV1)
+    return [rj1, rj3, rh1, rh3, rlWT]
+end
+
+# Main residuals dispatcher function
+# Given a guess x = [lH1, lJ1, lH3, lJ3], returns the residuals of the 4 equations
+# If normalized=true (default), applies 1/6 factor to l3 eigenvalues
+# If normalized=false, uses legacy implementation
+function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized::Bool=false)
+    normalized = true
+    if normalized
+        return residuals_normalized(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
+    else
+        return residuals_legacy(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
+    end
 end
 
 # -------------------------
@@ -245,7 +287,7 @@ end
 function gradient_descent_solver(initial_guess;
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
     P=nothing,
-    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
+    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, normalized::Bool=true)
 
     x = copy(initial_guess)
     if P === nothing
@@ -255,13 +297,13 @@ function gradient_descent_solver(initial_guess;
 
     for iter in 1:max_iter
         # Compute residuals
-        res = residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
+        res = residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized)
 
         # Loss = sum of squares
         loss = sum(res .^ 2) + sum(x .^ 2)
 
         # Gradient of loss wrt x
-        grad = ForwardDiff.gradient(x -> sum(residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b) .^ 2), x)
+        grad = ForwardDiff.gradient(x -> sum(residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized) .^ 2), x)
 
         # Update step
         x -= lr * grad
@@ -291,12 +333,10 @@ function compute_lK_ratio(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)
         return (NaN, NaN)
     end
     lJ1, lJ3, lH1, lH3, lWT = sol
-    lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
-    lV3 = -(lH3 / lJ3^2 - 1 / lJ3)
-    lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
     lWP = 1 / d
 
     TrSigma = lWT + lWP * (d - 1)
+    b = 4 / (π) * 1 / (1 + 2 * TrSigma)
     EChh = lH1 + lH3 +
         (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3)) * (d - 1) +
         (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
@@ -322,6 +362,7 @@ EChh = lH1 + lH3 +
        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3)) * (d - 1) +
        (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
 gammaYh2 = (4 / π) / (1 + 2 * EChh)
+print(gammaYh2)
 lK1 = gammaYh2 * lH1
 lK3 = gammaYh2 * lH3
 
@@ -346,7 +387,7 @@ function populate_solution(sol::Solution, params::ProblemParams)
 end
 
 function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
-    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false)
+    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, normalized::Bool=true)
 
     sol = nlsolve_solver(
         initial_guess,
@@ -362,7 +403,8 @@ function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
         lr=lr,
         max_iter=max_iter,
         tol=tol,
-        verbose=verbose
+        verbose=verbose,
+        normalized=false
     )
     
     solution::Solution = isnothing(sol) ? Solution() : populate_solution(Solution(sol[1], sol[2], sol[3], sol[4]), problem_params)  
@@ -370,7 +412,7 @@ function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
 end
 
 
-function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsilon, n, b)
+function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsilon, n, b, normalized::Bool=true)
     P_vals = d .^ collect(alphas)
     learnabilities_1 = Float64[]
     learnabilities_3 = Float64[]
@@ -383,7 +425,8 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
             x,
             chi=chi, d=d, kappa=kappa, delta=delta,
             epsilon=epsilon, n1=n1, n2=n2, b=b,
-            P=P,lr=1e-5, max_iter=500000, anneal=true, verbose=false
+            P=P,lr=1e-5, max_iter=500000, anneal=true, verbose=false,
+            normalized=false
         )
 
         l1, l3 = compute_lK_ratio(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)

@@ -1,9 +1,6 @@
 using ArgParse
 using ForwardDiff
 using LinearAlgebra
-using Plots
-using Colors
-using LaTeXStrings
 using Printf
 using JSON
 
@@ -88,11 +85,11 @@ function parse_commandline()
         "--anneal-steps"
         help = "Number of annealing steps"
         arg_type = Int
-        default = 30000
+        default = 3000
         "--tol"
         help = "Tolerance for solver"
         arg_type = Float64
-        default = 1e-12
+        default = 1e-8
         "--verbose", "-v"
         help = "Verbose output from solver"
         action = :store_true

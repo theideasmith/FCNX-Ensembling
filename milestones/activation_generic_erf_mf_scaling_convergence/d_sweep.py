@@ -71,7 +71,7 @@ def compute_theory(d: int, P: int, N: int, chi: float, kappa: float, eps: float)
         "lH3P": perp.get("lH3P"),
     }
 
-def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, seed=42, ens=50, log_interval=10_000):
+def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, seed=42, ens=50, log_interval=10_000, to='results'):
     """Train network and track eigenvalues over epochs."""
 
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
@@ -84,7 +84,7 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
     # Setup directories
     base_name = f"d{d}_P{P}_N{N}_chi{chi}_kappa{kappa}"
     parent_dir = Path(__file__).parent
-    run_dir = parent_dir / base_name
+    run_dir = parent_dir /  to / base_name
     run_dir.mkdir(exist_ok=True, parents=True)
     seed_dir = run_dir / f"seed{seed}"
     seed_dir.mkdir(exist_ok=True, parents=True)
@@ -99,9 +99,9 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
     print(f"Device: {device}")
     
     # Compute theory predictions
-    print("\nComputing theory predictions...")
-    theory_H = compute_theory(d, P, N, chi, kappa, eps)
-    print(f"Theory eigenvalues: lH1T={theory_H.get('lH1T'):.6f}, lH1P={theory_H.get('lH1P'):.6f}, lH3T={theory_H.get('lH3T'):.6f}, lH3P={theory_H.get('lH3P'):.6f}")
+    # print("\nComputing theory predictions...")
+    # theory_H = compute_theory(d, P, N, chi, kappa, eps)
+    # print(f"Theory eigenvalues: lH1T={theory_H.get('lH1T'):.6f}, lH1P={theory_H.get('lH1P'):.6f}, lH3T={theory_H.get('lH3T'):.6f}, lH3P={theory_H.get('lH3P'):.6f}")
     
     # Data
     torch.manual_seed(seed)
@@ -154,7 +154,12 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
         pass
     
     model.train()
-    
+    W0 = model.W0  # shape: (ens, N, d)
+    W0_reshaped = W0.view(model.ensembles * N, d)  # shape: (ens*N, d)
+    cov_W0 = torch.matmul(W0_reshaped.t(), W0_reshaped) / (model.ensembles * N)  # shape: (d, d)
+    eigvals_W0 = torch.linalg.eigvalsh(cov_W0).sort(descending=True).values.detach().cpu().numpy()  # shape: (d,)
+    writer.add_scalar('W0_Cov_Eigenvalues/max', eigvals_W0[0], 0)
+    writer.add_scalar('W0_Cov_Eigenvalues/mean', eigvals_W0[1:].mean(), 0)
     # Weight decay
     wd_fc1 = d * temperature
     wd_fc2 = N * temperature
@@ -226,20 +231,23 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
         log_interval = 5000
         if epoch % log_interval == 0:
             with torch.no_grad():
-                # # Compute eigenvalues
-                # try:
+                # Compute eigenvalues
+                try:
                     
-                #     eigenvalues = model.H_eig(Xinf, Xinf).cpu().numpy()
-                #     try:
-                #         eigenvalues_over_time[epoch] = eigenvalues.tolist()
-                #     except Exception as e:
-                #         print(f"  Warning: Could not store eigenvalues at epoch {epoch}: {e}")
+                    eigenvalues = model.H_eig(Xinf, Xinf).cpu().numpy()
+                    writer.add_scalar('Eigenvalues/max', eigenvalues.max(), epoch)
+                    writer.add_scalar('Eigenvalues/mean', eigenvalues[1:].mean(), epoch)
+                    # try:
+                        # eigenvalues_over_time[epoch] = eigenvalues.tolist()
+                    # except Exception as e:
+                        # print(f"  Warning: Could not store eigenvalues at epoch {epoch}: {e}")
                     
-                # except Exception as e:
-                #     traceback.print_exc()
-                #     print(f"  Warning: Could not compute eigenvalues at epoch {epoch}: {e}")
-                #     eigenvalues = None
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f"  Warning: Could not compute eigenvalues at epoch {epoch}: {e}")
+                    eigenvalues = None
                 
+                  
                 # Compute eigenvalues of covariance matrix of readin weights and log to tensorboard
                 # Along ens*N dimension, and choose the d=0, and the average over the remainder
                 try:
@@ -309,9 +317,7 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 #     eigenvalues_exist = False
 
 
-                # if eigenvalues_exist:
-                #     writer.add_scalar('Eigenvalues/max', eigenvalues.max(), epoch)
-                #     writer.add_scalar('Eigenvalues/mean', eigenvalues[1:].mean(), epoch)
+              
                 
                 # if epoch > 0 and epoch % (5 * log_interval) == 0:
                 #     losses[epoch] = float(loss_avg)
@@ -332,28 +338,28 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 #         except:
                 #             pass
                 
-                # # Save checkpoint
-                # if epoch > 0 and epoch % 100000 == 0:
-                #     torch.save(model.state_dict(), seed_dir / "model.pt")
+                # Save checkpoint
+                if epoch > 0 and epoch % 50000 == 0:
+                    torch.save(model.state_dict(), seed_dir / "model.pt")
 
-                #     # Also save intermediate results periodically
-                #     try:
-                #         with open(seed_dir / "eigenvalues_over_time.json", "w") as f:
-                #             json.dump(eigenvalues_over_time, f, indent=2)
-                #     except Exception as save_e:
-                #         print(f"  Warning: Could not save eigenvalues: {save_e}")
+                    # # Also save intermediate results periodically
+                    # try:
+                    #     with open(seed_dir / "eigenvalues_over_time.json", "w") as f:
+                    #         json.dump(eigenvalues_over_time, f, indent=2)
+                    # except Exception as save_e:
+                    #     print(f"  Warning: Could not save eigenvalues: {save_e}")
 
-                #     with open(seed_dir / "losses.json", "w") as f:
-                #         json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
+                    # with open(seed_dir / "losses.json", "w") as f:
+                    #     json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
 
-                #     # Update config with current epoch and lr
-                #     config = {
-                #         "d": d, "P": P, "N": N, "kappa": float(kappa),
-                #         "lr": float(lr), "epochs": epochs, "chi": chi,
-                #         "seed": seed, "ens": ens, "current_epoch": epoch
-                #     }
-                #     with open(seed_dir / "config.json", "w") as f:
-                #         json.dump(config, f, indent=2)
+                    # Update config with current epoch and lr
+                    config = {
+                        "d": d, "P": P, "N": N, "kappa": float(kappa),
+                        "lr": float(lr), "epochs": epochs, "chi": chi,
+                        "seed": seed, "ens": ens, "current_epoch": epoch
+                    }
+                    with open(seed_dir / "config.json", "w") as f:
+                        json.dump(config, f, indent=2)
     
     # Save final model
     torch.save(model.state_dict(), seed_dir / "model_final.pt")
@@ -407,6 +413,7 @@ def main():
     parser.add_argument('--ens', type=int, default=50, help='Ensemble size')
     parser.add_argument('--dry-run', action='store_true', help='Run a quick test with epochs=1 and delete results afterwards')
     parser.add_argument('--eps', type=float, default=0.03, help='Epsilon parameter for cubic target generation')
+    parser.add_argument('--to', type=str, default='results', help='Directory to save results')
     args = parser.parse_args()
 
     epochs = 1 if args.dry_run else args.epochs
@@ -428,7 +435,8 @@ def main():
         device_str=args.device,
         seed=args.seed,
         ens=args.ens,
-        eps=args.eps
+        eps=args.eps,
+        to=args.to
     )
 
     print(f"\nTraining completed!")

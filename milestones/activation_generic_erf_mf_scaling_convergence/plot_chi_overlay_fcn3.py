@@ -1,4 +1,4 @@
-python #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Plot chi overlay for FCN3 models using h1_preactivation and lH* eigenvalues.
 Computes empirical and theory eigenvalues for a list of FCN3 runs.

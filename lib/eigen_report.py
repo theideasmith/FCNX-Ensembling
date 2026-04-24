@@ -94,6 +94,173 @@ def get_model_H_eig(model, d, device):
         return np.concatenate([eig_lin, eig_he3])
     return None
 
+def plot_projections_arxiv(results_map, t_vals, out_path: Path):
+    """
+    Create a high-quality, arxiv/thesis-ready plot of H3 projections only.
+    Extracted from the top-left panel of the 4-panel plot.
+    
+    Parameters:
+    -----------
+    results_map : dict
+        Results dictionary with 'h_proj' key containing measurement data
+    t_vals : dict
+        Theory values for comparison
+    out_path : Path
+        Output directory for saving the figure
+    """
+    try:
+        print("[DEBUG] Starting plot_projections_arxiv...")
+        print(f"[DEBUG] results_map keys: {results_map.keys()}")
+        print(f"[DEBUG] output path: {out_path}")
+        
+        # Set up publication-quality matplotlib settings
+        plt.rcParams.update({
+            'font.size': 13,
+            'font.family': 'serif',
+            'font.serif': ['Times New Roman', 'DejaVu Serif'],
+            'axes.labelsize': 15,
+            'axes.titlesize': 16,
+            'xtick.labelsize': 13,
+            'ytick.labelsize': 13,
+            'legend.fontsize': 13,
+            'figure.titlesize': 18,
+            'lines.linewidth': 1.5,
+            'axes.linewidth': 1.2,
+            'xtick.major.width': 1.2,
+            'ytick.major.width': 1.2,
+            'xtick.minor.width': 0.8,
+            'ytick.minor.width': 0.8,
+        })
+        
+        meas_keys = ["lH1_T", "lH1_P", "lH3_T", "lH3_P"]
+        data = results_map["h_proj"]
+        
+        if not data:
+            print("[WARNING] No h_proj data available")
+            return
+    
+    # Compute aggregated statistics
+    means, errs = [], []
+    all_values = {k: [] for k in meas_keys}
+    
+    for k in meas_keys:
+        run_vals = [data[r][k][0] for r in data]
+        all_values[k] = run_vals
+        means.append(np.mean(run_vals))
+        errs.append(np.std(run_vals) / np.sqrt(len(run_vals)))
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    x = np.arange(len(meas_keys))
+    width = 0.6
+    
+    # Scatter plot individual runs with transparency
+    np.random.seed(42)  # For reproducibility of jitter
+    for i, k in enumerate(meas_keys):
+        run_vals = all_values[k]
+        # Add small jitter to x position
+        jitter = np.random.normal(0, 0.02, len(run_vals))
+        ax.scatter(
+            x[i] + jitter, run_vals,
+            color='steelblue', alpha=0.35, s=60, zorder=2,
+            edgecolors='none'
+        )
+    
+    # Bar plot with error bars (empirical)
+    bars = ax.bar(
+        x, means, width=width,
+        yerr=errs, capsize=8,
+        color='steelblue', alpha=0.75,
+        error_kw={'elinewidth': 1.5, 'capthick': 1.5},
+        label='Empirical (Mean ± SEM)',
+        zorder=3
+    )
+    
+    # Theory comparison - horizontal lines
+    colors_theory = {'target': '#d62728', 'perp': '#ff7f0e'}
+    linestyles = {'target': '-', 'perp': '--'}
+    
+    for i, k in enumerate(meas_keys):
+        theory_val = t_vals[k]
+        style_type = 'target' if 'T' in k else 'perp'
+        ax.hlines(
+            theory_val, x[i] - width/2 - 0.1, x[i] + width/2 + 0.1,
+            colors=colors_theory[style_type],
+            linestyles=linestyles[style_type],
+            lw=2.2,
+            zorder=4
+        )
+        
+        # Add percentage gap label above each bar
+        if theory_val is not None and theory_val > 0:
+            pct_gap = 100.0 * (means[i] - theory_val) / theory_val
+            # Position text 20% higher than the bar+error in log space
+            y_pos = means[i] + errs[i]
+            y_pos_log = np.log10(y_pos) + 0.15  # Add 0.15 in log10 space
+            y_pos = 10 ** y_pos_log
+            ax.text(x[i], y_pos, f'{pct_gap:+.1f}%', ha='center', va='bottom', 
+                   fontsize=11, fontweight='bold', color='darkred',
+                   bbox=dict(boxstyle='round,pad=0.4', facecolor='yellow', alpha=0.6, edgecolor='none'))
+    
+    # Create custom legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='steelblue',
+               markersize=8, alpha=0.75, label='Empirical (Mean ± SEM)'),
+        Line2D([0], [0], color='#d62728', lw=2.2, linestyle='-',
+               label='Theory (Target)'),
+        Line2D([0], [0], color='#ff7f0e', lw=2.2, linestyle='--',
+               label='Theory (Perpendicular)'),
+    ]
+    ax.legend(handles=legend_elements, loc='upper right', frameon=True, 
+              fancybox=False, edgecolor='black', framealpha=0.95, fontsize=13)
+    
+    # Customize axes
+    ax.set_xticks(x)
+    ax.set_xticklabels([r'$H^{(1)}_T$', r'$H^{(1)}_\perp$', 
+                        r'$H^{(3)}_T$', r'$H^{(3)}_\perp$'],
+                       fontsize=15)
+    ax.set_ylabel(r'Log Projection Eigenvalue (log scale)', fontsize=15, labelpad=10)
+    ax.set_yscale('log')
+    
+    # Grid styling
+    ax.grid(axis='y', which='major', alpha=0.3, linestyle='-', linewidth=0.7)
+    ax.grid(axis='y', which='minor', alpha=0.15, linestyle=':', linewidth=0.5)
+    ax.set_axisbelow(True)
+    
+    # Spine styling
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_linewidth(1.2)
+    ax.spines['bottom'].set_linewidth(1.2)
+    
+    # Set reasonable y-axis limits
+    all_vals = np.concatenate([all_values[k] for k in meas_keys])
+    ymin = np.min(all_vals) * 0.5
+    ymax = np.max(all_vals) * 2
+    ax.set_ylim(ymin, ymax)
+    
+    # Tight layout
+    plt.tight_layout()
+    
+    # Save at multiple resolutions
+    out_path.mkdir(parents=True, exist_ok=True)
+    
+    # High-quality PDF for thesis
+    plt.savefig(out_path / "projections_arxiv.pdf", dpi=300, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    
+    # High-quality PNG as backup
+    plt.savefig(out_path / "projections_arxiv.png", dpi=400, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    
+    print(f"Saved arxiv-quality projections plot to:")
+    print(f"  {out_path / 'projections_arxiv.pdf'}")
+    print(f"  {out_path / 'projections_arxiv.png'}")
+    
+    plt.close()
+
 def eigen_report(train_runs: List[str], out_dir: str = None):
     # 1. Directory setup
     run_paths = [Path(r).resolve() for r in train_runs]
@@ -114,7 +281,7 @@ def eigen_report(train_runs: List[str], out_dir: str = None):
         
         # --- Computations ---
         # 1. Projections
-        stats = compute_h3_projections_streaming(model, d, P_total=50_000_000, device=device)
+        stats = compute_h3_projections_streaming(model, d, P_total=200_000_000, device=device)
         results_map["h_proj"][idx] = {
             "lH1_T": (stats["h1"]["target"]["second_moment"], 0.0),
             "lH1_P": (stats["h1"]["perp"]["second_moment"], 0.0),
@@ -222,6 +389,10 @@ def eigen_report(train_runs: List[str], out_dir: str = None):
 
     plt.tight_layout()
     plt.savefig(out_path / "summary_4panel_bars.png")
+    plt.close()
+
+    # Generate high-quality arxiv/thesis version of projections plot
+    plot_projections_arxiv(results_map, t_vals, out_path)
 
     # Full Spectrum Plots
     for m_name, specs_list in full_spectra.items():
