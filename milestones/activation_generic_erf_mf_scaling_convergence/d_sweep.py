@@ -178,13 +178,14 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 print(f"  Epoch {0:7d} (init): max_eig={eigenvalues.max():.6f}, mean_eig={eigenvalues[1:].mean():.6f}")
             except Exception as e:
                 print(f"  Warning: Could not compute initial eigenvalues at epoch 0: {e}")
-    
+    transition_epoch = int(epochs * 0.9)
+    epochs = int(epochs * 0.9 + epochs * 0.1 * 3)  # Extend total epochs to allow for post-transition training
     for epoch in range(start_epoch, epochs + 1):  # Resume from start_epoch
         # Forward pass (skip for epoch 0)
         if epoch > 0:
             torch.manual_seed(7 + epoch)  # Langevin dynamics seed
 
-            if epoch > epochs * 0.9:
+            if epoch > transition_epoch:
                 lr = lr0 / ( 3 * P)
             else: 
                 lr = lr0 / P

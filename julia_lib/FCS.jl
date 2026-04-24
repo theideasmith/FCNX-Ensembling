@@ -79,6 +79,7 @@ end
     lWT::Float64 = NaN
     learnability1::Float64 = NaN
     learnability3::Float64 = NaN
+    kappa_eff::Float64 = NaN
 end
 
 
@@ -141,52 +142,6 @@ function get_eigenvalues(i0,
         P=P, lr=lr, max_iter=Tf, verbose=true
     )
 end
-
-function nlsolve_solver(initial_guess;
-    anneal= false,
-    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
-    P=nothing, anneal_steps = 30000,
-    lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, normalized::Bool=true)
-    x = copy(initial_guess)
-    if P === nothing
-        P = d^1.2 # default
-    end
-
-
-    function res_func!(F, x, c)
-        F[:] = residuals(x, P, c, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized)
-    end
-
-    result = nothing
-    if anneal 
-        chi_anneal_list = exp.(range(log(1e-8), log(chi), length=anneal_steps))
-        prev_sol = x
-        for (j, chit) in enumerate(chi_anneal_list)
-
-            f1! = (F, x) -> res_func!(F, x, chit)
-            try
-
-                sol = nlsolve(f1!, prev_sol, xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose)
-                if (j == anneal_steps)
-
-                    result = is_physical(sol.zero) ? sol.zero : nothing
-                end
-                prev_sol = sol.zero
-
-            catch e
-                print("THERE WAS AN ERROR")
-                showerror(stdout, e, catch_backtrace())
-            end
-        end
-    else 
-        f2!(F, x) = res_func!(F,x,chi)
-        result = nlsolve(f2!, x; xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose).zero
-    end 
-
-
-    return result
-end
-
 
 
 # -------------------------
@@ -370,6 +325,25 @@ return lK1, lK3
 
 end
 
+function compute_effective_ridge(kappa_bare::Real, lambdas::AbstractVector{<:Real}, P::Real;
+    max_iter::Int=200, tol::Real=1e-10)
+    λ = [x for x in lambdas if isfinite(x) && x > 0]
+    if isempty(λ)
+        return float(kappa_bare)
+    end
+
+    κ = float(kappa_bare)
+    for _ in 1:max_iter
+        correction = sum((κ / P .* λ) ./ (κ / P .+ λ))
+        κ_new = float(kappa_bare) + correction
+        if abs(κ_new - κ) < tol * max(1.0, abs(κ))
+            return κ_new
+        end
+        κ = κ_new
+    end
+    return κ
+end
+
 function populate_solution(sol::Solution, params::ProblemParams)
     lK1, lK3 = lK(sol, params.P; n1=params.n1, n2=params.n2, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
     t1, t3 = lT(sol, params.P; n1=params.n1, n2=params.n2, chi=params.χ, d=params.d, delta=params.ϵ, kappa=params.κ, epsilon=params.ϵ, b=params.b)
@@ -386,31 +360,143 @@ function populate_solution(sol::Solution, params::ProblemParams)
     return sol
 end
 
-function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
+function nlsolve_solver(initial_guess;
+    anneal=false,        # Flag for chi annealing
+    anneal_P=true,      # Flag for P annealing
+    chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
+    P=nothing, anneal_steps=1000,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, normalized::Bool=true)
 
-    sol = nlsolve_solver(
-        initial_guess,
-        chi=problem_params.χ,
-        d=problem_params.d,
-        kappa=problem_params.κ,
-        delta=problem_params.ϵ,
-        epsilon=problem_params.ϵ,
-        n1=problem_params.n1,
-        n2=problem_params.n2,
-        b=problem_params.b,
-        P=problem_params.P,
-        lr=lr,
-        max_iter=max_iter,
-        tol=tol,
-        verbose=verbose,
-        normalized=false
-    )
-    
-    solution::Solution = isnothing(sol) ? Solution() : populate_solution(Solution(sol[1], sol[2], sol[3], sol[4]), problem_params)  
-    return solution
+    # 1. Transform initial guess to log-space to ensure positivity
+    # We add a small epsilon to avoid log(0) if the guess is bad
+    x_log = log.(initial_guess .+ 1e-12)
+
+    target_P = (P === nothing) ? d^1.2 : P
+    target_chi = chi
+
+    # 2. Internal solver function that works in log-space
+    function solve_at_params_log(current_x_log, current_P, current_chi)
+        function f_log!(F, x_log_val)
+            # Convert back to physical space for the residual calculation
+            x_phys = exp.(x_log_val)
+            F[:] = residuals(x_phys, current_P, current_chi, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized)
+        end
+        return nlsolve(f_log!, current_x_log, xtol=tol, ftol=tol, iterations=max_iter, show_trace=verbose)
+    end
+
+    # Define paths
+    P_start = d + 5.0
+    chi_start = 1e-8
+
+    P_path = anneal_P ? exp.(range(log(P_start), log(target_P), length=anneal_steps)) : fill(target_P, anneal_steps)
+    chi_path = anneal ? exp.(range(log(chi_start), log(target_chi), length=anneal_steps)) : fill(target_chi, anneal_steps)
+
+    result_log = x_log
+
+    if anneal || anneal_P
+        if verbose
+            println("Annealing in Log-Space: P=$(anneal_P), Chi=$(anneal)...")
+        end
+        for i in 1:anneal_steps
+            p_curr = P_path[i]
+            c_curr = chi_path[i]
+            try
+                sol = solve_at_params_log(result_log, p_curr, c_curr)
+                result_log = sol.zero
+            catch e
+                @error "Log-solver failed at step $i (P=$p_curr)"
+                return nothing
+            end
+        end
+        return exp.(result_log) # Convert back to physical space
+    else
+        try
+            sol = solve_at_params_log(x_log, target_P, target_chi)
+            return exp.(sol.zero)
+        catch e
+            @error "Single-shot log-solver failed"
+            return nothing
+        end
+    end
 end
 
+function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
+    anneal_P=false, anneal=true, anneal_steps=100,
+    lr=1e-3, max_iter=5000, tol=1e-9, verbose=false, normalized::Bool=true,
+    effective_ridge::Bool=false)
+
+    # Ensure initial_guess is length 5: [lJ1, lJ3, lH1, lH3, lWT]
+    # If a 4-element guess is passed, append a reasonable lWT
+    if length(initial_guess) == 4
+        initial_guess = [initial_guess..., 1.0 / problem_params.d]
+    end
+
+    function solve_with_kappa(kappa_value)
+        return nlsolve_solver(
+            initial_guess;
+            anneal=anneal,
+            anneal_P=anneal_P,
+            anneal_steps=anneal_steps,
+            chi=problem_params.χ,
+            d=problem_params.d,
+            kappa=kappa_value,
+            delta=problem_params.ϵ,
+            epsilon=problem_params.ϵ,
+            n1=problem_params.n1,
+            n2=problem_params.n2,
+            b=problem_params.b,
+            P=problem_params.P,
+            max_iter=max_iter,
+            tol=tol,
+            verbose=verbose,
+            normalized=normalized
+        )
+    end
+
+    kappa_used = float(problem_params.κ)
+    sol_vec = solve_with_kappa(kappa_used)
+
+    if isnothing(sol_vec)
+        return Solution()
+    end
+
+    if effective_ridge
+        lK1_pre, lK3_pre = compute_lK(
+            sol_vec, problem_params.P, problem_params.n1, problem_params.n2,
+            problem_params.χ, problem_params.d, problem_params.ϵ,
+            kappa_used, problem_params.ϵ, problem_params.b
+        )
+        kappa_used = compute_effective_ridge(kappa_used, [lK1_pre, lK3_pre], problem_params.P)
+        sol_vec_eff = solve_with_kappa(kappa_used)
+        if !isnothing(sol_vec_eff)
+            sol_vec = sol_vec_eff
+        end
+    end
+
+    # Map results to Solution object
+    res_sol = Solution(
+        lJ1=sol_vec[1],
+        lJ3=sol_vec[2],
+        lH1=sol_vec[3],
+        lH3=sol_vec[4],
+        lWT=sol_vec[5]
+    )
+
+    params_eff = ProblemParams(
+        d=problem_params.d,
+        κ=Float32(kappa_used),
+        ϵ=problem_params.ϵ,
+        P=problem_params.P,
+        n1=problem_params.n1,
+        n2=problem_params.n2,
+        χ=problem_params.χ,
+        b=problem_params.b
+    )
+
+    populated = populate_solution(res_sol, params_eff)
+    populated.kappa_eff = kappa_used
+    return populated
+end
 
 function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsilon, n, b, normalized::Bool=true)
     P_vals = d .^ collect(alphas)
