@@ -379,7 +379,7 @@ def evaluate_runs(scan_dir: Path, test_size: int = 5000, limit: Optional[int] = 
     for checkpoint_path in model_files:
         cfg, model = load_model_from_checkpoint(checkpoint_path, device=DEVICE)
         run_dir = checkpoint_path.parent
-
+        print(cfg)
         d   = int(cfg["d"])
         P   = int(cfg["P"])
         N_for_theory = int(cfg.get("N") or cfg.get("n1") or cfg.get("n") or 0)

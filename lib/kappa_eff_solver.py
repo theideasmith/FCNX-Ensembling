@@ -112,63 +112,66 @@ def compute_kappa_eff(
     try:
         device = torch.device(device)
         
-        # Step 1: Call Julia theory solver to get lWT and lWP
-        if julia_theory_script is None:
-            julia_theory_script = Path(__file__).parent.parent / "julia_lib" / "eos_fcn3erf.jl"
+        # # Step 1: Call Julia theory solver to get lWT and lWP
+        # if julia_theory_script is None:
+        #     julia_theory_script = Path(__file__).parent.parent / "julia_lib" / "eos_fcn3erf.jl"
         
-        julia_theory_script = Path(julia_theory_script)
-        if not julia_theory_script.exists():
-            raise RuntimeError(f"Julia theory script not found at {julia_theory_script}")
+        # julia_theory_script = Path(julia_theory_script)
+        # if not julia_theory_script.exists():
+        #     raise RuntimeError(f"Julia theory script not found at {julia_theory_script}")
         
-        if verbose:
-            print(f"Running Julia theory solver (d={d}, n1={n1}, n2={n2}, P={P}, chi={chi})...")
+        # if verbose:
+        #     print(f"Running Julia theory solver (d={d}, n1={n1}, n2={n2}, P={P}, chi={chi})...")
         
         # Create temporary output file for theory results
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
-            theory_json = tf.name
+        # with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+        #     theory_json = tf.name
         
-        theory_cmd = [
-            "julia", str(julia_theory_script),
-            f"--d={d}", f"--P={P}",
-            f"--n1={n1}", f"--n2={n2}",
-            f"--chi={chi}", f"--kappa={kappa_bare}",
-            f"--epsilon={1e-3}", f"--to={theory_json}", "--quiet"
-        ]
-        subprocess.run(theory_cmd, check=True, capture_output=True, timeout=300)
+        # theory_cmd = [
+        #     "julia", str(julia_theory_script),
+        #     f"--d={d}", f"--P={P}",
+        #     f"--n1={n1}", f"--n2={n2}",
+        #     f"--chi={chi}", f"--kappa={kappa_bare}",
+        #     f"--epsilon={1e-3}", f"--to={theory_json}", "--quiet"
+        # ]
+        # subprocess.run(theory_cmd, check=True, capture_output=True, timeout=300)
         
-        # Extract lWT and lWP from theory results
-        with open(theory_json, 'r') as f:
-            theory_results = json.load(f)
+        # # Extract lWT and lWP from theory results
+        # with open(theory_json, 'r') as f:
+        #     theory_results = json.load(f)
         
-        lWT = theory_results.get("target", {}).get("lWT", 1.0)
-        lWP = theory_results.get("target", {}).get("lWP", 1.0)
+        # lWT = theory_results.get("target", {}).get("lWT", 1.0)
+        # lWP = theory_results.get("target", {}).get("lWP", 1.0)
         
-        if verbose:
-            print(f"  Theory results: lWT={lWT:.6f}, lWP={lWP:.6f}")
+        # if verbose:
+        #     print(f"  Theory results: lWT={lWT:.6f}, lWP={lWP:.6f}")
         
-        # Step 2: Compute weight covariance matrix Sigma and spectral properties
-        if verbose:
-            print(f"Computing weight covariance structure with arcsin kernel...")
+        # # Step 2: Compute weight covariance matrix Sigma and spectral properties
+        # if verbose:
+        #     print(f"Computing weight covariance structure with arcsin kernel...")
         
-        np.random.seed(0)
-        X_np = np.random.randn(num_samples, d).astype(np.float32)
-        X = torch.from_numpy(X_np).to(device)
+        # np.random.seed(0)
+        # X_np = np.random.randn(num_samples, d).astype(np.float32)
+        # X = torch.from_numpy(X_np).to(device)
         
-        # Build diagonal weight covariance matrix: Sigma = diag(lWT, lWT, ..., lWP, lWP, ...)
-        # For simplicity, we'll use a diagonal approximation with mixed eigenvalues
-        sigma_diag = torch.cat([
-            torch.ones(d, device=device) * lWT,  # Input->hidden1 weights contribute lWT
-            torch.ones(1, device=device) * lWP   # Remainder
-        ])[:d]
+        # # Build diagonal weight covariance matrix: Sigma = diag(lWT, lWT, ..., lWP, lWP, ...)
+        # # For simplicity, we'll use a diagonal approximation with mixed eigenvalues
+        # sigma_diag = torch.cat([
+        #     torch.ones(d, device=device) * lWT,  # Input->hidden1 weights contribute lWT
+        #     torch.ones(1, device=device) * lWP   # Remainder
+        # ])[:d]
         
-        Sigma = torch.diag(sigma_diag).to(device)
+        # Sigma = torch.diag(sigma_diag).to(device)
         
-        # Compute refined spectral properties: X^T Sigma X
-        XSX = torch.einsum('ui, ij, vj -> uv', X, Sigma, X)
+        # # Compute refined spectral properties: X^T Sigma X
+        # XSX = torch.einsum('ui, ij, vj -> uv', X, Sigma, X)
         
-        # Get eigenvalues of the refined kernel
-        eigvals = torch.linalg.eigvalsh(XSX).cpu().numpy()
-        eigvals_normalized = eigvals / num_samples
+        # # Get eigenvalues of the refined kernel
+        # eigvals = torch.linalg.eigvalsh(XSX).cpu().numpy()
+        # eigvals_normalized = eigvals / num_samples
+        
+        # We dont want the theory eigenvalues. Instead we want the arcsin kernel directly
+        eigvals_normalized = compute_arcsin_eigenvalues(d=d, num_samples=num_samples, device=device)
         
         if verbose:
             print(f"  Refined eigenvalues (top 5): {eigvals_normalized[-5:][::-1]}")

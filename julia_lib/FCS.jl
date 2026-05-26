@@ -173,8 +173,8 @@ function residuals_legacy(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
     lK1 = gammaYh2 * lH1
     lK3 = gammaYh2 * lH3
 
-    lT1 = -(chi^2 / (kappa / P + lK1)^2 * delta) - chi^2 * kappa / (P * chi) * lK1 / (lK1 + kappa / P)
-    lT3 =   -(chi^2 / (kappa / P + lK3)^2 * delta) - chi^2 * kappa / (P * chi) * lK3 / (lK3 + kappa / P)
+    lT1 = -(chi^2 / (kappa / P + lK1)^2 * delta) - chi^2 * kappa / (P * chi) * lK1 / (lK1 + kappa / P) - chi / lH1
+    lT3 =   -(chi^2 / (kappa / P + lK3)^2 * delta) - chi^2 * kappa / (P * chi) * lK3 / (lK3 + kappa / P) - chi / lH3
 
     # Residuals
     rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma)) * lWT)

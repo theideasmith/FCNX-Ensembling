@@ -5,18 +5,25 @@ import os
 import heapq
 from collections import deque
 
+# I am deliberating on the goal of this experiment. To scan across multiple values of P
+# or to scan multiple values of chi is more important? 
+
 # 1. Generate all possible combinations
 d_values = [150] #np.unique(np.sort(np.logspace(np.log10(50), np.log10(250), num=3, dtype=int)))
-P_values = [300, 1000, 2000] #[150, 209, 291, 407, 567, 792, 1105, 1541, 2150, 3000]# [4000, 5000] #[10, 50, 100, 250, 300, 500, 700, 1000, 2000, 3500] #np.unique(np.sort(np.logspace(np.log10(min(d_values)), np.log10(1500), num=5, dtype=int)))
-seeds = [0, 1]
-N = 800
-chi = 10.0
-
+P_values = [150, 300, 600, 1000, 1500, 2000, 2500, 3000] #np.unique(np.sort(np.logspace(np.log10(min(d_values)), np.log10(20*max(d_values)), num=10, dtype=int)))
+seeds = range(2)
+N = 1600
+num_ensembles = 5
+chi_values = [50]
+total_epochs = 20_000_000
+gpu_list = ['cuda:1', 'cuda:0']
+gpu_toggle = 0
 all_jobs = []
 for p_val in P_values:
     for d_val in d_values:
-        for s in seeds:
-            all_jobs.append({'P': p_val, 'd': d_val, 'seed': s})
+        for c in chi_values:
+            for s in seeds:
+                all_jobs.append({'P': p_val, 'd': d_val, 'chi': c, 'seed': s})
 
 # 2. Assign a "Spread Priority"
 # We use a simple trick: assign a score based on the fractional binary representation 
@@ -33,20 +40,21 @@ n_d = len(d_values)
 scored_jobs = []
 for i, p_val in enumerate(P_values):
     for j, d_val in enumerate(d_values):
-        for s in seeds:
-            # The priority key: (Seed first to get one of each seed ASAP, 
-            # then a bit-reversal style spread for P and d)
-            # We use a tuple for the priority to handle tie-breaking
-            priority = (s, (i % 2), (j % 2), i, j) 
-            scored_jobs.append((priority, {'P': p_val, 'd': d_val, 'seed': s}))
+        for k, c in enumerate(chi_values):
+            for s in seeds:
+                # The priority key: (Seed first to get one of each seed ASAP, 
+                # then a bit-reversal style spread for P and d)
+                # We use a tuple for the priority to handle tie-breaking
+                priority = (s, (i % 2), (j % 2), i, j) 
+                scored_jobs.append((priority, {'P': p_val, 'd': d_val, 'chi': c, 'seed': s}))
 
 # Sort by our spread-based priority
 scored_jobs.sort(key=lambda x: x[0])
 job_queue = deque([job[1] for job in scored_jobs])
 
-
+lr_base = (1e-3 / 3000) 
 train_script = 'd_sweep.py'
-def make_cmd(d, P, seed):
+def make_cmd(d, P, chi, seed, device):
     return [
         'python3', train_script,
         '--d', str(d),
@@ -54,21 +62,20 @@ def make_cmd(d, P, seed):
         '--chi', str(int(chi)), # chi = N/10
         '--kappa',str( 0.1 ),
         '--N', str(int(N)),
-        '--lr', str(1e-2 / 3), 
-        '--device', 'cuda:1',
-        '--epochs', '10000000',
+        '--lr', str(lr_base * P), # So that P-adjusted learning rate remain constant
+        '--device', str(device)    ,
+        '--epochs', str(total_epochs),
         '--seed', str(seed),
-        '--ens', '5',
-        '--to', 'validate_nonconvergence_He3',
-        '--eps', '0.03',
-        '--exact-epochs'
+        '--ens', str(num_ensembles),
+        '--to', 'scanning_for_publication',
+        '--eps', '0.03'
     ]
 
 running_procs = []
-max_parallel_jobs = 4
+max_parallel_jobs = 8
 print(f"Total jobs to run: {len(job_queue)}")
 print(f"P values being scanned: {P_values}")
-
+print(f"Chi values being scanned: {chi_values}")    
 # --- Main Execution Loop ---
 while job_queue or running_procs:
     # 1. Check for finished processes
@@ -81,12 +88,16 @@ while job_queue or running_procs:
     # 2. Fill the buffer up to max_parallel_jobs
     while len(running_procs) < max_parallel_jobs and job_queue:
         next_job = job_queue.popleft()
-        cmd = make_cmd(next_job['d'], next_job['P'], next_job['seed'])
-        
-        print(f"[Launching] P={next_job['P']}, Seed={next_job['seed']}")
+        # choose device by alternating between gpu_list entries
+        device = gpu_list[gpu_toggle % len(gpu_list)]
+        gpu_toggle = (gpu_toggle + 1) % len(gpu_list)
+        cmd = make_cmd(next_job['d'], next_job['P'], next_job['chi'], next_job['seed'], device)
+
+        print(f"[Launching] P={next_job['P']}, Seed={next_job['seed']}, Device={device}")
         proc = subprocess.Popen(cmd)
         
         next_job['proc'] = proc
+        next_job['device'] = device
         running_procs.append(next_job)
         time.sleep(1.0) # Short stagger to prevent I/O collisions
 

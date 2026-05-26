@@ -16,8 +16,8 @@ for p in powers:
 P_values = np.unique(np.sort(P_values))
 seeds = 3
 kappa = 0.1
-N=800
-lr=1e-3
+N=200
+
 device='cuda:0'
 ens = 5
 chi = N
@@ -27,6 +27,7 @@ train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_seeds.py')
 
 # Command template (customize as needed)
 def make_cmd(P, seed):
+    lr_P = 1e-3 / P
     return [
         'python3', train_script,
         '--d', str(d),
@@ -34,12 +35,12 @@ def make_cmd(P, seed):
         '--chi', str(chi),
         '--kappa', str(kappa),
         '--N', str(N),
-        '--lr', str(lr),
+        '--lr', str(lr_P),
         '--device', device,
         '--epochs', str(epochs),
-        '--base_seed', str(seed),
+        '--seed', str(seed),
         '--ens', str(ens),
-        '--to','p_scan_erf_results',
+        '--to','publication_p_scan',
         '--eps','0.03'
     ]
 
