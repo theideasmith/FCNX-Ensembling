@@ -54,7 +54,7 @@ def make_cmd(train_script: str, d: int, P: int, N: int, chi: float, kappa: float
 def main() -> None:
     parser = argparse.ArgumentParser(description="Red-robin launcher for FCN2-erf MF P-sweep")
     parser.add_argument("--d", type=int, default=10, help="Input dimension")
-    parser.add_argument("--p-max", type=int, default=4000, help="Maximum P in sweep")
+    parser.add_argument("--p-max", type=int, default=3000, help="Maximum P in sweep")
     parser.add_argument("--num-p", type=int, default=4, help="Number of P values")
     parser.add_argument("--seeds", type=int, default=1, help="Number of dataset seeds per P")
     parser.add_argument("--N", type=int, default=800, help="Hidden width")
@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3, help="Base LR")
     parser.add_argument("--epochs", type=int, default=12_000_000, help="Training epochs")
     parser.add_argument("--ens", type=int, default=10, help="Ensemble size")
-    parser.add_argument("--eps", type=float, default=0.4, help="Target cubic coefficient")
+    parser.add_argument("--eps", type=float, default=0.1, help="Target cubic coefficient")
     parser.add_argument("--device", type=str, default="cuda:0", help="Compute device")
     parser.add_argument("--max-parallel-jobs", type=int, default=2, help="Max concurrent processes")
     parser.add_argument("--stagger-seconds", type=float, default=0.5, help="Delay between launches")

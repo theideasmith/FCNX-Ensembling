@@ -240,19 +240,21 @@ class FCN3NetworkEnsembleErf(nn.Module):
         self.ensembles = ens
         self.num_samples = P
         self.device = device
-        self.W0 = nn.Parameter(torch.normal(mean=0.0,  std=torch.full((ens, n1, d), weight_initialization_variance[0]**0.5)).to(device),
-                       requires_grad=True).to(torch.float32)  # requires_grad moved here
+        self.W0 = nn.Parameter(torch.normal(mean=0.0,  std=torch.full((ens, n1, d), weight_initialization_variance[0]**0.5)).to(device, dtype=torch.float32),
+                       requires_grad=True)
+
 
         # self._h1_buffer = nn.Parameter(torch.zeros((P, ensembles, n1)).to(device), requires_grad=False)
         # self._h2_buffer = nn.Parameter(torch.zeros((P, ensembles, n2)).to(device), requires_grad=False)
         # self._f_buffer = nn.Parameter(torch.zeros((P,ensembles)).to(device), requires_grad=False)
 
         self.W1 = nn.Parameter(torch.normal(mean=0.0,
-                            std=torch.full((ens, n2, n1), weight_initialization_variance[1]**0.5)).to(device),
-                       requires_grad=True).to(torch.float32)  # requires_grad moved here
+                            std=torch.full((ens, n2, n1), weight_initialization_variance[1]**0.5)).to(device, dtype=torch.float32),
+                       requires_grad=True)
+
         self.A = nn.Parameter(torch.normal(mean=0.0,
-                           std=torch.full((ens, n2), weight_initialization_variance[2]**0.5)).to(device),
-                      requires_grad=True).to(torch.float32)  # requires_grad moved here
+                           std=torch.full((ens, n2), weight_initialization_variance[2]**0.5)).to(device, dtype=torch.float32),
+                      requires_grad=True) # requires_grad moved here
         # if self.num_samples is not None:
         #     self._precompute_einsum_paths_h1(self.num_samples)
         #     self._precompute_einsum_paths_h0(self.num_samples)
@@ -654,15 +656,24 @@ class FCN3NetworkEnsembleErf(nn.Module):
 
 
 class FCN3NetworkActivationGeneric(nn.Module):
-    """Three-layer FCN with selectable activation (erf or linear)."""
+    """Three-layer FCN with selectable activation (linear, erf, or Hermite3)."""
+
+    @staticmethod
+    def _hermite3_activation(x):
+        """Probabilists' Hermite mix: He1(x) + He3(x)."""
+        he1 = x
+        he3 =(x**3 - 3.0 * x)/6**0.5
+        return he1 + he3
 
     def __init__(self, d, n1, n2, P, ens=1, activation="linear",
                  weight_initialization_variance=(1.0, 1.0, 1.0), device=hp.DEVICE):
         super().__init__()
 
         activation = activation.lower()
-        if activation not in {"linear", "erf"}:
-            raise ValueError(f"Unsupported activation {activation}; use 'linear' or 'erf'")
+        if activation not in {"linear", "erf", "hermite3"}:
+            raise ValueError(
+                f"Unsupported activation {activation}; use 'linear', 'erf', or 'hermite3'"
+            )
 
         self.sigma2A = weight_initialization_variance[2]
         self.sigma2W1 = weight_initialization_variance[1]
@@ -695,7 +706,12 @@ class FCN3NetworkActivationGeneric(nn.Module):
                                                std=torch.full((ens, n2), v2 ** 0.5)).to(device),
                                   requires_grad=True).to(torch.float32)
 
-        self._act = torch.erf if activation == "erf" else (lambda x: x)
+        if activation == "erf":
+            self._act = torch.erf
+        elif activation == "hermite3":
+            self._act = self._hermite3_activation
+        else:
+            self._act = lambda x: x
 
     # ---- Preactivations and activations ---------------------------------
     def h0_preactivation(self, X):

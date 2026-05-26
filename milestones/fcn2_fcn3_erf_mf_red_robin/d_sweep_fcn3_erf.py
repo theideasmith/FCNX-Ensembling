@@ -58,7 +58,7 @@ def train_and_track(
     lr = lr0 / P
     temperature = 2.0 * kappa / chi
 
-    base_name = f"d{d}_P{P}_N{N}_chi{chi}_kappa{kappa}"
+    base_name = f"fcn3_erf_d{d}_P{P}_N{N}_chi{chi}_kappa{kappa}_eps_{eps}"
     run_dir = Path(__file__).resolve().parent / to / base_name
     seed_dir = run_dir / f"seed{seed}"
     seed_dir.mkdir(parents=True, exist_ok=True)

@@ -5,23 +5,23 @@ import os
 from collections import deque
 
 # Parameters
-d = 50
-P_values = np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
+d = 150
+P_values = [500, 1000, 1500] #np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
 # Add to P_values powers of d from sqrt(d) to 2 * d^(3/2)
-powers = np.linspace(0.5, 1.6, num=5)
+# powers = np.linspace(0.5, 1.6, num=5)
 for p in powers:
     val = int(d**p)
     if val not in P_values:
         P_values = np.append(P_values, val)
 P_values = np.unique(np.sort(P_values))
-seeds = 5
+seeds = 3
 kappa = 0.1
 N=800
 lr=1e-3
 device='cuda:0'
 ens = 5
 chi = N
-epochs = 3_000_000
+epochs = 20_000_000
 max_parallel_jobs = 4  # Launch jobs at both ends
 train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_seeds.py')
 

@@ -24,8 +24,8 @@ def find_repo_root(start: Optional[Path] = None) -> Path:
 
 REPO_ROOT = find_repo_root()
 LIB_PATH = REPO_ROOT / "lib"
-MILESTONE_DIR = REPO_ROOT / "milestones" / "activation_generic_erf_mf_scaling_convergence"
-DEFAULT_SCAN_DIR = MILESTONE_DIR / "d10_P_scan_kappa_0.1"
+MILESTONE_DIR = REPO_ROOT / "milestones" / "fcn2_fcn3_erf_mf_red_robin"
+DEFAULT_SCAN_DIR = MILESTONE_DIR # / "d10_P_scan_kappa_0.1"
 sys.path.insert(0, str(LIB_PATH))
 
 from FCN3Network import FCN3NetworkActivationGeneric
@@ -49,7 +49,7 @@ plt.rcParams.update(
 
 def target_fn(X: torch.Tensor) -> torch.Tensor:
     x0 = X[:, 0]
-    return x0 + 0.03 * (x0**3 - 3.0 * x0)
+    return x0 + 0.1 * (x0**3 - 3.0 * x0)
 
 
 def hermite_h3(x: torch.Tensor) -> torch.Tensor:
@@ -91,7 +91,7 @@ def load_run_config(run_dir: Path) -> dict:
 
 
 def find_checkpoint_file(run_dir: Path) -> Path:
-    candidates = [run_dir / "model_final.pt", run_dir / "model.pt", run_dir / "checkpoint.pt"]
+    candidates = [run_dir / "model_final.pt", run_dir / "model_final.pt", run_dir / "checkpoint.pt"]
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -335,7 +335,7 @@ def h3_learnability_from_predictions(y_pred: torch.Tensor, X: torch.Tensor) -> d
     proj3        = (remainder * h3_comp).mean()
     return {
         "h1_sum":           float(linear_coeff.item()),
-        "h3_sum":           float((proj3 / 0.03).item()),
+        "h3_sum":           float((proj3 / 0.1).item()),
         "proj3_target_sum": float(proj3.item()),
     }
 
@@ -358,7 +358,7 @@ def collapse_model_prediction(y_pred_raw: torch.Tensor) -> torch.Tensor:
 
 def find_model_files(scan_dir: Path):
     candidates = (
-        list(scan_dir.glob("**/seed*/model.pt")) +
+        # list(scan_dir.glob("**/seed*/model.pt")) +
         list(scan_dir.glob("**/seed*/model_final.pt"))
     )
     return sorted({p.resolve() for p in candidates if p.is_file()}, key=str)
@@ -387,7 +387,7 @@ def evaluate_runs(scan_dir: Path, test_size: int = 5000, limit: Optional[int] = 
             raise KeyError(f"Could not infer hidden width for theory solver in {run_dir}")
         ridge = float(cfg.get("kappa", 0.1))
         chi   = float(cfg.get("chi", 20.0))  if cfg.get("chi")  is not None else 20.0
-        eps   = float(cfg.get("eps", 0.03))  if cfg.get("eps")  is not None else 0.03
+        eps   = float(cfg.get("eps", 0.1))  if cfg.get("eps")  is not None else 0.1
         train_seed = derive_seed(cfg)
         test_seed  = train_seed + 1_000_000
 
@@ -530,14 +530,14 @@ def plot_results(results, out_dir: Path):
         (ax2, "h3 Learnability vs P",     "h3 learnability"),
         (ax3, "Test MSE vs P",            "test MSE"),
     ]:
-        ax.axvline(20, color="gray", ls="--", alpha=0.6, label="d=20")
+        ax.axvline(20, color="gray", ls="--", alpha=0.6, label="d={d}")
         ax.set_xscale("log")
         ax.set_xlabel("P")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.grid(alpha=0.3)
         ax.legend()
-
+    ax1.set_ylim(bottom=0)
     plt.tight_layout()
     fig_path  = out_dir / "semi_empirical_effective_ridge_correction.png"
     json_path = out_dir / "semi_empirical_effective_ridge_correction.json"
