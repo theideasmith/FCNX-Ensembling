@@ -6,27 +6,28 @@ from collections import deque
 
 # Parameters
 d = 50
-P_values = np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
+P_values = [150, 300, 600, 1000, 1500, 2000, 2500, 3000]# np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
 # Add to P_values powers of d from sqrt(d) to 2 * d^(3/2)
-powers = np.linspace(0.5, 1.6, num=5)
-for p in powers:
-    val = int(d**p)
-    if val not in P_values:
-        P_values = np.append(P_values, val)
-P_values = np.unique(np.sort(P_values))
-seeds = 5
+# powers = np.linspace(0.5, 1.6, num=5)
+# for p in powers:
+#     val = int(d**p)
+#     if val not in P_values:
+#         P_values = np.append(P_values, val)
+# P_values = np.unique(np.sort(P_values))
+seeds = 2
 kappa = 0.1
-N=800
-lr=1e-3
+N=200
+
 device='cuda:0'
 ens = 5
-chi = N
-epochs = 3_000_000
-max_parallel_jobs = 4  # Launch jobs at both ends
-train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_seeds.py')
+chi = 50
+epochs = 30_000_000
+max_parallel_jobs = 8  # Launch jobs at both ends
+train_script = os.path.join(os.path.dirname(__file__), 'd_sweep.py')
 
 # Command template (customize as needed)
 def make_cmd(P, seed):
+    lr_P = 1e-3 / P
     return [
         'python3', train_script,
         '--d', str(d),
@@ -34,12 +35,12 @@ def make_cmd(P, seed):
         '--chi', str(chi),
         '--kappa', str(kappa),
         '--N', str(N),
-        '--lr', str(lr),
+        '--lr', str(lr_P),
         '--device', device,
         '--epochs', str(epochs),
-        '--base_seed', str(seed),
+        '--seed', str(seed),
         '--ens', str(ens),
-        '--to','p_scan_erf_results',
+        '--to','publication_p_scan',
         '--eps','0.03'
     ]
 

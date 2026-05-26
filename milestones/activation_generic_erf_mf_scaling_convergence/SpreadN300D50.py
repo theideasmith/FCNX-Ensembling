@@ -9,14 +9,15 @@ from collections import deque
 # or to scan multiple values of chi is more important? 
 
 # 1. Generate all possible combinations
-d_values = [150] #np.unique(np.sort(np.logspace(np.log10(50), np.log10(250), num=3, dtype=int)))
-P_values = [3000] #np.unique(np.sort(np.logspace(np.log10(min(d_values)), np.log10(20*max(d_values)), num=10, dtype=int)))
-seeds = range(3)
-N = 1600
+d_values = [50] #np.unique(np.sort(np.logspace(np.log10(50), np.log10(250), num=3, dtype=int)))
+P_values = [150, 300, 600, 1000, 1500, 2000, 2500, 3000] #np.unique(np.sort(np.logspace(np.log10(min(d_values)), np.log10(20*max(d_values)), num=10, dtype=int)))
+seeds = [1,2]
+N = 300
 num_ensembles = 5
-chi_values = [20, 40, 160, 320]
-total_epochs = 2_000_000
-gpu = 'cuda:1'
+chi_values = [30]
+total_epochs = 30_000_000
+gpu_list = ['cuda:1', 'cuda:0']
+gpu_toggle = 0
 all_jobs = []
 for p_val in P_values:
     for d_val in d_values:
@@ -51,9 +52,10 @@ for i, p_val in enumerate(P_values):
 scored_jobs.sort(key=lambda x: x[0])
 job_queue = deque([job[1] for job in scored_jobs])
 
-lr_base = (1e-1 / 3000 / 3) 
+# lr_base = (1e-3 / 3000) 
 train_script = 'd_sweep.py'
-def make_cmd(d, P, chi, seed):
+def make_cmd(d, P, chi, seed, device):
+    lr_P = 1e-7 * P
     return [
         'python3', train_script,
         '--d', str(d),
@@ -61,17 +63,17 @@ def make_cmd(d, P, chi, seed):
         '--chi', str(int(chi)), # chi = N/10
         '--kappa',str( 0.1 ),
         '--N', str(int(N)),
-        '--lr', str(lr_base * P), # So that P-adjusted learning rate remain constant
-        '--device', str(gpu)    ,
+        '--lr', str(lr_P), # So that P-adjusted learning rate remain constant
+        '--device', str(device)    ,
         '--epochs', str(total_epochs),
         '--seed', str(seed),
         '--ens', str(num_ensembles),
-        '--to', 'chi_scan_kappa_0.1',
+        '--to', 'scanning_for_publication_N300D50',
         '--eps', '0.03'
     ]
 
 running_procs = []
-max_parallel_jobs = 4
+max_parallel_jobs = 8
 print(f"Total jobs to run: {len(job_queue)}")
 print(f"P values being scanned: {P_values}")
 print(f"Chi values being scanned: {chi_values}")    
@@ -87,12 +89,16 @@ while job_queue or running_procs:
     # 2. Fill the buffer up to max_parallel_jobs
     while len(running_procs) < max_parallel_jobs and job_queue:
         next_job = job_queue.popleft()
-        cmd = make_cmd(next_job['d'], next_job['P'], next_job['chi'], next_job['seed'])
-        
-        print(f"[Launching] P={next_job['P']}, Seed={next_job['seed']}")
+        # choose device by alternating between gpu_list entries
+        device = gpu_list[gpu_toggle % len(gpu_list)]
+        gpu_toggle = (gpu_toggle + 1) % len(gpu_list)
+        cmd = make_cmd(next_job['d'], next_job['P'], next_job['chi'], next_job['seed'], device)
+
+        print(f"[Launching] P={next_job['P']}, Seed={next_job['seed']}, Device={device}")
         proc = subprocess.Popen(cmd)
         
         next_job['proc'] = proc
+        next_job['device'] = device
         running_procs.append(next_job)
         time.sleep(1.0) # Short stagger to prevent I/O collisions
 

@@ -324,6 +324,122 @@ def gpr_from_kernel_matrix(K_all: torch.Tensor, X_train: torch.Tensor, y_train: 
     return y_pred, K_train, K_all
 
 
+def ek_formula_reconstruction(
+    X_train: torch.Tensor,
+    y_train: torch.Tensor,
+    X_test: torch.Tensor,
+    theory_eigs: dict,
+    ridge: float,
+    P: int,
+) -> torch.Tensor:
+    r"""Apply EK formula: f(x) = \sum_k y_k * He_k(x) * (\lambda_k / (\lambda_k + \kappa_eff / P))
+    
+    where y_k = <He_k | y_train> are projections onto the training data.
+    
+    Args:
+        X_train: Training samples (P, d)
+        y_train: Training targets (P,)
+        X_test: Test samples (P_test, d)
+        theory_eigs: Theory eigenvalues dict with keys lH1T, lH1P, lH3T, lH3P
+        ridge: Ridge parameter (kappa_eff)
+        P: Training set size
+    
+    Returns:
+        f: Ridge-regularized reconstruction on test set (P_test,)
+    """
+    device = X_test.device
+    d = X_test.shape[1]
+    
+    # Compute projections y_k = <He_k | y_train> on the training set
+    x0_train = X_train[:, 0]
+    h1_target_train = x0_train
+    h3_target_train = (x0_train**3 - 3.0 * x0_train) / math.sqrt(6.0)
+    
+    y_k = {}
+    
+    # H1 target projection
+    if theory_eigs.get("lH1T") is not None:
+        y_k["h1t"] = (y_train * h1_target_train).mean()
+    
+    # H3 target projection
+    if theory_eigs.get("lH3T") is not None:
+        y_k["h3t"] = (y_train * h3_target_train).mean()
+    
+    # Perpendicular modes projections (if d > 1)
+    if d > 1:
+        if theory_eigs.get("lH1P") is not None:
+            y_k["h1p"] = []
+            for i in range(1, d):
+                xi_train = X_train[:, i]
+                y_k["h1p"].append((y_train * xi_train).mean())
+        
+        if theory_eigs.get("lH3P") is not None:
+            y_k["h3p"] = []
+            for i in range(1, d):
+                xi_train = X_train[:, i]
+                h3_i_train = (xi_train**3 - 3.0 * xi_train) / math.sqrt(6.0)
+                y_k["h3p"].append((y_train * h3_i_train).mean())
+    breakpoint()
+    # Reconstruct on test set
+    x0_test = X_test[:, 0]
+    h1_target_test = x0_test
+    h3_target_test = (x0_test**3 - 3.0 * x0_test) / math.sqrt(6.0)
+    
+    f = torch.zeros_like(x0_test)
+    
+    # H1 target mode
+    if "h1t" in y_k and theory_eigs.get("lH1T") is not None:
+        lam_h1t = float(theory_eigs["lH1T"]) 
+        ridge_factor_h1t = lam_h1t / (lam_h1t + ridge / P) if lam_h1t > 0 else 0.0
+        f += ridge_factor_h1t * y_k["h1t"] * h1_target_test
+    
+    # H3 target mode
+    if "h3t" in y_k and theory_eigs.get("lH3T") is not None:
+        lam_h3t = float(theory_eigs["lH3T"]) 
+        ridge_factor_h3t = lam_h3t / (lam_h3t + ridge / P) if lam_h3t > 0 else 0.0
+        f += ridge_factor_h3t * y_k["h3t"] * h3_target_test
+    
+    # Perpendicular modes (if d > 1)
+    if d > 1:
+        # H1 perpendicular modes
+        if "h1p" in y_k and theory_eigs.get("lH1P") is not None:
+            lam_h1p = float(theory_eigs["lH1P"]) 
+            ridge_factor_h1p = lam_h1p / (lam_h1p + ridge / P) if lam_h1p > 0 else 0.0
+            for i in range(1, d):
+                xi_test = X_test[:, i]
+                f += ridge_factor_h1p * y_k["h1p"][i - 1] * xi_test
+        
+        # H3 perpendicular modes
+        if "h3p" in y_k and theory_eigs.get("lH3P") is not None:
+            lam_h3p = float(theory_eigs["lH3P"]) 
+            ridge_factor_h3p = lam_h3p / (lam_h3p + ridge / P) if lam_h3p > 0 else 0.0
+            for i in range(1, d):
+                xi_test = X_test[:, i]
+                h3_i_test = (xi_test**3 - 3.0 * xi_test) / math.sqrt(6.0)
+                f += ridge_factor_h3p * y_k["h3p"][i - 1] * h3_i_test
+    
+    return f
+
+
+def h3_learnability_from_ek_reconstruction(f: torch.Tensor, X: torch.Tensor) -> dict:
+    """Extract H1 and H3 learnability from EK formula reconstruction f(x).
+    
+    Compute μ_k = <f(x) | He_k(x)> for target modes.
+    """
+    x0 = X[:, 0]
+    h1_comp = x0
+    h3_comp = hermite_h3(x0)
+    
+    mu_h1 = (f * h1_comp).mean()
+    mu_h3 = (f * h3_comp).mean()
+    
+    return {
+        "h1_sum": float(mu_h1.item()),
+        "h3_sum": float((mu_h3 / 0.03).item()),  # Normalize by target amplitude
+        "proj3_target_sum": float(mu_h3.item()),
+    }
+
+
 def h3_learnability_from_predictions(y_pred: torch.Tensor, X: torch.Tensor) -> dict:
     x0 = X[:, 0]
     h3_comp = hermite_h3(x0)
@@ -360,12 +476,14 @@ def find_model_files(scan_dir: Path):
     return sorted({path.resolve() for path in candidates if path.is_file()}, key=str)
 
 
-def evaluate_runs(scan_dir: Path, test_size: int = 5000, limit: Optional[int] = None):
+def evaluate_runs(scan_dir: Path, test_size: int = 5000, limit: Optional[int] = None, skip_gpr: bool = False):
     model_files = find_model_files(scan_dir)
     if limit is not None:
         model_files = model_files[: int(limit)]
 
     print(f"Found {len(model_files)} checkpoint files in {scan_dir}")
+    if skip_gpr:
+        print("Skipping GPR computation (--no-gpr)")
     results = []
 
     for checkpoint_path in model_files:
@@ -393,26 +511,43 @@ def evaluate_runs(scan_dir: Path, test_size: int = 5000, limit: Optional[int] = 
         X_test = make_gaussian_dataset(d, test_size, test_seed, device=DEVICE)
         y_test = target_fn(X_test).to(dtype=DTYPE)
 
-        X_all = torch.cat([X_train, X_test], dim=0)
-        K_all = arcsin_kernel(X_all)
-        y_pred, K_train, K_all = gpr_from_kernel_matrix(K_all, X_train, y_train, ridge=ridge)
-        mse = torch.mean((y_pred - y_test) ** 2).item()
-        learnability = h3_learnability_from_predictions(y_pred, X_test)
+        # === Empirical approach: Use arcsin kernel + EK formula ===
+        if skip_gpr:
+            mse = float("nan")
+            learnability = {"h1_sum": float("nan"), "h3_sum": float("nan"), "proj3_target_sum": float("nan")}
+        else:
+            X_all = torch.cat([X_train, X_test], dim=0)
+            K_all = arcsin_kernel(X_all)
+            
+            # Run standard GPR to get empirical prediction
+            n_train = X_train.shape[0]
+            K_train = K_all[:n_train, :n_train]
+            K_cross = K_all[n_train:, :n_train]
+            eye = torch.eye(n_train, device=K_train.device, dtype=K_train.dtype)
+            chol = torch.linalg.cholesky(K_train + ridge * eye)
+            alpha = torch.cholesky_solve(y_train[:, None], chol).squeeze(-1)
+            y_pred = K_cross @ alpha
+            mse = torch.mean((y_pred - y_test) ** 2).item()
+            learnability = h3_learnability_from_predictions(y_pred, X_test)
 
+        # === Theory approach: Use EK formula with theory eigenvalues ===
         theory_eigs = compute_theory_eigenvalues(d=d, P=P, N=N_for_theory, chi=chi, kappa=ridge, eps=eps)
-        theory_h1_learnability = learnability_from_eigenvalue(theory_eigs.get("lH1T"), ridge, P)
-        theory_h3_learnability = learnability_from_eigenvalue(theory_eigs.get("lH3T"), ridge, P)
-        y_pred_theory, K_train_theory, K_all_theory = gpr_from_theory_eigensystem(
+        
+        # Apply EK formula with training set projections
+        y_pred_theory_ek = ek_formula_reconstruction(
             X_train=X_train,
             y_train=y_train,
             X_test=X_test,
-            ridge=ridge,
             theory_eigs=theory_eigs,
-            K_all_empirical=K_all,
-            X_all=X_all,
+            ridge=ridge,
+            P=P,
         )
-        mse_theory = torch.mean((y_pred_theory - y_test) ** 2).item()
-        learnability_theory = h3_learnability_from_predictions(y_pred_theory, X_test)
+        mse_theory = torch.mean((y_pred_theory_ek - y_test) ** 2).item()
+        learnability_theory = h3_learnability_from_ek_reconstruction(y_pred_theory_ek, X_test)
+        
+        # Compute direct theory learnability from eigenvalues
+        theory_h1_learnability = learnability_from_eigenvalue(theory_eigs.get("lH1T"), ridge, P)
+        theory_h3_learnability = learnability_from_eigenvalue(theory_eigs.get("lH3T"), ridge, P)
 
         with torch.no_grad():
             y_pred_model_raw = model(X_test)
@@ -452,9 +587,11 @@ def evaluate_runs(scan_dir: Path, test_size: int = 5000, limit: Optional[int] = 
             }
         )
 
+        gpr_mse_str = "skip" if skip_gpr else f"{mse:.4e}"
+        gpr_h3_str = "skip" if skip_gpr else f"{learnability['h3_sum']:.4e}"
         print(
-            f"P={P:4d} | gpr_mse={mse:.4e} | model_mse={mse_model:.4e} | theory_mse={mse_theory:.4e} | "
-            f"gpr_h3={learnability['h3_sum']:.4e} | model_h3={learnability_model['h3_sum']:.4e} | theory_h3={learnability_theory['h3_sum']:.4e} | {run_dir.name}"
+            f"P={P:4d} | gpr_mse={gpr_mse_str} | model_mse={mse_model:.4e} | theory_ek_mse={mse_theory:.4e} | "
+            f"gpr_h3={gpr_h3_str} | model_h3={learnability_model['h3_sum']:.4e} | theory_ek_h3={learnability_theory['h3_sum']:.4e} | {run_dir.name}"
         )
 
         del model
@@ -539,14 +676,14 @@ def plot_results(results, out_dir: Path):
 
     ax1.errorbar(unique_P, mean_h1, yerr=std_h1, fmt="o-", lw=2, color="tab:green", label="GPR mean ± std")
     ax1.errorbar(unique_P, mean_h1_model, yerr=std_h1_model, fmt="s--", lw=2, color="tab:olive", label="Model mean ± std")
-    ax1.errorbar(unique_P, mean_h1_theory, yerr=std_h1_theory, fmt="^:", lw=2, color="tab:purple", label="Theory-kernel GPR mean ± std")
-    ax1.errorbar(unique_P, mean_h1_tlearn, yerr=std_h1_tlearn, fmt="d-.", lw=2, color="tab:red", label="Theory He1T learnability")
+    ax1.errorbar(unique_P, mean_h1_theory, yerr=std_h1_theory, fmt="^:", lw=2, color="tab:purple", label="EK learnability mean ± std")
+    ax1.errorbar(unique_P, mean_h1_tlearn, yerr=std_h1_tlearn, fmt="d-.", lw=2, color="tab:red", label="Direct He1T eigenvalue learnability")
     ax2.errorbar(unique_P, mean_h3, yerr=std_h3, fmt="o-", lw=2, color="tab:blue", label="GPR mean ± std")
     ax2.errorbar(unique_P, mean_h3_model, yerr=std_h3_model, fmt="s--", lw=2, color="tab:cyan", label="Model mean ± std")
-    ax2.errorbar(unique_P, mean_h3_theory, yerr=std_h3_theory, fmt="^:", lw=2, color="tab:pink", label="Theory-kernel GPR mean ± std")
-    ax2.errorbar(unique_P, mean_h3_tlearn, yerr=std_h3_tlearn, fmt="d-.", lw=2, color="tab:green", label="Theory He3T learnability")
-    ax3.errorbar(unique_P, mean_mse, yerr=std_mse, fmt="o-", lw=2, color="tab:red", label="Empirical-kernel GPR mean ± std")
-    ax3.errorbar(unique_P, mean_mse_theory, yerr=std_mse_theory, fmt="^:", lw=2, color="tab:orange", label="Theory-kernel GPR mean ± std")
+    ax2.errorbar(unique_P, mean_h3_theory, yerr=std_h3_theory, fmt="^:", lw=2, color="tab:pink", label="EK learnability mean ± std")
+    ax2.errorbar(unique_P, mean_h3_tlearn, yerr=std_h3_tlearn, fmt="d-.", lw=2, color="tab:green", label="Direct He3T eigenvalue learnability")
+    ax3.errorbar(unique_P, mean_mse, yerr=std_mse, fmt="o-", lw=2, color="tab:red", label="Empirical GPR mean ± std")
+    ax3.errorbar(unique_P, mean_mse_theory, yerr=std_mse_theory, fmt="^:", lw=2, color="tab:orange", label="EK reconstruction mean ± std")
     ax1.axvline(20, color="gray", ls="--", alpha=0.6, label="d=20")
     ax2.axvline(20, color="gray", ls="--", alpha=0.6, label="d=20")
     ax3.axvline(20, color="gray", ls="--", alpha=0.6, label="d=20")
@@ -586,13 +723,14 @@ def main(argv=None):
     parser.add_argument("--scan-dir", type=str, default=str(DEFAULT_SCAN_DIR))
     parser.add_argument("--test-size", type=int, default=3000)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--no-gpr", action="store_true", help="Skip GPR computation to save time")
     parser.add_argument("--output-dir", type=str, default=None)
     args = parser.parse_args(argv)
 
     scan_dir = Path(args.scan_dir).resolve()
     output_dir = Path(args.output_dir).resolve() if args.output_dir else scan_dir / "semi_empirical_effective_ridge_correction"
 
-    results = evaluate_runs(scan_dir, test_size=args.test_size, limit=args.limit)
+    results = evaluate_runs(scan_dir, test_size=args.test_size, limit=args.limit, skip_gpr=args.no_gpr)
     fig_path, json_path = plot_results(results, output_dir)
     print(f"Saved figure to {fig_path}")
     print(f"Saved results to {json_path}")

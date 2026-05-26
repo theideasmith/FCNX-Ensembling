@@ -137,7 +137,7 @@ def _compute_seed_projection_worker(args):
                 stats = compute_mod.compute_h3_projections_streaming(
                     model, 
                     d, 
-                    P_total=3_000_000, 
+                    P_total=200_000_000, 
                     batch_size=50_000,  # INCREASED: 20x larger chunk size = vastly less loop overhead
                     device=device
                 )
@@ -228,6 +228,7 @@ def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title
         print(data)
         for k in meas_keys:
             run_vals = [float(data[r][k][0]) for r in data if k in data[r]]
+
             all_values[k] = run_vals
             if run_vals:
                 means.append(np.mean(run_vals))
@@ -244,7 +245,7 @@ def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title
         x = np.arange(len(meas_keys))
         width = 0.6
         
-        # Scatter plot individual runs with transparency
+        # Scatter plot individual runs in dark blue for visibility
         np.random.seed(42)  # For reproducibility of jitter
         for i, k in enumerate(meas_keys):
             run_vals = all_values[k]
@@ -253,18 +254,24 @@ def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title
                 jitter = np.random.normal(0, 0.02, len(run_vals))
                 ax.scatter(
                     x[i] + jitter, run_vals,
-                    color='steelblue', alpha=0.35, s=60, zorder=2,
+                    color='#0B3D91', alpha=1.0, s=60, zorder=5,
                     edgecolors='none'
                 )
         
         # Bar plot with error bars (empirical)
         bars = ax.bar(
             x, means, width=width,
-            yerr=errs, capsize=8,
             color='steelblue', alpha=0.75,
-            error_kw={'elinewidth': 1.5, 'capthick': 1.5},
             label='Empirical (Mean ± SEM)',
-            zorder=3
+            zorder=2
+        )
+
+        # Draw SEM explicitly on top of everything else.
+        ax.errorbar(
+            x, means, yerr=errs,
+            fmt='none', ecolor='black',
+            elinewidth=2.0, capsize=8, capthick=2.0,
+            zorder=10
         )
         
         # Theory comparison - horizontal lines
@@ -715,7 +722,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
             if theo_val is not None and theo_val > 0:
                 percent_gap = abs(mean_val - theo_val) / theo_val * 100
                 y_pos = mean_val + err_val + 0.10 * max(means)
-                ax.text(xi, y_pos, f'{percent_gap:.1f}%', ha='center', va='bottom', fontsize=8, color='darkred', weight='bold')
+                ax.text(xi, y_pos, f'{percent_gap:.1f}% - $\sigma^2/\sqrt{{\\text{{# seeds}}}} =$ {err_val:.2f}', ha='center', va='bottom', fontsize=8, color='darkred', weight='bold')
         
         # Add theory lines (target + perpendicular) across all panels
         if theory_lh1t is not None:
@@ -878,7 +885,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
         if w0_emp_lwt:
             jitter = np.random.normal(0, 0.02, len(w0_emp_lwt))
             ax.scatter(np.full(len(w0_emp_lwt), x_pos[0]) + jitter, w0_emp_lwt,
-                       s=60, alpha=0.5, color=emp_colors[0], label='Empirical lWT samples')
+                       s=60, alpha=1.0, color='black', label='Empirical lWT samples')
             mean_lwt = float(np.mean(w0_emp_lwt))
             sem_lwt = float(np.std(w0_emp_lwt) / np.sqrt(len(w0_emp_lwt)))
             ax.errorbar(x_pos[0], mean_lwt, yerr=sem_lwt, fmt='o', color=emp_colors[0],
@@ -893,7 +900,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
         if w0_emp_lwp:
             jitter = np.random.normal(0, 0.02, len(w0_emp_lwp))
             ax.scatter(np.full(len(w0_emp_lwp), x_pos[1]) + jitter, w0_emp_lwp,
-                       s=60, alpha=0.5, color=emp_colors[1], label='Empirical lWP samples')
+                       s=60, alpha=1.0, color='black', label='Empirical lWP samples')
             mean_lwp = float(np.mean(w0_emp_lwp))
             sem_lwp = float(np.std(w0_emp_lwp) / np.sqrt(len(w0_emp_lwp)))
             ax.errorbar(x_pos[1], mean_lwp, yerr=sem_lwp, fmt='o', color=emp_colors[1],
@@ -973,7 +980,7 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
             parts.append(rf"$\kappa={kappa0}$")
         if eps0 is not None and eps0 != 0:
             parts.append(rf"$\epsilon={eps0}$")
-        param_title = r",\ \ ".join(parts)
+        param_title = ", ".join(parts)
     
     # Compute kappa_eff and theory values (cached)
     theory_lh1t = None
@@ -1133,18 +1140,22 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         np.random.seed(42)  # Consistent jitter across runs
         x_jitter = x_pos + np.random.normal(0, jitter_strength, len(seed_vals))
         
+        seed_dot_color = "#0B3D91"
         for i, (seed_name, val) in enumerate(zip(seed_names_list, seed_vals)):
-            color = seed_color_map[seed_name]
-            ax.scatter(x_jitter[i], val, s=60, alpha=0.6, color=color, label=seed_name, zorder=3)
+            ax.scatter(x_jitter[i], val, s=60, alpha=1.0, color=seed_dot_color, label=seed_name, zorder=3)
         
         # Plot mean as solid black dot
         mean_val = np.mean(seed_vals)
-        ax.scatter(x_pos, mean_val, s=150, marker='D', color="black", alpha=0.95, 
-                   label="Mean", zorder=4, edgecolors="white", linewidth=2)
+        sem_val = float(np.std(seed_vals, ddof=1) / np.sqrt(len(seed_vals))) if len(seed_vals) > 1 else 0.0
+        ax.errorbar(x_pos, mean_val, yerr=sem_val, fmt='none', ecolor='black', elinewidth=2.2,
+                capsize=5, capthick=2.2, zorder=3.5)
+        ax.scatter(x_pos, mean_val, s=150, marker='D', color="black", alpha=0.95,
+               label="Mean", zorder=4, edgecolors="white", linewidth=2)
         
         # Plot theory line if available
         if theory_val is not None:
-            pct_gap = 100.0 * (mean_val - theory_val) / theory_val if theory_val > 0 else 0.0
+            pct_gaps = [100.0 * (val - theory_val) / theory_val for val in seed_vals if theory_val > 0]
+            pct_gap = float(np.mean(pct_gaps)) if pct_gaps else 0.0
             theory_label = f"Theory (κ_eff): {pct_gap:+.1f}%"
             ax.axhline(theory_val, color="red", linestyle="--", linewidth=2.5, alpha=0.8,
                        label=theory_label, zorder=2)
@@ -1157,7 +1168,8 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         ax.grid(axis='y', alpha=0.3)
         ax.legend(loc="upper right", fontsize=9)
     
-    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds — {param_title}", fontsize=13, y=0.995)
+    seed_count = len(seed_eigenvalues)
+    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds (n={seed_count}) — {param_title}", fontsize=13, y=0.995)
     fig.tight_layout()
     aggregate_plot = out_path / "aggregate_h3_eigenvalues.png"
     fig.savefig(aggregate_plot, dpi=300)
@@ -1197,19 +1209,23 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         
         eig_color = eig_type_colors.get(eig_type, "gray")
         
+        seed_dot_color = "#0B3D91"
         for i, (seed_name, val) in enumerate(zip(seed_names, seed_vals)):
-            seed_color = seed_color_map[seed_name]
-            ax.scatter(x_jitter[i], val, s=50, alpha=0.5, color=seed_color, zorder=3)
+            ax.scatter(x_jitter[i], val, s=50, alpha=1.0, color=seed_dot_color, zorder=3)
         
         # Plot mean as solid dot with eigenvalue-type color
         mean_val = np.mean(seed_vals)
         unified_mean_vals.append(mean_val)
+        sem_val = float(np.std(seed_vals, ddof=1) / np.sqrt(len(seed_vals))) if len(seed_vals) > 1 else 0.0
+        ax.errorbar(x_pos, mean_val, yerr=sem_val, fmt='none', ecolor='black', elinewidth=2.2,
+                capsize=5, capthick=2.2, zorder=3.5)
         ax.scatter(x_pos, mean_val, s=200, marker='o', color=eig_color, alpha=0.9,
-                   edgecolors="white", linewidth=2, zorder=4, label=eig_label)
+               edgecolors="white", linewidth=2, zorder=4, label=eig_label)
         
         # Plot theory line if available and add error text
         if theory_val is not None:
-            pct_gap = 100.0 * (mean_val - theory_val) / theory_val if theory_val > 0 else 0.0
+            pct_gaps = [100.0 * (val - theory_val) / theory_val for val in seed_vals if theory_val > 0]
+            pct_gap = float(np.mean(pct_gaps)) if pct_gaps else 0.0
             # Draw a short horizontal line at theory value
             ax.plot([x_pos - 0.15, x_pos + 0.15], [theory_val, theory_val],
                    color="red", linestyle="--", linewidth=2.5, alpha=0.7, zorder=2)
@@ -1234,7 +1250,7 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2,
               fontsize=10, title="Mean (colored dots)")
     
-    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds (Unified) — {param_title}", fontsize=13)
+    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds (Unified, n={seed_count}) — {param_title}", fontsize=13)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     aggregate_plot_unified = out_path / "aggregate_h3_eigenvalues_unified.png"
     fig.savefig(aggregate_plot_unified, dpi=300)
