@@ -5,9 +5,18 @@ import os
 from collections import deque
 
 # Parameters
+d = 150
+P_values = [500, 1000, 1500] #np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
 d = 50
 P_values = [150, 300, 600, 1000, 1500, 2000, 2500, 3000]# np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
 # Add to P_values powers of d from sqrt(d) to 2 * d^(3/2)
+# powers = np.linspace(0.5, 1.6, num=5)
+for p in powers:
+    val = int(d**p)
+    if val not in P_values:
+        P_values = np.append(P_values, val)
+P_values = np.unique(np.sort(P_values))
+seeds = 3
 # powers = np.linspace(0.5, 1.6, num=5)
 # for p in powers:
 #     val = int(d**p)
@@ -20,10 +29,10 @@ N=200
 
 device='cuda:0'
 ens = 5
-chi = 50
-epochs = 30_000_000
-max_parallel_jobs = 8  # Launch jobs at both ends
-train_script = os.path.join(os.path.dirname(__file__), 'd_sweep.py')
+chi = N
+epochs = 20_000_000
+max_parallel_jobs = 4  # Launch jobs at both ends
+train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_seeds.py')
 
 # Command template (customize as needed)
 def make_cmd(P, seed):
