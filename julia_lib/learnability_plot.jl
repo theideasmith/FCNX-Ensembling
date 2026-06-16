@@ -36,9 +36,9 @@ else
     fcn2_data = Dict()
 
     for N_ in N_list
-        N_ = 800
-        chi = N / 10.0
-        println("Processing N=$N")
+        # N_ = 800
+        chi = N_ / 10.0
+        println("Processing N=$N_")
         fcn3_mu1, fcn3_mu3 = Float64[], Float64[]
         fcn3_lH1T, fcn3_lH3T = Float64[], Float64[]
         fcn3_lH1P, fcn3_lH3P = Float64[], Float64[]
@@ -52,7 +52,7 @@ else
 
             # FCN3 solver
             print("FCN3: ")
-            n1 = n2 = N
+            n1 = n2 = N_
             b, lr, max_iter = 4.0 / (3.0 * π), 1e-6, 6_000_000
             delta_target = 1.0
             i0_target = [4 / (3 * π) * 1 / d^0.5, 1 / d^(3 / 2),
@@ -67,7 +67,7 @@ else
 
             l1, l3 = FCS.compute_lK_ratio(exp_sol_target, P, n1, n2, chi, d, delta_target, kappa, epsilon, b)
             lJ1T, lJ3T, lH1T, lH3T, lWT = exp_sol_target
-            print("Learnability1: $l1, l3: $l3, P=$P,N=$N,d=$d,chi=$chi\n")
+            print("Learnability1: $l1, l3: $l3, P=$P,N=$N_,d=$d,chi=$chi\n")
             push!(fcn3_mu1, l1)
             push!(fcn3_mu3, l3)
             push!(fcn3_lH1T, lH1T)
@@ -90,11 +90,11 @@ else
             push!(fcn3_lWP, lWP)
 
 
-            n1 = N
+            n1 = N_
             b, lr, max_iter = 4.0 / (3.0 * π), 1e-6, 6_000_000
             params_target = FCS2Erf_Cubic.ProblemParams2(
                 d=Float32(d), κ=Float32(kappa), ϵ=Float32(epsilon),
-                P=Float32(P), n1=Float32(N), χ=Float32(chi), b=Float32(4 / (3 * pi)), δ=Float32(1.0)
+                P=Float32(P), n1=Float32(N_), χ=Float32(chi), b=Float32(4 / (3 * pi)), δ=Float32(1.0)
             )
             sol_target = FCS2Erf_Cubic.solve_FCN2_Erf(
                 params_target, [1.0 / d, 1.0 / d^3, 1.0 / d];
@@ -105,12 +105,12 @@ else
             push!(fcn2_lH1T, sol_target.lJ1)
             push!(fcn2_lH3T, sol_target.lJ3)
             push!(fcn2_lWT, sol_target.lWT)
-            print("Learnability1: $(sol_target.learnability1), l3: $(sol_target.learnability3), P=$P,N=$N,d=$d,chi=$chi\n")
+            print("Learnability1: $(sol_target.learnability1), l3: $(sol_target.learnability3), P=$P,N=$N_,d=$d,chi=$chi\n")
 
             # FCN2 perpendicular
             params_perp = FCS2Erf_Cubic.ProblemParams2(
                 d=Float32(d), κ=Float32(kappa), ϵ=Float32(epsilon), δ=Float32(0.0),
-                P=Float32(P), n1=Float32(N), χ=Float32(chi), b=Float32(4 / (3 * pi))
+                P=Float32(P), n1=Float32(N_), χ=Float32(chi), b=Float32(4 / (3 * pi))
             )
             sol_perp = FCS2Erf_Cubic.solve_FCN2_Erf(
                 params_perp, [1.0 / d, 1.0 / d^3, 1.0 / d];
@@ -120,8 +120,8 @@ else
             push!(fcn2_lH3P, sol_perp.lJ3)
             push!(fcn2_lWP, sol_perp.lWT)
         end
-        fcn3_data[N] = Dict("P" => P_list, "mu1" => fcn3_mu1, "mu3" => fcn3_mu3, "lH1T" => fcn3_lH1T, "lH3T" => fcn3_lH3T, "lH1P" => fcn3_lH1P, "lH3P" => fcn3_lH3P, "lWT" => fcn3_lWT, "lWP" => fcn3_lWP)
-        fcn2_data[N] = Dict("P" => P_list, "mu1" => fcn2_mu1, "mu3" => fcn2_mu3, "lH1T" => fcn2_lH1T, "lH3T" => fcn2_lH3T, "lH1P" => fcn2_lH1P, "lH3P" => fcn2_lH3P, "lWT" => fcn2_lWT, "lWP" => fcn2_lWP)
+        fcn3_data[N_] = Dict("P" => P_list, "mu1" => fcn3_mu1, "mu3" => fcn3_mu3, "lH1T" => fcn3_lH1T, "lH3T" => fcn3_lH3T, "lH1P" => fcn3_lH1P, "lH3P" => fcn3_lH3P, "lWT" => fcn3_lWT, "lWP" => fcn3_lWP)
+        fcn2_data[N_] = Dict("P" => P_list, "mu1" => fcn2_mu1, "mu3" => fcn2_mu3, "lH1T" => fcn2_lH1T, "lH3T" => fcn2_lH3T, "lH1P" => fcn2_lH1P, "lH3P" => fcn2_lH3P, "lWT" => fcn2_lWT, "lWP" => fcn2_lWP)
     end
 
     @save cache_file fcn3_data fcn2_data
@@ -152,6 +152,9 @@ p4 = plot(; common_opts..., ylabel=L"Eigenvalue $\lambda_3$", title=L"He$_3$ Eig
 scatter!(p1, [NaN], [NaN], zcolor=[n_min, n_max], colorbar_title=L"$N=$",
     c=c_scheme, label="", colorbar=true)
 
+# Print distinct indices in fcn3_data and fcn2_data for debugging
+println("Distinct indices in fcn3_data: ", keys(fcn3_data))
+println("Distinct indices in fcn2_data: ", keys(fcn2_data))
 for (i, N) in enumerate(N_list)
     # Map N to color
     normalized_val = (N - n_min) / (n_max - n_min == 0 ? 1 : n_max - n_min)
@@ -160,8 +163,8 @@ for (i, N) in enumerate(N_list)
     # Legend labels only for first pass
     l3T = (i == 1) ? "FCN3 T (Solid)" : ""
     l2T = (i == 1) ? "FCN2 T (Dash)" : ""
-    l3P = (i == 1) ? "FCN3 P (Dot)" : ""
-    l2P = (i == 1) ? "FCN2 P (DashDot)" : ""
+    l3P = (i == 1) ? "FCN3 P (Solid)" : ""
+    l2P = (i == 1) ? "FCN2 P (Dash)" : ""
 
     plot!(p1, alpha_list, fcn3_data[N]["mu1"], color=line_color, lw=2, label=l3T)
     plot!(p1, alpha_list, fcn2_data[N]["mu1"], color=line_color, lw=2, ls=:dash, label=l2T)
@@ -174,14 +177,14 @@ for (i, N) in enumerate(N_list)
     plot!(p3, alpha_list, fcn2_data[N]["lH1T"], color=line_color, lw=2, ls=:dash, label=l2T)
     # P mode
     plot!(p3, alpha_list, fcn3_data[N]["lH1P"], color=line_color, lw=2, ls=:dot, label=l3P)
-    plot!(p3, alpha_list, fcn2_data[N]["lH1P"], color=line_color, lw=2, ls=:dashdot, label=l2P)
+    plot!(p3, alpha_list, fcn2_data[N]["lH1P"], color=line_color, lw=2, ls=:dash, label=l2P)
 
     # T mode
     plot!(p4, alpha_list, fcn3_data[N]["lH3T"], color=line_color, lw=2, label="")
     plot!(p4, alpha_list, fcn2_data[N]["lH3T"], color=line_color, lw=2, ls=:dash, label="")
     # P mode
     plot!(p4, alpha_list, fcn3_data[N]["lH3P"], color=line_color, lw=2, ls=:dot, label="")
-    plot!(p4, alpha_list, fcn2_data[N]["lH3P"], color=line_color, lw=2, ls=:dashdot, label="")
+    plot!(p4, alpha_list, fcn2_data[N]["lH3P"], color=line_color, lw=2, ls=:dash, label="")
 
 end
 

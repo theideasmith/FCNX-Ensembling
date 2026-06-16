@@ -6,6 +6,7 @@ from collections import deque
 
 # Parameters
 d = 150
+<<<<<<< HEAD
 P_values = [500, 1000, 1500] #np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
 # Add to P_values powers of d from sqrt(d) to 2 * d^(3/2)
 # powers = np.linspace(0.5, 1.6, num=5)
@@ -14,20 +15,31 @@ for p in powers:
     if val not in P_values:
         P_values = np.append(P_values, val)
 P_values = np.unique(np.sort(P_values))
+=======
+P_values = [1000] #np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
+
+
+# powers = np.linspace(0.5, 1.6, num=5)
+# for p in powers:
+#     val = int(d**p)
+#     if val not in P_values:
+#         P_values = np.append(P_values, val)
+# P_values = np.unique(np.sort(P_values))
+>>>>>>> ab15aac (final stuff)
 seeds = 3
 kappa = 0.1
 N=200
 
 device='cuda:0'
 ens = 5
-chi = N
-epochs = 20_000_000
+chi = 200
+epochs = 80_000_000
 max_parallel_jobs = 4  # Launch jobs at both ends
-train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_seeds.py')
+train_script = os.path.join(os.path.dirname(__file__), 'd_sweep_hermite.py')
 
 # Command template (customize as needed)
 def make_cmd(P, seed):
-    lr_P = 1e-3 / P
+    lr_P = 1e-4 # if P <= 500 else 0.01
     return [
         'python3', train_script,
         '--d', str(d),
@@ -40,7 +52,7 @@ def make_cmd(P, seed):
         '--epochs', str(epochs),
         '--seed', str(seed),
         '--ens', str(ens),
-        '--to','publication_p_scan',
+        '--to','hermite_activation',
         '--eps','0.03'
     ]
 

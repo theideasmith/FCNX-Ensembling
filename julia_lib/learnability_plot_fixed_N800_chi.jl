@@ -159,12 +159,14 @@ common_opts = (
     thickness_scaling=1.1,
     margin=5mm,
     legend=false,
+    guidefontsize=20,
+    tickfontsize=8,
 )
 
-p1 = plot(; common_opts..., ylabel=L"Ratio $\mu_1$", title=L"He$_1$ Learnability")
-p2 = plot(; common_opts..., ylabel=L"Ratio $\mu_3$", title=L"He$_3$ Learnability")
-p3 = plot(; common_opts..., ylabel=L"Eigenvalue $\lambda_1$", title=L"He$_1$ Eigenvalues", yscale=:log10)
-p4 = plot(; common_opts..., ylabel=L"Eigenvalue $\lambda_3$", title=L"He$_3$ Eigenvalues", yscale=:log10)
+p1 = plot(; common_opts..., ylabel=L"$\mu_{He1}$", title=L"He$_1$ Learnability", )
+p2 = plot(; common_opts..., ylabel=L"$\mu_{He3}$", title=L"He$_3$ Learnability")
+p3 = plot(; common_opts..., ylabel=L"$\lambda^H_{He1,*}$", title=L"He$_1$ Eigenvalues", yscale=:log10)
+p4 = plot(; common_opts..., ylabel=L"$\lambda^H_{He3,*}$", title=L"He$_3$ Eigenvalues", yscale=:log10)
 
 # 2. Create the dedicated legend plot
 # Use :inside instead of :center
@@ -183,19 +185,19 @@ for (i, chi) in enumerate(chi_list)
     plot!(p3, alpha_list, fcn3_data[chi]["lH1T"], color=line_color, lw=2)
     plot!(p3, alpha_list, fcn2_data[chi]["lH1T"], color=line_color, lw=2, ls=:dash)
     # plot!(p3, alpha_list, fcn3_data[chi]["lH1P"], color=line_color, lw=2, ls=:dot)
-    # plot!(p3, alpha_list, fcn2_data[chi]["lH1P"], color=line_color, lw=2, ls=:dashdot)
+    # plot!(p3, alpha_list, fcn2_data[chi]["lH1P"], color=line_color, lw=2, ls=:dash)
 
     plot!(p4, alpha_list, fcn3_data[chi]["lH3T"], color=line_color, lw=2)
     plot!(p4, alpha_list, fcn2_data[chi]["lH3T"], color=line_color, lw=2, ls=:dash)
     # plot!(p4, alpha_list, fcn3_data[chi]["lH3P"], color=line_color, lw=2, ls=:dot)
-    # plot!(p4, alpha_list, fcn2_data[chi]["lH3P"], color=line_color, lw=2, ls=:dashdot)
+    # plot!(p4, alpha_list, fcn2_data[chi]["lH3P"], color=line_color, lw=2, ls=:dash)
 
     # 3. Add Legend Entries to the dummy p_legend plot
     if i == 1
         plot!(p_legend, [NaN], [NaN], color=:black, lw=2, label="FCN3 T (Solid)")
         plot!(p_legend, [NaN], [NaN], color=:black, lw=2, ls=:dash, label="FCN2 T (Dash)")
-        plot!(p_legend, [NaN], [NaN], color=:black, lw=2, ls=:dot, label="FCN3 P (Dot)")
-        plot!(p_legend, [NaN], [NaN], color=:black, lw=2, ls=:dashdot, label="FCN2 P (DashDot)")
+        # plot!(p_legend, [NaN], [NaN], color=:black, lw=2, label="FCN3 P (Solid)")
+        # plot!(p_legend, [NaN], [NaN], color=:black, lw=2, ls=:dashdot, label="FCN2 P (Dash)")
     end
     plot!(p_legend, [NaN], [NaN], color=line_color, lw=3, label="$(chi_labels[i])")
 end

@@ -1,40 +1,18 @@
 # ============================================================================
-
-#  FCS.jl — Fixed-point Consistency Solver for FCN3 (erf activations)
+#  FCS.jl — Fixed-point Consistency Solver for FCN3 (He1 + He3 activations)
 # ============================================================================
 # Purpose:
 #   Numerical solvers and helpers that compute mean-field / fixed-point
-#   predictions used by the Python `Experiment` wrapper. This module exposes
-#   routines to solve the nonlinear FCS equations (via `NLsolve` or a simple
-#   gradient-descent fallback), to compute kernel-derived eigenvalues and
-#   learnability metrics, and to sweep parameter ranges.
-#
-# Exports (most important):
-#   - residuals
-#   - gradient_descent_solver
-#   - compute_lK_ratio
-#   - sweep_learnabilities
-#   - nlsolve_solver
-#   - solve_FCN3_Erf
-#   - populate_solution
-#
-# Quick example (from Julia REPL):
-#   using Pkg; Pkg.instantiate()
-#   using FCS
-#   params = FCS.ProblemParams(d=50.0f0, κ=1.0f0, ϵ=0.03f0, P=4000.0f0, n=200.0f0, χ=5.0f0)
-#   guess = [1.0, 1.0, 1.0, 1.0]
-#   sol = FCS.solve_FCN3_Erf(params, guess; verbose=true)
-#
-# Dependencies:
-#   ForwardDiff, NLsolve, LinearAlgebra, Plots (optional), Colors
+#   predictions used by the Python `Experiment` wrapper. Exposes
+#   routines to solve the decoupled, diagonal equations of state for 
+#   the alternative activation function Phi = He1 + He3 [28].
 #
 # Metadata:
-#   Project: FCNX-Ensembling
+#   Project: FCNX-Ensembling (He1 + He3 Branch)
 #   Path:    julia_lib/FCS.jl
-#   Author:  repo maintainers
-#   Date:    2025-12-02
+#   Date:    2026-06-04
 #
-module FCS
+module FCS_Hermite
 
 export residuals, gradient_descent_solver, compute_lK_ratio, sweep_learnabilities, nlsolve_solver
 
@@ -42,17 +20,8 @@ using ForwardDiff
 using LinearAlgebra
 using NLsolve
 
-
-
-
-
-
-
 is_physical(sol) = all(sol .> 0)
 using Base: @kwdef
-
-
-
 
 @kwdef mutable struct ProblemParams
     d::Float32
@@ -62,7 +31,7 @@ using Base: @kwdef
     n1::Float32
     n2::Float32
     χ::Float32
-    b::Float32  = 4/(3*π)
+    b::Float32  = 1.0f0  # b (gamma_Sigma^2) simplifies to exactly 1.0 under He1 + He3
 end 
 
 @kwdef mutable struct Solution
@@ -82,8 +51,6 @@ end
     kappa_eff::Float64 = NaN
 end
 
-
-
 # basic helpers
 function lV(sol::Solution)
     lV1 = - (sol.lH1 / sol.lJ1^2 - 1 / sol.lJ1)
@@ -93,37 +60,45 @@ end
 
 lWP(d::Real) = 1 / d
 
-function lWT(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
+function lWT(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=1.0)
     lV1, _ = lV(sol)
-    return 1 / (d + delta * b * n2  * lV1 / n1)
+    # Corrected weight prior feedback update (b = 1.0)
+    return 1 / (d + delta * n2 * lV1 / n1)
 end
 
-function TrSigma(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
+function TrSigma(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=1.0)
     return lWT(sol; n1=n1, n2=n2, d=d, delta=delta, b=b) + lWP(d) * (d - 1)
 end
 
-function EChh(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π))
-    ts = TrSigma(sol; n1=n1, n2=n2, d=d, delta=delta, b=b)
-    lp = lWP(d)
-    return sol.lH1 + sol.lH3 +
-        (16 / (π * (1 + 2 * ts)^3) * (15 * lp^3)) * (d - 1) +
-        (4 / (π * (1 + 2 * ts)) * lp) * (d - 1)
+function EChh(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=1.0)
+    # TrH of the decoupled preactivation covariance
+    TrH = sol.lH1 + sol.lH3  + 1.0
+    return TrH
+
 end
 
-gammaYh2(sol::Solution; n1::Real=1.0, n2::Real=1.0, d::Real=1.0, delta::Real=1.0, b::Real=4/(3π)) =
-    (4 / π) / (1 + 2 * EChh(sol; n1=n1, n2=n2, d=d, delta=delta, b=b))
-
-# compute lK values
-function lK(sol::Solution, P; n1::Real=1.0, n2::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=4/(3π))
-    gy = gammaYh2(sol; n1=n1, n2=n2, d=d, delta=delta, b=b)
-    return gy * sol.lH1, gy * sol.lH3
+# compute lK values (strictly diagonal and decoupled)
+function lK(sol::Solution, P; n1::Real=1.0, n2::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=1.0)
+    TrH = EChh(sol; n1=n1, n2=n2, d=d, delta=delta, b=b)
+    beta_val = (3.0 / sqrt(6.0)) * (TrH - 1.0)
+    alpha_val = (1.0 + beta_val)^2
+    
+    lK1 = alpha_val * sol.lH1
+    lK3 = 15.0 * sol.lH3^3 # Exact 6th Gaussian moment
+    return lK1, lK3
 end
 
-# compute lT values (uses same formula as residuals)
-function lT(sol::Solution, P; n1::Real=1.0, n2::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=4/(3π))
-    lK1, lK3 = lK(sol, P; n1=n1, n2=n2, chi=chi, d=d, delta=delta, kappa=kappa, epsilon=epsilon, b=b)
-    t1 = -chi^2 / (kappa / P + lK1)^2 * delta
-    t3 = -chi^2 / (kappa / P + lK3)^2 * delta
+# compute lT values (strictly diagonal and decoupled)
+function lT(sol::Solution, P; n1::Real=1.0, n2::Real=1.0, chi::Real=1.0, d::Real=1.0, delta::Real=1.0, kappa::Real=1.0, epsilon::Real=1.0, b::Real=1.0)
+    lK1, _ = lK(sol, P; n1=n1, n2=n2, chi=chi, d=d, delta=delta, kappa=kappa, epsilon=epsilon, b=b)
+    
+    TrH = EChh(sol; n1=n1, n2=n2, d=d, delta=delta, b=b)
+    beta_val = (3.0 / sqrt(6.0)) * (TrH - 1.0)
+    alpha_val = (1.0 + beta_val)^2
+    
+    # Effective T_eff has only a non-zero element in the top-left scaled by (1+beta)^2
+    t1 = -chi^2 / (kappa / P + lK1)^2 * delta * alpha_val
+    t3 = 0.0 # Cubic mode has no quadratic error feedback
     return t1, t3
 end
 
@@ -138,102 +113,53 @@ function get_eigenvalues(i0,
     return gradient_descent_solver(
         i0,
         chi=chi, d=d, kappa=1.0, delta=delta,
-        epsilon=ϵ, n1=n1, n2=n2, b=4 / (3 * π),
+        epsilon=epsilon, n1=n1, n2=n2, b=1.0,
         P=P, lr=lr, max_iter=Tf, verbose=true
     )
 end
 
-
-# -------------------------
-# Residual helper functions
-# -------------------------
-
-# Legacy residuals function (current implementation, without 1/6 normalization)
-function residuals_legacy(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
-    lJ1, lJ3, lH1, lH3, lWT = x  # current variables
-    lWP =  1.0 / d
+# -------------------------------------------------------------
+# Decoupled Residual Equations of State (He1 + He3 Activation)
+# -------------------------------------------------------------
+function residuals_decoupled(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
+    lJ1, lJ3, lH1, lH3, lWT = x
+    lWP = 1.0 / d
     
-    TrSigma = lWT + lWP * (d - 1)
+    # J_inv @ (J - H) @ J_inv
+    lV1 = - (lH1 - lJ1) / lJ1^2
+    lV3 = - (lH3 - lJ3) / lJ3^2
 
-    # Conjugate inter-layer discrepancies by the inverse kernels
-    # J : Downstream ↦ Upstream
-    # H : Upstream ↦ Preactivation
-    # J^-1 : Preimage of H ↦ Preimage of J
-    # V: Discrepancy between H1 and J1 in the preimage of J1
-    # FCS is the equations of state for FCN3 with erf activations
-    lV1 =    - lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)
-    lV3 =    - lJ3^(-1) * (lH3  - lJ3) * lJ3^(-1)
-    b = 4 / (π) * 1/ ( 1 + 2 * TrSigma)
+    # Preactivation Trace TrH
+    TrH = lH1 + lH3 + 1#+ (d-1) * (15 * lWP^3 + 1/d)
+    beta_val = (3.0 / sqrt(6.0)) * (TrH - 1.0)
+    # print(" TrH: $(sf(TrH)), beta: $(sf(beta_val))")
 
-    EChh = lH1 + lH3 +
-        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3))  * (d - 1) +
-        (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
+    alpha_val = (1.0 + beta_val)^2
 
-    gammaYh2 = (4 / π) / (1 + 2 * EChh)
-    lK1 = gammaYh2 * lH1
-    lK3 = gammaYh2 * lH3
+    # Strictly diagonal equivalent kernel K
+    lK1 = alpha_val * lH1
+    lK3 = 15.0 * lH3^3 
 
-    lT1 = -(chi^2 / (kappa / P + lK1)^2 * delta) - chi^2 * kappa / (P * chi) * lK1 / (lK1 + kappa / P) - chi / lH1
-    lT3 =   -(chi^2 / (kappa / P + lK3)^2 * delta) - chi^2 * kappa / (P * chi) * lK3 / (lK3 + kappa / P) - chi / lH3
+    # Effective backpropagation matrix T_eff
+    lT1 =  - (chi^2 / (kappa / P + lK1)^2 * delta) * alpha_val
+    lT3 = 0.0 #- (chi^2 / (kappa/P + lH3)^2) # Cubic mode has no quadratic error feedback
 
-    # Residuals
-    rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma)) * lWT)
-    rh1 = lH1 - 1 / (1 / lJ1 + gammaYh2 * lT1 / (n2 * chi))
-    rh3 = lH3 - ( 1 / (1 / lJ3 +  gammaYh2 * lT3 * epsilon^2 / (n2 * chi)) )
-    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) ) / 6
-    rlWT = lWT - 1 / (d + delta * b * (n2 / n1) * lV1)
-    return [rj1, rj3, rh1, rh3, rlWT]
-end
-
-# Normalized residuals function (with 1/6 factor applied to all l3 eigenvalues)
-function residuals_normalized(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
-    lJ1, lJ3, lH1, lH3, lWT = x  # current variables
-    lWP =  1.0 / d
+    # Residuals of the coupled scalar equations of state
+    rj1 = lJ1 - lWT
+    rj3 = lJ3 - 15.0 * lWT^3 
     
-    # Apply 1/6 normalization to all l3 eigenvalues
-    lJ3 = lJ3 
-    lH3 = lH3 
+    rh1 = lH1 - 1.0 / (1.0 / lJ1 + lT1 / (n2 * chi))
+    rh3 = lH3 - (1.0/ lJ3 + epsilon^2 * lT3 / (n2 * chi))^(-1)
     
-    TrSigma = lWT + lWP * (d - 1)
-
-    # Conjugate inter-layer discrepancies by the inverse kernels
-    lV1 =    - lJ1^(-1) * ( lH1 - lJ1) * lJ1^(-1)   # Apply 1/6 normalization to lV1 as well, since it depends on lH1 and lJ1
-    lV3 =    - lJ3^(-1) * (lH3  - lJ3) * lJ3^(-1) 
-    b = 4 / (π) * 1/ ( 1 + 2 * TrSigma)
-
-    EChh = lH1 + lH3 +
-        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3))  * (d - 1) +
-        (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
-
-    gammaYh2 = (4 / π) / (1 + 2 * EChh)
-    lK1 = gammaYh2 * lH1 
-    lK3 = gammaYh2 * lH3 
-
-    lT1 = -(chi^2 / (kappa / P + lK1)^2 * delta) #+ chi^2 * kappa / (P * chi) * lK1 / (lK1 + kappa / P)
-
-    lT3 =   -(chi^2 / (kappa / P + lK3)^2 * delta) #+ chi^2 * kappa / (P * chi) * lK3 / (lK3 + kappa / P)
-    # lT3 = lT3 / 6.0  # Apply 1/6 normalization to lT3 as well, since it depends on lK3 which depends on lH3
-
-    # Residuals
-    rj1 = lJ1 - (4 / (π * (1 + 2 * TrSigma)) * lWT)
-    rh1 = lH1 - 1 / (1 / lJ1 + gammaYh2 * lT1 / (n2 * chi))
-    rh3 = lH3 - ( 1 / (1 / lJ3 +  gammaYh2 * lT3 * epsilon^2 / (n2 * chi)) ) 
-    rj3 = lJ3 - ( (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWT^3)) ) / 6.0
-    rlWT = lWT - 1 / (d + delta * b * (n2 / n1) * lV1)
+    rlWT = lWT - 1.0 / (d + delta * (n2 / n1) * lV1)
+    
     return [rj1, rj3, rh1, rh3, rlWT]
 end
 
 # Main residuals dispatcher function
-# Given a guess x = [lH1, lJ1, lH3, lJ3], returns the residuals of the 4 equations
-# If normalized=true (default), applies 1/6 factor to l3 eigenvalues
-# If normalized=false, uses legacy implementation
-function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized::Bool=false)
-    normalized = true
-    if normalized
-        return residuals_normalized(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
-    else
-        return residuals_legacy(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
-    end
+function residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized::Bool=true)
+    # Both legacy and normalized paths are updated to the exact He1 + He3 equations
+    return residuals_decoupled(x, P, chi, d, kappa, delta, epsilon, n1, n2, b)
 end
 
 # -------------------------
@@ -251,29 +177,17 @@ function gradient_descent_solver(initial_guess;
     loss = nothing
 
     for iter in 1:max_iter
-        # Compute residuals
         res = residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized)
-
-        # Loss = sum of squares
         loss = sum(res .^ 2) + sum(x .^ 2)
-
-        # Gradient of loss wrt x
         grad = ForwardDiff.gradient(x -> sum(residuals(x, P, chi, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized) .^ 2), x)
-
-        # Update step
         x -= lr * grad
 
-        # Convergence check
         if loss < tol
             if verbose
                 println("Converged in $iter iterations, loss = $loss")
             end
             return x
         end
-
-        # if verbose && iter % 500 == 0
-        #     println("Iter $iter: loss = $loss")
-        # end
     end
 
     if verbose
@@ -282,7 +196,6 @@ function gradient_descent_solver(initial_guess;
     return x
 end
 
-
 function compute_lK_ratio(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)
     if sol === nothing
         return (NaN, NaN)
@@ -290,39 +203,28 @@ function compute_lK_ratio(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)
     lJ1, lJ3, lH1, lH3, lWT = sol
     lWP = 1 / d
 
-    TrSigma = lWT + lWP * (d - 1)
-    b = 4 / (π) * 1 / (1 + 2 * TrSigma)
-    EChh = lH1 + lH3 +
-        (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3)) * (d - 1) +
-        (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
-    gammaYh2 = (4 / π) / (1 + 2 * EChh)
-    lK1 = gammaYh2 * lH1
-    lK3 = gammaYh2 * lH3
+    TrH = lH1 + lH3 + 1.0
+    beta_val = (3.0 / sqrt(6.0)) * (TrH - 1.0)
+    alpha_val = (1.0 + beta_val)^2
+    
+    lK1 = alpha_val * lH1
+    lK3 = 15.0 * lH3^3
     return (lK1 / (lK1 + kappa / P), lK3 / (lK3 + kappa / P))
 end
 
-
-
-function compute_lK(sol, P,n1, n2, chi, d, delta, kappa, epsilon, b)
-
-
-lJ1, lJ3, lH1, lH3,lWT = sol
-lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
-lV3 = -(lH3 / lJ3^2 - 1 / lJ3)
-lWT = 1 / (d + delta * b * n2 * (lV1) / n1)
-lWP = 1 / d
-
-TrSigma = lWT + lWP * (d - 1)
-EChh = lH1 + lH3 +
-       (16 / (π * (1 + 2 * TrSigma)^3) * (15 * lWP^3)) * (d - 1) +
-       (4 / (π * (1 + 2 * TrSigma)) * lWP) * (d - 1)
-gammaYh2 = (4 / π) / (1 + 2 * EChh)
-print(gammaYh2)
-lK1 = gammaYh2 * lH1
-lK3 = gammaYh2 * lH3
-
-return lK1, lK3
-
+function compute_lK(sol, P, n1, n2, chi, d, delta, kappa, epsilon, b)
+    lJ1, lJ3, lH1, lH3, lWT = sol
+    lWP = 1 / d
+    lV1 = -(lH1 / lJ1^2 - 1 / lJ1)
+    lWT = 1 / (d + delta * n2 * lV1 / n1)
+    
+    TrH = lH1 + lH3 + 1.0 #+ (d - 1) * (15 * lWP^3) + (d - 1) * 1 / d
+    beta_val = (3.0 / sqrt(6.0)) * (TrH - 1.0)
+    alpha_val = (1.0 + beta_val)^2
+    
+    lK1 = alpha_val * lH1
+    lK3 = 15.0 * lH3^3
+    return lK1, lK3
 end
 
 function compute_effective_ridge(kappa_bare::Real, lambdas::AbstractVector{<:Real}, P::Real;
@@ -361,23 +263,19 @@ function populate_solution(sol::Solution, params::ProblemParams)
 end
 
 function nlsolve_solver(initial_guess;
-    anneal=false,        # Flag for chi annealing
-    anneal_P=true,      # Flag for P annealing
+    anneal=false,        
+    anneal_P=true,      
     chi=1.0, d=1.0, kappa=1.0, delta=1.0, epsilon=1.0, n1=1.0, n2=1.0, b=1.0,
     P=nothing, anneal_steps=1000,
     lr=1e-3, max_iter=5000, tol=1e-8, verbose=false, normalized::Bool=true)
 
-    # 1. Transform initial guess to log-space to ensure positivity
-    # We add a small epsilon to avoid log(0) if the guess is bad
     x_log = log.(initial_guess .+ 1e-12)
 
     target_P = (P === nothing) ? d^1.2 : P
     target_chi = chi
 
-    # 2. Internal solver function that works in log-space
     function solve_at_params_log(current_x_log, current_P, current_chi)
         function f_log!(F, x_log_val)
-            # Convert back to physical space for the residual calculation
             x_phys = exp.(x_log_val)
             F[:] = residuals(x_phys, current_P, current_chi, d, kappa, delta, epsilon, n1, n2, b; normalized=normalized)
         end
@@ -408,7 +306,7 @@ function nlsolve_solver(initial_guess;
                 return nothing
             end
         end
-        return exp.(result_log) # Convert back to physical space
+        return exp.(result_log) 
     else
         try
             sol = solve_at_params_log(x_log, target_P, target_chi)
@@ -425,8 +323,6 @@ function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
     lr=1e-3, max_iter=5000, tol=1e-9, verbose=false, normalized::Bool=true,
     effective_ridge::Bool=false)
 
-    # Ensure initial_guess is length 5: [lJ1, lJ3, lH1, lH3, lWT]
-    # If a 4-element guess is passed, append a reasonable lWT
     if length(initial_guess) == 4
         initial_guess = [initial_guess..., 1.0 / problem_params.d]
     end
@@ -473,7 +369,6 @@ function solve_FCN3_Erf(problem_params::ProblemParams, initial_guess;
         end
     end
 
-    # Map results to Solution object
     res_sol = Solution(
         lJ1=sol_vec[1],
         lJ3=sol_vec[2],
@@ -503,7 +398,7 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
     learnabilities_1 = Float64[]
     learnabilities_3 = Float64[]
 
-    x = copy(initial_guess)  # warm-start
+    x = copy(initial_guess)  
     n1 = n
     n2 = n
     for P in P_vals
@@ -511,7 +406,7 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
             x,
             chi=chi, d=d, kappa=kappa, delta=delta,
             epsilon=epsilon, n1=n1, n2=n2, b=b,
-            P=P,lr=1e-5, max_iter=500000, anneal=true, verbose=false,
+            P=P, lr=1e-5, max_iter=500000, anneal=true, verbose=false,
             normalized=false
         )
 
@@ -519,7 +414,6 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
         push!(learnabilities_1, l1)
         push!(learnabilities_3, l3)
 
-        # warm start next P with the last solution (if valid)
         if !(sol === nothing)
             x = sol
         end
@@ -528,6 +422,4 @@ function sweep_learnabilities(initial_guess; alphas, chi, d, kappa, delta, epsil
     return P_vals, learnabilities_1, learnabilities_3
 end
 
-
-
-end 
+end

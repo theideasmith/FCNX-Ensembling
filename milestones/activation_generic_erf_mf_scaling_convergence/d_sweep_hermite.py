@@ -3,7 +3,7 @@
 Train a single network with specified parameters.
 
 Usage:
-    python d_sweep_hermite.py --P 1200 --d 100 --N 800 --chi 80 --kappa 0.0125 --lr 3e-5 --epochs 50000000 --device cuda:1
+    python d_sweep.py --P 1200 --d 100 --N 800 --chi 80 --kappa 0.0125 --lr 3e-5 --epochs 50000000 --device cuda:1
 """
 
 import argparse
@@ -71,7 +71,7 @@ def compute_theory(d: int, P: int, N: int, chi: float, kappa: float, eps: float)
         "lH3P": perp.get("lH3P"),
     }
 
-def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, seed=42, ens=50, log_interval=10_000, to='results'):
+def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, seed=42, ens=50, log_interval=10_000, to='results', exact_epochs=False):
     """Train network and track eigenvalues over epochs."""
 
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
@@ -111,9 +111,12 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
 
     # Model (use seed 70 for model initialization)
     torch.manual_seed(70)
+    # model = FCN3NetworkActivationGeneric(d, N, N, P, ens=ens,
+                                        #  activation="erf",
+                                        #  weight_initialization_variance=(1/d, 1/N, 1/(N * chi))).to(device)
     model = FCN3NetworkActivationGeneric(d, N, N, P, ens=ens,
-                                         activation="hermite3",
-                                         weight_initialization_variance=(1/d, 1/N, 1/(N * chi))).to(device)
+                                     activation="hermite3",
+                                     weight_initialization_variance=(1/d, 1/N, 1/(N * chi))).to(device)
     
     # Check if resuming from checkpoint
     model_checkpoint = seed_dir / "model.pt"
@@ -176,15 +179,25 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 print(f"  Epoch {0:7d} (init): max_eig={eigenvalues.max():.6f}, mean_eig={eigenvalues[1:].mean():.6f}")
             except Exception as e:
                 print(f"  Warning: Could not compute initial eigenvalues at epoch 0: {e}")
-    transition_epoch = int(epochs * 0.9)
-    epochs = int(epochs * 0.9 + epochs * 0.1 * 3)  # Extend total epochs to allow for post-transition training
-    for epoch in range(start_epoch, epochs + 1):  # Resume from start_epoch
+    if exact_epochs:
+        transition_epoch = None
+        effective_epochs = int(epochs)
+    else:
+        transition_epoch = int(epochs * 0.9)
+        effective_epochs = int(epochs * 0.9 + epochs * 0.1 * 3)  # Extend total epochs to allow for post-transition training
+
+    for epoch in range(start_epoch, effective_epochs + 1):  # Resume from start_epoch
         # Forward pass (skip for epoch 0)
         if epoch > 0:
             torch.manual_seed(7 + epoch)  # Langevin dynamics seed
 
-            if epoch > transition_epoch:
+            if exact_epochs:
+                lr = lr0 / P
+            elif epoch > transition_epoch:
                 lr = lr0 / ( 3 * P)
+            # Add a second drop in learning rate after 70 percent of epochs
+            elif epoch > int(epochs * 0.7):
+                lr = lr0 / ( 2 * P)
             else: 
                 lr = lr0 / P
 
@@ -207,6 +220,7 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
             # Pure Langevin update
             with torch.no_grad():
                 for name, param in model.named_parameters():
+
                     if param.grad is None:
                         continue
                     if 'W0' == name:
@@ -257,73 +271,166 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                     writer.add_scalar('W0_Cov_Eigenvalues/max', eigvals_W0[0], epoch)
                     writer.add_scalar('W0_Cov_Eigenvalues/mean', eigvals_W0[1:].mean(), epoch)
                 except Exception as e:
-                    print(f"  Warning: Could not compute W0 covariance at epoch {epoch}: {e}")
+                    traceback.print_exc()
+                    print(f"  Warning: Could not compute/log W0 covariance eigenvalues at epoch {epoch}: {e}")
 
-            # Save progress
-            config = {
-                "current_epoch": epoch,
-                "lr": lr,
-                "d": d,
-                "P": P,
-                "N": N,
-                "chi": chi,
-                "kappa": kappa,
-                "eps": eps,
-                "seed": seed,
-                "ens": ens,
-                "activation": "hermite3",
-                "noise_scale": float(noise_scale),
-                "loss_avg": loss_avg if epoch > 0 else None,
-                "loss_std": loss_std if epoch > 0 else None,
-            }
-            
-            with open(seed_dir / "config.json", "w") as f:
-                json.dump(config, f, indent=2)
-            
-            torch.save(model.state_dict(), seed_dir / "model.pt")
-            
-            # Save losses
-            if epoch > 0:
-                losses[epoch] = loss_avg
-                loss_stds[epoch] = loss_std
-                with open(seed_dir / "losses.json", "w") as f:
-                    json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
-            
-            # Save eigenvalues
-            if eigenvalues is not None:
-                try:
-                    eigenvalues_over_time[epoch] = eigenvalues.tolist()
-                    with open(seed_dir / "eigenvalues_over_time.json", "w") as f:
-                        json.dump(eigenvalues_over_time, f, indent=2)
-                except Exception as e:
-                    print(f"  Warning: Could not save eigenvalues at epoch {epoch}: {e}")
+                # Compute and log He1 and He3 projections
+                # if False:
+                    # try:
+                    #     output = model.h1_preactivation(Xinf)  # shape: (P, ensemble)
+                    #     P_dim = output.shape[0]
+                        
+                    #     # Compute projection directions
+                    #     x0_target = Xinf[:, 0]
+                    #     x0_target_normed = x0_target / x0_target.norm() 
+                    #     x3_perp = Xinf[:, 3] if d > 3 else torch.randn_like(Xinf[:, 0])
+                    #     x3_perp_normed = x3_perp / x3_perp.norm() 
+                        
+                    #     # Hermite cubic polynomials for target and perp: (x^3 - 3x)/sqrt(6)
+                    #     h3_target = (x0_target**3 - 3.0 * x0_target) 
+                    #     h3_target_normed = h3_target / h3_target.norm() 
+                    #     h3_perp = (x3_perp**3 - 3.0 * x3_perp)
+                    #     h3_perp_normed = h3_perp / h3_perp.norm() 
+                        
+                    #     # Project outputs onto target/perp directions per ensemble
+                    #     proj_lin_target = torch.einsum('pqn,p->qn', output, x0_target_normed) 
+                    #     proj_lin_perp = torch.einsum('pqn,p->qn', output, x3_perp_normed) 
+                    #     proj_cubic_target = torch.einsum('pqn,p->qn', output, h3_target_normed) 
+                    #     proj_cubic_perp = torch.einsum('pqn,p->qn', output, h3_perp_normed) 
+                        
+                    #     # Compute variances
+                    #     var_lin_target = float(torch.var(proj_lin_target).item())
+                    #     var_lin_perp = float(torch.var(proj_lin_perp).item())
+                    #     var_cubic_target = float(torch.var(proj_cubic_target).item())
+                    #     var_cubic_perp = float(torch.var(proj_cubic_perp).item())
+                        
+                    #     # Log variances to TensorBoard
+                    #     writer.add_scalar('Projections/He1_target_var', var_lin_target, epoch)
+                    #     writer.add_scalar('Projections/He1_perp_var', var_lin_perp, epoch)
+                    #     writer.add_scalar('Projections/He3_target_var', var_cubic_target, epoch)
+                    #     writer.add_scalar('Projections/He3_perp_var', var_cubic_perp, epoch)
+                        
+                    #     # Log histograms to TensorBoard
+                    #     writer.add_histogram('Projections/He1_target', proj_lin_target, epoch)
+                    #     writer.add_histogram('Projections/He1_perp', proj_lin_perp, epoch)
+                    #     writer.add_histogram('Projections/He3_target', proj_cubic_target, epoch)
+                    #     writer.add_histogram('Projections/He3_perp', proj_cubic_perp, epoch)
+                        
+                    #     print(f"  Variances - He1_target: {var_lin_target:.3g} (theory: {theory_H.get('lH1T', float('nan')):.3g}), He1_perp: {var_lin_perp:.3g} (theory: {theory_H.get('lH1P', float('nan')):.3g}), He3_target: {var_cubic_target:.3g} (theory: {theory_H.get('lH3T', float('nan')):.3g}), He3_perp: {var_cubic_perp:.3g} (theory: {theory_H.get('lH3P', float('nan')):.3g})")
+                    # except Exception as e:
+                    #     traceback.print_exc()
+                    #     print(f"  Warning: Could not compute/log projections at epoch {epoch}: {e}")
 
-            print(f"  Epoch {epoch:7d}: loss={loss_avg:.6f}, std={loss_std:.6f}")
-    
+                # Save checkpoint
+                if epoch > 0 and epoch % 100000 == 0:
+                    torch.save(model.state_dict(), seed_dir / (f"model_{epoch}.pt"))
+
+                    # # Also save intermediate results periodically
+                    # try:
+                    #     with open(seed_dir / "eigenvalues_over_time.json", "w") as f:
+                    #         json.dump(eigenvalues_over_time, f, indent=2)
+                    # except Exception as save_e:
+                    #     print(f"  Warning: Could not save eigenvalues: {save_e}")
+
+                    # with open(seed_dir / "losses.json", "w") as f:
+                    #     json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
+
+                    # Update config with current epoch and lr
+                    config = {
+                        "d": d, "P": P, "N": N, "kappa": float(kappa),
+                        "lr": float(lr), "epochs": epochs, "chi": chi,
+                        "seed": seed, "ens": ens, "current_epoch": epoch
+                    }
+                    with open(seed_dir / "config.json", "w") as f:
+                        json.dump(config, f, indent=2)
+
+    # Save final model
+    torch.save(model.state_dict(), seed_dir / "model_final.pt")
+
+    # Save config
+    config = {
+        "d": d, "P": P, "N": N, "kappa": float(kappa),
+        "lr": float(lr), "epochs": epochs, "chi": chi,
+        "seed": seed, "ens": ens, "current_epoch": epochs
+    }
+    with open(seed_dir / "config.json", "w") as f:
+        json.dump(config, f, indent=2)
+
+    # Save eigenvalues over time
+    try:
+        with open(seed_dir / "eigenvalues_over_time.json", "w") as f:
+            json.dump(eigenvalues_over_time, f, indent=2)
+    except Exception as e:
+        print(f"  Warning: Could not save final eigenvalues: {e}")
+
+    # Save losses
+    with open(seed_dir / "losses.json", "w") as f:
+        json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
+
+    # Close TensorBoard writer
     writer.close()
-    return model, eigenvalues_over_time, losses, loss_stds
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a single network and track eigenvalues over time.")
-    parser.add_argument("--d", type=int, required=True)
-    parser.add_argument("--P", type=int, required=True)
-    parser.add_argument("--N", type=int, required=True)
-    parser.add_argument("--chi", type=float, required=True)
-    parser.add_argument("--kappa", type=float, required=True)
-    parser.add_argument("--lr", type=float, required=True)
-    parser.add_argument("--epochs", type=int, required=True)
-    parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--eps", type=float, default=0.03)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ens", type=int, default=50)
-    parser.add_argument("--log_interval", type=int, default=10_000)
-    parser.add_argument("--to", type=str, default="results")
+    # Get final eigenvalues
+    final_eigenvalues = None
+    try:
+        if epochs in eigenvalues_over_time:
+            final_eigenvalues = np.array(eigenvalues_over_time[epochs])
+    except Exception as e:
+        print(f"  Warning: Could not retrieve final eigenvalues: {e}")
 
+    return final_eigenvalues, eigenvalues_over_time, run_dir
+
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Train a single network with specified parameters')
+    parser.add_argument('--P', type=int, required=True, help='Number of data points')
+    parser.add_argument('--d', type=int, required=True, help='Input dimension')
+    parser.add_argument('--N', type=int, required=True, help='Hidden layer size')
+    parser.add_argument('--chi', type=int, required=True, help='Chi parameter')
+    parser.add_argument('--kappa', type=float, required=True, help='Kappa parameter')
+    parser.add_argument('--lr', type=float, required=True, help='Learning rate')
+    parser.add_argument('--epochs', type=int, required=True, help='Number of epochs')
+    parser.add_argument('--device', type=str, required=True, help='Device to use (e.g., cuda:0, cuda:1, cpu)')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for dataset generation')
+    parser.add_argument('--ens', type=int, default=50, help='Ensemble size')
+    parser.add_argument('--dry-run', action='store_true', help='Run a quick test with epochs=1 and delete results afterwards')
+    parser.add_argument('--eps', type=float, default=0.03, help='Epsilon parameter for cubic target generation')
+    parser.add_argument('--to', type=str, default='results', help='Directory to save results')
+    parser.add_argument('--exact-epochs', action='store_true', help='Use the requested epochs exactly and keep lr constant throughout training')
     args = parser.parse_args()
 
-    train_and_track(
-        args.d, args.P, args.N, args.chi, args.kappa,
-        args.lr, args.epochs, args.device,
-        eps=args.eps, seed=args.seed, ens=args.ens,
-        log_interval=args.log_interval, to=args.to
+    epochs = 1 if args.dry_run else args.epochs
+
+    print(f"\n{'='*60}")
+    print(f"Starting training with P={args.P}, d={args.d}, N={args.N}, chi={args.chi}, kappa={args.kappa}, lr={args.lr}, epochs={epochs}, seed={args.seed}, ens={args.ens} on {args.device}")
+    if args.dry_run:
+        print("DRY RUN MODE: Running with epochs=1 and will delete results afterwards")
+    print(f"{'='*60}")
+
+    final_eigs, eigs_over_time, run_dir = train_and_track(
+        d=args.d,
+        P=args.P,
+        N=args.N,
+        chi=args.chi,
+        kappa=args.kappa,
+        lr0=args.lr,
+        epochs=epochs,
+        device_str=args.device,
+        seed=args.seed,
+        ens=args.ens,
+        eps=args.eps,
+        to=args.to,
+        exact_epochs=args.exact_epochs
     )
+
+    print(f"\nTraining completed!")
+
+    if args.dry_run:
+        import shutil
+        print(f"Deleting dry-run results from {run_dir}")
+        shutil.rmtree(run_dir)
+        print("Dry-run cleanup complete.")
+
+if __name__ == "__main__":
+    main()

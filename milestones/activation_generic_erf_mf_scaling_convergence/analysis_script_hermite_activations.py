@@ -39,14 +39,14 @@ def arcsin_kernel(X: torch.Tensor) -> torch.Tensor:
 
 # --- Configuration & Paths ---
 LIB_PATH = Path(__file__).parent.parent.parent / "lib"
-JULIA_SCRIPT = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf.jl"
-RESULTS_DIR = Path(__file__).parent / "p_scan_erf_results"
+JULIA_SCRIPT = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf_hermite.jl"
+RESULTS_DIR = Path(__file__).parent / "hermite_activation"
 CACHE_DIR = RESULTS_DIR / "analysis_cache"
 sys.path.insert(0, str(LIB_PATH))
 
 MAX_GPU_WORKERS = 2   
 MAX_CPU_WORKERS = 10  
-EPSILON = 1e-3
+EPSILON = 0.074
 
 RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
@@ -77,10 +77,14 @@ class CacheManager:
     def save_result(cfg_hash, data):
         cache_path = CACHE_DIR / f"res_{cfg_hash}.json"
         with open(cache_path, "w") as f:
+
             json.dump(data, f, indent=4)
 
 # --- Helper function to compute kappa_eff ---
-
+def hermite_kernel(x):
+    d = x.shape[1]
+    K = (1/d) * x.T @ x + ((1.0/d) * x.T @ x)**3 
+    return K
 def compute_kappa_eff(d: int, P: int, kappa: float):
     """Compute effective ridge by running self-consistent kappa solver using arcsin kernel eigenvalues."""
     try:
@@ -88,7 +92,7 @@ def compute_kappa_eff(d: int, P: int, kappa: float):
         np.random.seed(0)
         X = np.random.randn(P, d).astype(np.float32)
         X_torch = torch.from_numpy(X)
-        K = arcsin_kernel(X_torch)
+        K = hermite_kernel(X_torch)
         eigvals = torch.linalg.eigvalsh(K).cpu().numpy() / P
         
         # Run self-consistent solver
@@ -137,7 +141,9 @@ def run_theory_task(params):
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=300)
         with open(to_path, "r") as f:
+            
             ret = json.load(f)
+
         return ret
     except Exception as e:
         print(f"Julia error: {e}")
@@ -227,14 +233,14 @@ def run_empirical_task(task_info):
         ens = sd['W0'].shape[0] if sd['W0'].ndim == 3 else sd['W0'].shape[1]
         
         model = FCN3NetworkActivationGeneric(
-            d=d, n1=n1, n2=n2, P=P, ens=ens, activation="erf",
-            weight_initialization_variance=(1.0/d, 1.0/n1, 1.0/(n1*n2))
+            d=d, n1=n1, n2=n2, P=P, ens=ens, activation="hermite3",
+            weight_initialization_variance=(1.0/d, 1.0/n1, 1.0/(cfg['chi']*n2))
         ).to(device)
         model.load_state_dict({k: v.squeeze(0) if v.ndim > (3 if 'W' in k else 2) else v for k, v in sd.items()}, strict=False)
         model.eval()
 
         torch.manual_seed(0)
-        P_total, batch_size = 3000, 500
+        P_total, batch_size = 6000, 500
         X = torch.randn(P_total, d, device=device)
         # eigs = model.H_eig_random_svd(X, k=700)
         # emp_h = float(eigs[0].detach().cpu().numpy())
@@ -245,64 +251,56 @@ def run_empirical_task(task_info):
 
             eigvals_W0 = torch.linalg.eigvalsh(cov_W0).sort(descending=True).values.cpu().numpy()
             # eigvals_W0 = torch.var(model.W0[:,:,0]).cpu().numpy()  # Variance of first input dimension across all ensembles and neurons
-
+        print("Top 5 W0 eigenvalues: ", eigvals_W0[:5]  )
         model.device = X.device  # Ensure model is on the same device as X
-        eigs = model.H_eig_random_svd(X, k=700)
+        eigs = model.H_eig_random_svd(X, k=5000)
         kappa_eff = cfg.get('kappa_eff', cfg['kappa'])  # Use kappa_eff if available, else kappa
         lh1 = (eigs[0] / (eigs[0] + kappa_eff / cfg['P'])).item()
         lh3 = (eigs[cfg['d']] / (eigs[cfg['d']] + kappa_eff / cfg['P'])).item()
-        P_total, batch_size = 10_000, 10_000#2_000_000, 10_000
+        P_total, batch_size = 100000, 10_000#2_000_000, 10_000
         h1_sum, h3_sum, x0_norm_sum, x3_norm_sum = 0.0, 0.0, 0.0, 0.0
+        y_3 = 0
+        y_1 = 0
         print(f"Running empirical h1/h3 estimation for d={cfg['d']}, P={cfg['P']} on device {device}...")
         print("ENSEMBLES: ", model.ensembles)
         with torch.no_grad():
             torch.manual_seed(4324)  # Reset seed for reproducibility
-            # for _ in range(P_total // batch_size):
-            #     X_batch = torch.randn(batch_size, d, device=device)
-            #     out = model(X_batch)
-            #     x0 = X_batch[:, 0]
-            #     d_h1_sum = (out * x0.unsqueeze(-1)).sum().item() if out.ndim > 1 else (out * x0).sum().item() 
-            #     d_h1_sum /= model.ensembles
-            #     h1_sum += d_h1_sum 
-            # h1_sum /= P_total
-            # print("H1 Sum is: ", h1_sum)
-            # # If seed exists: 
-            # if 'seed' in cfg:
-            #    torch.manual_seed(cfg['seed'])  # Reset seed for reproducibility
-            # else:
-            #     torch.manual_seed(cfg['base_seed'])  # Default seed if not specified
             for _ in range(P_total // batch_size):
                 X_batch = torch.randn(batch_size, d, device=device)
                 out = model(X_batch)
                 x0 = X_batch[:, 0]
                 h3_comp = (x0**3 - 3*x0) / 6**0.5
+
+                h1 = torch.einsum('pq,p->q', out, x0) 
+                y_1 = torch.einsum('p,p->', x0, (x0 + 0.074 * h3_comp) ).item()  / x0.shape[0]  # Normalize by batch size
+
+                h1_sum += h1.mean().item() / y_1 
+
+                h1 = h1 / x0.shape[0]  # Normalize by batch size
+                h1 = h1.reshape((1, model.ensembles))
                 # Graham-Schmidt orthogonalization to get h3 component
-                remainder = out - (h1_sum * x0).unsqueeze(-1)
+                remainder = out - ( h1 * x0.reshape((x0.shape[0], 1)) ) # Remove h1 component
                 proj3_target_sum = torch.einsum('pq,p->q', remainder, h3_comp).sum().item() / model.ensembles  # Average over ensembles
-                # print(d_h3_sum)
-                h3_sum += proj3_target_sum
-            # print("H3 Sum is: ", h3_sum / P_total)
-            # Projection using graham schmidt orthogonalization to get h3 component
-            torch.manual_seed(int(cfg['seed'] * 3.14) if 'seed' in cfg else 4324)  # Reset seed for reproducibility
+                y_3 = torch.einsum('p,p->', h3_comp, (x0 + 0.074 * h3_comp) ).item() / x0.shape[0]  # Normalize by batch size
+                h3_sum += proj3_target_sum  / y_3 / P_total
+
+
             x0 = torch.randn(12000, d, device=device)  # Sample new x0 for projection
             out = model(x0)  # Get model output for x0
             linear_component = torch.einsum('pq,p->q', out, x0[:,0]).sum().item() * x0[:,0].unsqueeze(-1) / model.ensembles / x0.shape[0]  # Average over ensembles
-            h3_comp = (x0[:,0]**3 - 3*x0[:,0]) / 6**0.5
+            # h3_comp = (x0[:,0]**3 - 3*x0[:,0]) / 6**0.5
             h1_sum = torch.einsum('pq,p->q', out, x0[:,0]).sum().item() / model.ensembles / x0.shape[0]  # Average over ensembles and samples
-            remainder = out - linear_component
-            # proj3_target_sum = torch.einsum('pq,p->q', remainder, h3_comp).sum().item() / model.ensembles  # Average over ensembles
-            # # y_k is the projection of the target h3 component onto the normalized target, which is 1/sqrt(6) for the standard normal distribution   
-            # y_k = torch.einsum('p,p->', h3_comp, x0[:,0] + 0.03 * h3_comp).item() / x0.shape[0]  # Average over samples
-            # h3_sum = proj3_target_sum / x0.shape[0] / 0.03  # Normalize by target scaling and number of samples
-            # print("y_k is: ", y_k)
-            # print("H3 Sum is: ", h3_sum)
+            
+            h3_sum = h3_sum 
+            # h1_sum = h1_sum / (P_total // batch_size)
+
         P_total = 1_000_000
         # Compute h3 eigenvalues using high-precision streaming (P_total=200M)
         print(f"Computing h3 projections with P_total={P_total} for d={cfg['d']}, P={cfg['P']}...")
         h3_stats = compute_h3_projections_streaming(
             model, 
             d=cfg['d'],
-            P_total=10_000_000,
+            P_total=1_000_000,
             batch_size=10_000,
             device=device
         )
@@ -310,7 +308,6 @@ def run_empirical_task(task_info):
         h3_perp_eig = h3_stats['h3']['perp']['second_moment']
         print(f"h3_target={h3_target_eig}, h3_perp={h3_perp_eig}")
         
-        # return {"emp_h": emp_h, "emp_w0": float(eigvals_W0[0]), "h1_emp": h1_sum / x0_norm_sum, "h3_emp": h3_sum / x3_norm_sum}
         return {"emp_h": float(eigs[0].detach().cpu().numpy().item()), "emp_w0": float(eigvals_W0[0]), "h1_emp": h1_sum , "h3_emp": h3_sum, "h3_target_eig": h3_target_eig, "h3_perp_eig": h3_perp_eig}
     except Exception as e:
         print(f"Empirical Error {m_dir.name}: {e}"); 
@@ -539,6 +536,7 @@ if __name__ == "__main__":
                    "h1_theory": safe_float(target_theory.get("mu1", np.nan)), "h3_theory": safe_float(target_theory.get("mu3", np.nan)),
                    "h1_nngp_theory": safe_float(perp_theory.get("mu1", np.nan)), "h3_nngp_theory": safe_float(perp_theory.get("mu3", np.nan)),
                    "kappa_eff": kappa_effs[i]}
+
             CacheManager.save_result(to_compute_hashes[i], res)
             if args.force:
                 print(f"  refreshed cache with NNGP fields for d={res['d']}, P={res['P']}")
@@ -633,7 +631,7 @@ if __name__ == "__main__":
                     chi_val = sample.get("chi", "?")
                     kappa_val = sample.get("kappa", "?")
                     n_val = sample.get("N", "?")
-                    label = f"d={int(d_val) if float(d_val).is_integer() else d_val}, $\chi={chi_val:.2g}, \kappa$={kappa_val:.2g}, N={n_val}"
+                    label = f"d={int(d_val) if float(d_val).is_integer() else d_val}, $\\chi={chi_val:.2g}, \\kappa$={kappa_val:.2g}, N={n_val}"
                 else:
                     label = f"d={int(d_val) if float(d_val).is_integer() else d_val}"
                 h = plt.Line2D([0], [0], color=series_color(i), linewidth=3)
@@ -660,13 +658,13 @@ if __name__ == "__main__":
                 chi_val = sample.get("chi", "?")
                 kappa_val = sample.get("kappa", "?")
                 n_val = sample.get("N", "?")
-                return f"d={int(val) if float(val).is_integer() else val}, $\chi={chi_val:.2g}, \kappa$={kappa_val:.2g}, N={n_val}"
+                return f"d={int(val) if float(val).is_integer() else val}, $\\chi={chi_val:.2g}, $\\kappa$={kappa_val:.2g}, N={n_val}"
             elif d_group:
                 sample = d_group[0]
                 chi_val = sample.get("chi", "?")
                 kappa_val = sample.get("kappa", "?")
                 n_val = sample.get("N", "?")
-                return f"d={int(val) if float(val).is_integer() else val}, $\chi={chi_val:.2g}, \kappa$={kappa_val:.2g}, N={n_val}"
+                return f"d={int(val) if float(val).is_integer() else val}, $\\chi={chi_val:.2g}, $\\kappa$={kappa_val:.2g}, N={n_val}"
         else:
             if color_by == "chi":
                 return r"$\chi = $" + str(val) if not is_first else ""
@@ -982,7 +980,6 @@ if __name__ == "__main__":
         c = series_color(i)
         alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
         label = get_data_label(val, i == 0)
-        plt.yscale('log')
         plt.scatter(alpha_vals, [r["emp_h"] for r in res], color=role_color("empirical", c), label=label if (i == 0 or multi_d_mode) else "", alpha=0.7, s=50, marker=exp_marker)
         # Mean lines
         alpha_to_emp_h = defaultdict(list)
@@ -1011,7 +1008,6 @@ if __name__ == "__main__":
     plt.tight_layout(); plt.savefig(RESULTS_DIR / f"eigenvalues_H_alpha_linear_{get_d_str_for_filename()}_N{N}.png", dpi=300)
     # He3 Lambda H (target) vs P
     fig_h3 = plt.figure(figsize=(15, 10))
-    plt.yscale('log')
     for i, (val, res) in enumerate(groups.items()):
         res = collapse_rows_to_seed_means(res)
         c = series_color(i)
@@ -1070,7 +1066,6 @@ if __name__ == "__main__":
 
     # He3 Lambda H (target) vs alpha
     fig_h3_alpha = plt.figure(figsize=(10,10))
-    plt.yscale('log')
     for i, (val, res) in enumerate(groups.items()):
         res = collapse_rows_to_seed_means(res)
         c = series_color(i)
@@ -1125,7 +1120,6 @@ if __name__ == "__main__":
 
     # Lambda W alpha
     fig_w = plt.figure(figsize=(10,10))
-    plt.yscale('log')
     for i, (val, res) in enumerate(groups.items()):
         res = collapse_rows_to_seed_means(res)
         c = series_color(i)
@@ -1205,7 +1199,6 @@ if __name__ == "__main__":
     # Learnability with alpha
     for mode in ["h1", "h3"]:
         plt.figure(figsize=(10,10))
-        plt.yscale('log')
         for i, (val, res) in enumerate(groups.items()):
             res = collapse_rows_to_seed_means(res)
             c = series_color(i)
@@ -1251,63 +1244,4 @@ if __name__ == "__main__":
         plt.ylim(0, None)
 
         plt.tight_layout(); plt.savefig(RESULTS_DIR / f"learnability_{mode}_alpha_linear_{get_d_str_for_filename()}_N{N}.png", dpi=300)
-    
-    # Plot eigenvalues vs chi if multiple chi values are present
-    if len(unique_chis) > 1:
-        fig_chi = plt.figure(figsize=(10, 8))
-        
-        d_val = final_data[0]["d"] if final_data else 0
-        kappa_val = final_data[0]["kappa"] if final_data else 0
-        N_val = final_data[0]["N"] if final_data else 0
-        
-        # Group data by P to support multi-P plots if present
-        p_groups = defaultdict(list)
-        for r in final_data:
-            p_groups[r["P"]].append(r)
-            
-        for p_val, rows in sorted(p_groups.items()):
-            # Group by chi
-            chi_to_emp = defaultdict(list)
-            chi_to_theo = defaultdict(list)
-            for r in rows:
-                if "chi" in r and "emp_h" in r and "theo_h" in r:
-                    chi_to_emp[r["chi"]].append(r["emp_h"])
-                    chi_to_theo[r["chi"]].append(r["theo_h"])
-            
-            chis = sorted(chi_to_emp.keys())
-            mean_emp = [np.mean(chi_to_emp[c]) for c in chis]
-            mean_theo = [np.mean(chi_to_theo[c]) for c in chis]
-            
-            p_suffix = f" (P={p_val})" if len(p_groups) > 1 else ""
-            
-            # Scatter individual experiment points
-            all_chis = []
-            all_emps = []
-            for c in chis:
-                for val in chi_to_emp[c]:
-                    all_chis.append(c)
-                    all_emps.append(val)
-            plt.scatter(all_chis, all_emps, color=color_empirical, marker='o', alpha=0.4, s=30, zorder=2)
-            
-            # Experiment mean line: solid circles connected by solid line
-            plt.plot(chis, mean_emp, linestyle='-', marker='o', color=color_empirical, 
-                     linewidth=2.5, markersize=8, label=f"Experiment{p_suffix}", zorder=3)
-            
-            # Theory line: dashed line and squares (scatter)
-            plt.plot(chis, mean_theo, linestyle='--', marker='s', color=color_theory, 
-                     linewidth=2.5, markersize=8, label=f"Theory{p_suffix}", zorder=4)
-            
-        plt.xlabel("chi")
-        plt.ylabel("lH")
-        plt.title(f"d={d_val}, kappa={kappa_val}, N={N_val}")
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        
-        plot_path = RESULTS_DIR / f"eigenvalues_vs_chi_{get_d_str_for_filename()}_N{N_val}.png"
-        plt.savefig(plot_path, dpi=300)
-        plt.close(fig_chi)
-        print(f"Saved eigenvalues vs chi plot to {plot_path}")
-
     # plt.show()
-
