@@ -57,6 +57,7 @@ class CacheManager:
     @staticmethod
     def get_config_hash(cfg):
         relevant_keys = ["d", "P", "N", "chi", "kappa", "seed", "base_seed"]
+        relevant_keys = ["d", "P", "N", "chi", "kappa", "seed", "base_seed"]
         core_params = {k: cfg.get(k) for k in relevant_keys if k in cfg}
         core_params["eps"] = EPSILON
         param_str = json.dumps(core_params, sort_keys=True)
@@ -85,10 +86,13 @@ def compute_kappa_eff(d: int, P: int, kappa: float):
     """Compute effective ridge by running self-consistent kappa solver using arcsin kernel eigenvalues."""
     try:
         # Compute P x P arcsin kernel eigenvalues
+        # Compute P x P arcsin kernel eigenvalues
         np.random.seed(0)
+        X = np.random.randn(P, d).astype(np.float32)
         X = np.random.randn(P, d).astype(np.float32)
         X_torch = torch.from_numpy(X)
         K = arcsin_kernel(X_torch)
+        eigvals = torch.linalg.eigvalsh(K).cpu().numpy() / P
         eigvals = torch.linalg.eigvalsh(K).cpu().numpy() / P
         
         # Run self-consistent solver
@@ -139,11 +143,77 @@ def run_theory_task(params):
         with open(to_path, "r") as f:
             ret = json.load(f)
         return ret
+            ret = json.load(f)
+        return ret
     except Exception as e:
         print(f"Julia error: {e}")
         return {}
     finally:
         if to_path.exists(): to_path.unlink()
+
+
+def split_theory_result(theo):
+    if not isinstance(theo, dict):
+        return {}, {}
+    target = theo.get("target", {}) or {}
+    perpendicular = theo.get("perpendicular", {}) or {}
+    return (
+        {k: safe_float(v) for k, v in target.items()},
+        {k: safe_float(v) for k, v in perpendicular.items()},
+    )
+
+
+def safe_float(value):
+    return float(value) if value is not None else float(np.nan)
+
+
+def cached_theory_from_result(cached):
+    if not isinstance(cached, dict):
+        return {}, {}
+    return (
+        {
+            "lH1T": safe_float(cached.get("theo_h", np.nan)),
+            "lH3T": safe_float(cached.get("theo_h3", np.nan)),
+            "lWT": safe_float(cached.get("theo_w", np.nan)),
+            "mu1": safe_float(cached.get("h1_theory", np.nan)),
+            "mu3": safe_float(cached.get("h3_theory", np.nan)),
+        },
+        {
+            "lH1P": safe_float(cached.get("theo_h_nngp", np.nan)),
+            "lH3P": safe_float(cached.get("theo_h3_nngp", np.nan)),
+            "lWP": safe_float(cached.get("theo_w_nngp", np.nan)),
+            "mu1": safe_float(cached.get("h1_nngp_theory", np.nan)),
+            "mu3": safe_float(cached.get("h3_nngp_theory", np.nan)),
+        },
+    )
+
+
+def theory_fields_are_finite(theory_pair):
+    target_theory, perp_theory = theory_pair
+    needed = [
+        target_theory.get("lH1T", np.nan),
+        target_theory.get("lH3T", np.nan),
+        target_theory.get("lWT", np.nan),
+        target_theory.get("mu1", np.nan),
+        target_theory.get("mu3", np.nan),
+        perp_theory.get("lH1P", np.nan),
+        perp_theory.get("lH3P", np.nan),
+        perp_theory.get("lWP", np.nan),
+        perp_theory.get("mu1", np.nan),
+        perp_theory.get("mu3", np.nan),
+    ]
+    return all(np.isfinite(x) for x in needed)
+
+
+def theory_job_key(task_info, kappa_eff):
+    cfg = task_info["cfg"]
+    return (
+        int(cfg["d"]),
+        int(cfg["P"]),
+        int(cfg["N"]),
+        float(cfg["chi"]),
+        float(kappa_eff),
+    )
 
 
 def split_theory_result(theo):
@@ -326,9 +396,12 @@ if __name__ == "__main__":
     parser.add_argument("--chi", type=float, nargs='+', default=[80])
     parser.add_argument("--kappa", type=float, nargs='+', default=None)
     parser.add_argument("--d", type=int, nargs='+', default=None, help="Filter by input dimension d. If multiple d values provided, must match length of chi and kappa.")
+    parser.add_argument("--d", type=int, nargs='+', default=None, help="Filter by input dimension d. If multiple d values provided, must match length of chi and kappa.")
     parser.add_argument("--ignore-seeds", type=int, nargs='+', default=[], help="Seed values to exclude from analysis")
     parser.add_argument("--truncate-last", type=int, default=0, help="Drop the last N measurements by largest unique P before plotting")
+    parser.add_argument("--truncate-last", type=int, default=0, help="Drop the last N measurements by largest unique P before plotting")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--recompute-theory", action="store_true", help="Recompute theory while keeping empirical cache")
     parser.add_argument("--recompute-theory", action="store_true", help="Recompute theory while keeping empirical cache")
     parser.add_argument("--results-dir", type=str, default=str(RESULTS_DIR), help="Directory containing result subfolders")
     args = parser.parse_args()
@@ -336,6 +409,25 @@ if __name__ == "__main__":
     results_dir = Path(args.results_dir)
     RESULTS_DIR = results_dir  # Update global variable with argument value
     mp.set_start_method('spawn', force=True)
+    
+    # Validate and prepare (d, chi, kappa) tuples
+    # If multiple d values are provided, they pair with chi/kappa in order
+    multi_d_mode = args.d and len(args.d) > 1
+    param_tuples = None  # List of (d, chi, kappa) tuples to match
+    
+    if multi_d_mode:
+        # Validate that d, chi, kappa have the same length
+        num_d = len(args.d)
+        if len(args.chi) != num_d:
+            print(f"Error: --d has {num_d} values but --chi has {len(args.chi)} values. They must match.")
+            sys.exit(1)
+        if args.kappa and len(args.kappa) != num_d:
+            print(f"Error: --d has {num_d} values but --kappa has {len(args.kappa)} values. They must match.")
+            sys.exit(1)
+        # Default kappa to first value if not provided
+        if not args.kappa:
+            args.kappa = [args.kappa[0]] * num_d if args.kappa else [0.0] * num_d
+        param_tuples = list(zip(args.d, args.chi, args.kappa))
     
     # Validate and prepare (d, chi, kappa) tuples
     # If multiple d values are provided, they pair with chi/kappa in order
@@ -375,6 +467,30 @@ if __name__ == "__main__":
         if cfg['P'] > 10000:
             print("Skipping due to large P: ", cfg['P'])
             continue
+        
+        # Filtering logic: check against parameter tuples if multi_d_mode
+        if multi_d_mode:
+            # Check if this config matches any of the (d, chi, kappa) tuples
+            cfg_d = int(cfg.get("d", 0))
+            cfg_chi = float(cfg.get("chi", 0))
+            cfg_kappa = float(cfg.get("kappa", 0))
+            matches_tuple = False
+            for d_val, chi_val, kappa_val in param_tuples:
+                if (cfg_d == d_val and 
+                    abs(cfg_chi - chi_val) < 1e-6 and 
+                    abs(cfg_kappa - kappa_val) < 1e-6):
+                    matches_tuple = True
+                    break
+            if not matches_tuple:
+                continue
+        else:
+            # Original filtering logic
+            if not any(abs(float(cfg.get("chi", 0)) - c) < 1e-6 for c in args.chi): 
+                continue
+            if args.kappa and not any(abs(float(cfg.get("kappa", 0)) - k) < 1e-6 for k in args.kappa): 
+                continue
+            if args.d and int(cfg.get("d", 0)) not in args.d: 
+                continue
         
         # Filtering logic: check against parameter tuples if multi_d_mode
         if multi_d_mode:
@@ -447,6 +563,27 @@ if __name__ == "__main__":
                 cached["h1_nngp_theory"] = safe_float(cached_perp.get("mu1", np.nan))
                 cached["h3_nngp_theory"] = safe_float(cached_perp.get("mu3", np.nan))
                 CacheManager.save_result(c_hash, cached)
+            needs_theory_refresh = args.recompute_theory or (
+                "theo_h_nngp" not in cached or not np.isfinite(cached.get("theo_h_nngp", np.nan)) or
+                "theo_h3_nngp" not in cached or not np.isfinite(cached.get("theo_h3_nngp", np.nan))
+            )
+            if needs_theory_refresh:
+                cached_theory_all = run_theory_task({
+                    "d": cached["d"],
+                    "P": cached["P"],
+                    "n1": cached["N"],
+                    "n2": cached["N"],
+                    "chi": cached["chi"],
+                    "kappa": cached["kappa_eff"],
+                    "eps": EPSILON,
+                })
+                cached_theory, cached_perp = split_theory_result(cached_theory_all)
+                cached["theo_h_nngp"] = safe_float(cached_perp.get("lH1P", np.nan))
+                cached["theo_h3_nngp"] = safe_float(cached_perp.get("lH3P", np.nan))
+                cached["theo_w_nngp"] = safe_float(cached_perp.get("lWP", np.nan))
+                cached["h1_nngp_theory"] = safe_float(cached_perp.get("mu1", np.nan))
+                cached["h3_nngp_theory"] = safe_float(cached_perp.get("mu3", np.nan))
+                CacheManager.save_result(c_hash, cached)
             final_data.append(cached)
         else:
             # Even when --force, reuse cached kappa_eff if available
@@ -466,11 +603,18 @@ if __name__ == "__main__":
         # Build unique keys for kappa computation: (d, P, kappa)
         kappa_map = {}
         keys_to_compute = []
+        # Step 2a: Compute kappa_eff for all configurations (deduplicated)
+        print("Computing effective ridge (kappa_eff) with deduplication...")
+        # Build unique keys for kappa computation: (d, P, kappa)
+        kappa_map = {}
+        keys_to_compute = []
         for task_info in to_compute_dirs:
             cfg = task_info['cfg']
             key = (int(cfg["d"]), int(cfg["P"]), float(cfg["kappa"]))
+            key = (int(cfg["d"]), int(cfg["P"]), float(cfg["kappa"]))
             cached_kappa_eff = task_info.get('cached_kappa_eff')
             if cached_kappa_eff is not None:
+                kappa_map[key] = cached_kappa_eff
                 kappa_map[key] = cached_kappa_eff
             else:
                 # Mark key for computation once
@@ -977,7 +1121,9 @@ if __name__ == "__main__":
     # Separate alpha plots
     # Lambda H alpha
     fig_h = plt.figure(figsize=(10,10))
+    fig_h = plt.figure(figsize=(10,10))
     for i, (val, res) in enumerate(groups.items()):
+        res = collapse_rows_to_seed_means(res)
         res = collapse_rows_to_seed_means(res)
         c = series_color(i)
         alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
@@ -988,10 +1134,12 @@ if __name__ == "__main__":
         alpha_to_emp_h = defaultdict(list)
         alpha_to_theo_h = defaultdict(list)
         alpha_to_nngp_h = defaultdict(list)
+        alpha_to_nngp_h = defaultdict(list)
         for r in res:
             alpha = np.log(r["P"]) / np.log(r["d"])
             alpha_to_emp_h[alpha].append(r["emp_h"])
             alpha_to_theo_h[alpha].append(r["theo_h"])
+            alpha_to_nngp_h[alpha].append(r.get("theo_h_nngp", np.nan))
             alpha_to_nngp_h[alpha].append(r.get("theo_h_nngp", np.nan))
         unique_alpha = sorted(alpha_to_emp_h.keys())
         mean_emp_h = [np.mean(alpha_to_emp_h[a]) for a in unique_alpha]
@@ -1004,7 +1152,17 @@ if __name__ == "__main__":
     plt.plot([], [], '-', color=color_empirical if single_d_mode else 'black', linewidth=3, marker=exp_marker, markersize=6, label="Model (empirical)")
     plt.plot([], [], '--', color=color_theory if single_d_mode else 'black', linewidth=3, marker=theo_marker, markersize=8, label="Theory (Mean-Field)")
     plt.plot([], [], ':', color=color_nngp if single_d_mode else 'black', linewidth=3, marker=theo_marker, markersize=6, label="NNGP")
+        mean_nngp_h = [np.mean(alpha_to_nngp_h[a]) for a in unique_alpha]
+        draw_top_errorbar(plt, unique_alpha, mean_emp_h, yerr=[float(np.std(alpha_to_emp_h[a], ddof=1) / np.sqrt(len(alpha_to_emp_h[a]))) if len(alpha_to_emp_h[a]) > 1 else 0.0 for a in unique_alpha], color=role_color("empirical", c), marker=exp_marker, linestyle='-', linewidth=3, markersize=6, alpha=0.85, capsize=4, elinewidth=1.5, ecolor='black', zorder=1000, clip_on=False)
+        plt.plot(unique_alpha, mean_theo_h, '--', color=role_color("theory", c), linewidth=3, marker=theo_marker, markersize=8, alpha=0.8)
+        plt.plot(unique_alpha, mean_nngp_h, ':', color=role_color("nngp", c), linewidth=3, marker=theo_marker, markersize=6, alpha=0.7)
+
+    plt.plot([], [], '-', color=color_empirical if single_d_mode else 'black', linewidth=3, marker=exp_marker, markersize=6, label="Model (empirical)")
+    plt.plot([], [], '--', color=color_theory if single_d_mode else 'black', linewidth=3, marker=theo_marker, markersize=8, label="Theory (Mean-Field)")
+    plt.plot([], [], ':', color=color_nngp if single_d_mode else 'black', linewidth=3, marker=theo_marker, markersize=6, label="NNGP")
     plt.axvline(1, color='gray', linestyle='--', alpha=0.5, linewidth=2, label=r"$\alpha=1$")
+    plt.title("He1 Target Eigenvalues ($\lambda^{H, He1}_*$)"); plt.ylabel(r"$\lambda^{H, He1}_*$",fontsize=25)
+    plt.xlabel(r"$\alpha$"); plt.legend(loc='lower right'); plt.grid(True, alpha=0.3)
     plt.title("He1 Target Eigenvalues ($\lambda^{H, He1}_*$)"); plt.ylabel(r"$\lambda^{H, He1}_*$",fontsize=25)
     plt.xlabel(r"$\alpha$"); plt.legend(loc='lower right'); plt.grid(True, alpha=0.3)
     plt.ylim(0, None)
@@ -1023,6 +1181,16 @@ if __name__ == "__main__":
             label = f"{color_by}={val}"
 
         res = collapse_rows_to_seed_means(res)
+        res = collapse_rows_to_seed_means(res)
+        c = series_color(i)
+        if color_by == "chi":
+            label = r"$\chi = $" + str(val)
+        elif color_by == "d":
+            label = f"d={val}"
+        else:
+            label = f"{color_by}={val}"
+
+        res = collapse_rows_to_seed_means(res)
         c = series_color(i)
         p_vals = [r["P"] for r in res]
         label = r"$\chi = $" + str(val) if color_by == "chi" else f"{color_by}={val}"
@@ -1030,17 +1198,24 @@ if __name__ == "__main__":
             label = get_data_label(val, True)
             # if val==150:
                 # continue
+        if multi_d_mode:
+            label = get_data_label(val, True)
+            # if val==150:
+                # continue
         # scatter of empirical He3 target eigenvalues
         plt.scatter(p_vals, [r["h3_target_eig"] for r in res],
+                color=c, label=label , alpha=0.7, s=50, marker=exp_marker)
                 color=c, label=label , alpha=0.7, s=50, marker=exp_marker)
 
         # mean lines over seeds
         p_to_emp_h3 = defaultdict(list)
         p_to_theo_h3 = defaultdict(list)
         p_to_nngp_h3 = defaultdict(list)
+        p_to_nngp_h3 = defaultdict(list)
         for r in res:
             p_to_emp_h3[r["P"]].append(r["h3_target_eig"])
             p_to_theo_h3[r["P"]].append(r["theo_h3"])
+            p_to_nngp_h3[r["P"]].append(r.get("theo_h3_nngp", np.nan))
             p_to_nngp_h3[r["P"]].append(r.get("theo_h3_nngp", np.nan))
         unique_p = sorted(p_to_emp_h3.keys())
         mean_emp_h3 = [np.mean(p_to_emp_h3[p]) for p in unique_p]
@@ -1057,21 +1232,47 @@ if __name__ == "__main__":
     plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Model (empirical)")
     plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory (Mean-Field)")
     plt.plot([], [], ':', color=color_nngp if single_d_mode else 'black', linewidth=3, marker=theo_marker, markersize=6, label="NNGP")
+        mean_nngp_h3 = [np.mean(p_to_nngp_h3[p]) for p in unique_p]
+        draw_top_errorbar(plt, unique_p, mean_emp_h3, yerr=[float(np.std(p_to_emp_h3[p], ddof=1) / np.sqrt(len(p_to_emp_h3[p]))) if len(p_to_emp_h3[p]) > 1 else 0.0 for p in unique_p], color=role_color("empirical", c), marker=exp_marker, linestyle='-', linewidth=3, markersize=6, alpha=0.85, capsize=4, elinewidth=1.5, ecolor='black', zorder=1000, clip_on=False)
+        plt.plot(unique_p, mean_theo_h3, '--', color=role_color("theory", c), linewidth=3,
+            marker=theo_marker, markersize=8, alpha=0.8)
+        plt.plot(unique_p, mean_nngp_h3, ':', color=role_color("nngp", c), linewidth=3,
+            marker=theo_marker, markersize=6, alpha=0.7)
+    plt.yscale('log')
+    plt.ylim(0.0, None)
+    # dummy handles for legend (line-style legend; colors indicate d)
+    plt.plot([], [], '-', color='black', linewidth=3, marker=exp_marker, markersize=6, label="Model (empirical)")
+    plt.plot([], [], '--', color='black', linewidth=3, marker=theo_marker, markersize=8, label="Theory (Mean-Field)")
+    plt.plot([], [], ':', color=color_nngp if single_d_mode else 'black', linewidth=3, marker=theo_marker, markersize=6, label="NNGP")
     plt.axvline(d, color='gray', linestyle='--', alpha=0.5, linewidth=2, label="P=d")
 
     plt.title(r"He3 Target Eigenvalues ($\lambda^{H,He3}_*$)")
+    plt.title(r"He3 Target Eigenvalues ($\lambda^{H,He3}_*$)")
     plt.xlabel("P (dataset size)")
+    plt.ylabel(r"$\lambda^{H,He3}_*$", fontsize=25)
+    plt.legend(loc='upper right'); plt.grid(True, alpha=0.3)
     plt.ylabel(r"$\lambda^{H,He3}_*$", fontsize=25)
     plt.legend(loc='upper right'); plt.grid(True, alpha=0.3)
     plt.xscale('log')
     plt.ylim(0, None)
     plt.tight_layout()
     plt.savefig(RESULTS_DIR / f"eigenvalues_He3_{get_d_str_for_filename()}_N{N}.png", dpi=300)
+    plt.savefig(RESULTS_DIR / f"eigenvalues_He3_{get_d_str_for_filename()}_N{N}.png", dpi=300)
 
     # He3 Lambda H (target) vs alpha
     fig_h3_alpha = plt.figure(figsize=(10,10))
     plt.yscale('log')
     for i, (val, res) in enumerate(groups.items()):
+        res = collapse_rows_to_seed_means(res)
+        c = series_color(i)
+        if color_by == "chi":
+            label = r"$\chi = $" + str(val)
+        elif color_by == "d":
+            label = f"d={val}"
+        else:
+            label = f"{color_by}={val}"
+        # if val==150: continue
+        res = collapse_rows_to_seed_means(res)
         res = collapse_rows_to_seed_means(res)
         c = series_color(i)
         if color_by == "chi":
@@ -1208,8 +1409,18 @@ if __name__ == "__main__":
         plt.yscale('log')
         for i, (val, res) in enumerate(groups.items()):
             res = collapse_rows_to_seed_means(res)
+            res = collapse_rows_to_seed_means(res)
             c = series_color(i)
             alpha_vals = [np.log(r["P"]) / np.log(r["d"]) for r in res]
+            if color_by == "chi":
+                label = r"$\chi = $" + str(val)
+            elif color_by == "d":
+                label = f"d={val}"
+            else:
+                label = f"{color_by}={val}"
+            if multi_d_mode:
+                label = get_data_label(val, True)
+            plt.scatter(alpha_vals, [r[f"{mode}_emp"] for r in res], color=role_color("empirical", c), label=label if (i == 0 or multi_d_mode) else "", alpha=0.7, s=50, marker=exp_marker)
             if color_by == "chi":
                 label = r"$\chi = $" + str(val)
             elif color_by == "d":

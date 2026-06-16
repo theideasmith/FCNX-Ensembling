@@ -400,7 +400,11 @@ if __name__ == "__main__":
             draw_top_errorbar(ax, u_p, means, yerr=stds, color=c, marker='o', ls='-', lw=3)
             ax.plot(u_p, [np.mean([r[t_key] for r in res if r["P"]==p]) for p in u_p], '--', color=c, lw=3)
     for ax in [ax1, ax2]:
+<<<<<<< HEAD
         ax.set_xscale('log'); ax.set_yscale('log'); ax.grid(True, alpha=0.3); ax.set_xlabel("P")
+=======
+        ax.set_xscale('log'); ax.grid(True, alpha=0.3); ax.set_xlabel("P")
+>>>>>>> 64ae2907af71f18683b965570a80fd5cceff35c9
         ax.legend([plt.Line2D([0],[0], color='black', marker='o'), plt.Line2D([0],[0], color='black', ls='--')], 
                   ["Model", "Theory"], loc='upper center', bbox_to_anchor=(0.5, -0.18), ncol=2)
     plt.tight_layout(); plt.savefig(RESULTS_DIR / "eigenvalues_scan.png", bbox_inches='tight')
@@ -417,7 +421,11 @@ if __name__ == "__main__":
             draw_top_errorbar(plt, u_p, means, color=c, marker='o', lw=3)
             plt.plot(u_p, [np.mean([r[t_key] for r in res if r["P"]==p]) for p in u_p], '--', color=c, lw=3)
             plt.plot(u_p, [np.nanmean([r.get(n_key, np.nan) for r in res if r["P"]==p]) for p in u_p], ':', color=c, lw=3)
+<<<<<<< HEAD
         plt.xscale('log');  plt.yscale('log'); plt.grid(True, alpha=0.3); plt.xlabel("P"); plt.title(f"{mode.upper()} Learnability")
+=======
+        plt.xscale('log'); plt.grid(True, alpha=0.3); plt.xlabel("P"); plt.title(f"{mode.upper()} Learnability")
+>>>>>>> 64ae2907af71f18683b965570a80fd5cceff35c9
         plt.legend([plt.Line2D([0],[0], color='black', marker='o'), plt.Line2D([0],[0], color='black', ls='--'), plt.Line2D([0],[0], color='black', ls=':')], 
                    ["Model", "Theory", "NNGP"], loc='upper center', bbox_to_anchor=(0.5, -0.18), ncol=3)
         add_d_legend_if_multi_d()
@@ -434,7 +442,10 @@ if __name__ == "__main__":
             u_a = sorted(a_dict.keys())
             ax.plot(u_a, [np.mean(a_dict[a]) for a in u_a], color=c, marker='o', lw=3)
     for ax in [ax1, ax2]:
+<<<<<<< HEAD
         ax.set_xscale('log');ax.set_yscale('log');
+=======
+>>>>>>> 64ae2907af71f18683b965570a80fd5cceff35c9
         ax.grid(True, alpha=0.3); ax.set_xlabel(r"$\alpha$")
         ax.legend([plt.Line2D([0],[0], color='black', marker='o')], ["Model"], loc='upper center', bbox_to_anchor=(0.5, -0.18))
     plt.tight_layout(); plt.savefig(RESULTS_DIR / "alpha_eigenvalues.png", bbox_inches='tight')

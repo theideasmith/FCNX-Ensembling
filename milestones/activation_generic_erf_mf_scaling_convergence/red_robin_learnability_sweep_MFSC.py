@@ -6,8 +6,9 @@ from collections import deque
 
 # Parameters
 d = 150
-<<<<<<< HEAD
 P_values = [500, 1000, 1500] #np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
+d = 50
+P_values = [150, 300, 600, 1000, 1500, 2000, 2500, 3000]# np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
 # Add to P_values powers of d from sqrt(d) to 2 * d^(3/2)
 # powers = np.linspace(0.5, 1.6, num=5)
 for p in powers:
@@ -15,19 +16,17 @@ for p in powers:
     if val not in P_values:
         P_values = np.append(P_values, val)
 P_values = np.unique(np.sort(P_values))
-=======
-P_values = [1000] #np.logspace(np.log10(d/2), np.log10(5*d), num=5, dtype=int)
-
-
+seeds = 3
 # powers = np.linspace(0.5, 1.6, num=5)
 # for p in powers:
 #     val = int(d**p)
 #     if val not in P_values:
 #         P_values = np.append(P_values, val)
 # P_values = np.unique(np.sort(P_values))
->>>>>>> ab15aac (final stuff)
-seeds = 3
+seeds = 2
 kappa = 0.1
+N=200
+
 N=200
 
 device='cuda:0'
