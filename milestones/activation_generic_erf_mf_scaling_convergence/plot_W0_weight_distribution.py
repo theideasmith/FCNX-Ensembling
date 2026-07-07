@@ -36,7 +36,7 @@ DEVICE_DEFAULT = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def compute_theory_eigenvalues(d: int, N: int, P: int, chi: float, kappa: float, epsilon: float = 0.0):
     """Compute theoretical lWT and lWP eigenvalues via Julia."""
     try:
-        julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf.jl"
+        julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "eos_fcn3erf_hermite.jl"
         n2 = N
         b = 4.0 / (3.0 * np.pi)
         lr = 1e-6
@@ -99,11 +99,11 @@ def compute_theory_eigenvalues(d: int, N: int, P: int, chi: float, kappa: float,
 
 
 def find_run_dirs(base: Path, dims: Optional[List[int]] = None, suffix: str = "") -> List[Tuple[Path, Dict[str, int]]]:
-    """Locate seed directories that contain model.pt and match the naming convention."""
+    """Locate seed directories that contain model_final.pt and match the naming convention."""
     selected: List[Tuple[Path, Dict[str, int]]] = []
     pattern = r"d(\d+)_P(\d+)_N(\d+)_chi(\d+(?:\.\d+)?)"
 
-    model_files = list(base.glob(f"**/*{suffix}*/model.pt")) if suffix else list(base.glob("**/model.pt"))
+    model_files = list(base.glob(f"**/*{suffix}*/model_final.pt")) if suffix else list(base.glob("**/model_final.pt"))
     for model_file in model_files:
         seed_dir = model_file.parent
         seed_name = seed_dir.name
@@ -129,12 +129,12 @@ def find_run_dirs(base: Path, dims: Optional[List[int]] = None, suffix: str = ""
         selected.append((seed_dir, cfg))
 
     selected.sort(key=lambda x: (x[1]["d"], x[1]["seed"]))
-    print(f"Found {len(selected)} runs with model.pt")
+    print(f"Found {len(selected)} runs with model_final.pt")
     return selected
 
 
 def load_model(run_dir: Path, config: Dict[str, int], device: torch.device) -> Optional[FCN3NetworkActivationGeneric]:
-    model_path = run_dir / "model.pt"
+    model_path = run_dir / "model_final.pt"
     if not model_path.exists():
         model_path = run_dir / "model_final.pt"
     if not model_path.exists():

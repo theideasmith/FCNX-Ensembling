@@ -424,7 +424,7 @@ def main(recompute_theory=False):
     
     # Create overlay plots with professional sizing
     fig, axes = plt.subplots(1, 2, figsize=(16, 7.0))
-    fig.suptitle('Action for Readin Layer Weights \n'+ r'$S[w] = -\log P(w\cdot v_k)$ for FCN2 $f(x) = \mathbf{a}\cdot \mathrm{erf}(\mathbf{W}\cdot \mathbf{x}),\; x\in \mathbb{R}^d,\; d=100$', fontsize=14, fontweight='normal', y=1.00)
+    fig.suptitle('Action for Readin Layer Weights \n'+ r'$S[w] = -\log P(w\cdot v_k)$ for FCN2 $f(x) = \mathbf{a}\cdot \mathrm{erf}(\mathbf{W}\cdot \mathbf{x}),\; x\in \mathbb{R}^d,\; d=100$', fontsize=30, fontweight='normal', y=1.00)
     
     # Use dynamically generated colors
     chi_colors = param_colors_hex

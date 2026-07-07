@@ -18,6 +18,7 @@ import tempfile
 import json as json_lib
 import numpy as np
 import torch
+import torch.multiprocessing as tmp
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import List
@@ -87,6 +88,79 @@ def _import_compute_h3_module(base_dir: Path):
     return mod
 
 
+import multiprocessing as mp
+import torch
+import json
+from pathlib import Path
+
+def _compute_seed_projection_worker(args):
+    seed_dir_str, force_recompute = args
+    seed_dir = Path(seed_dir_str)
+    seed_name = seed_dir.name
+    h3_json = seed_dir / "h3_projections_fcn3.json"
+    stats = None
+
+    try:
+        # 1. Cache Check
+        if h3_json.exists() and not force_recompute:
+            try:
+                with open(h3_json, "r") as f:
+                    stats = json.load(f)
+                source = "cache"
+            except Exception as e:
+                return {"seed_name": seed_name, "ok": False, "error": f"cache error: {e}"}
+
+        # 2. Compute
+        if stats is None:
+            # --- CRITICAL PERFORMANCE FIXES ---
+            # Automatically assign this worker to a GPU if available, 
+            # otherwise strictly limit CPU threads to prevent thrashing.
+            if torch.cuda.is_available():
+                # mp.current_process()._identity[0] gives a unique worker ID (1, 2, 3...)
+                worker_id = mp.current_process()._identity[0] - 1
+                num_gpus = torch.cuda.device_count()
+                device = torch.device(f"cuda:{worker_id % num_gpus}")
+            else:
+                device = torch.device("cpu")
+                # Force PyTorch to only use 1 CPU thread per worker so they don't fight
+                torch.set_num_threads(1) 
+
+            # Import the module
+            compute_mod = _import_compute_h3_module(Path(__file__).parent)
+            
+            # Load model to the correct device
+            model = compute_mod.load_model_from_run(seed_dir, device)
+            d = int(getattr(model, "d", None) or 0)
+            
+            # Use torch.inference_mode() for a free ~10% speedup over no_grad
+            with torch.inference_mode():
+                stats = compute_mod.compute_h3_projections_streaming(
+                    model, 
+                    d, 
+                    P_total=200_000_000, 
+                    batch_size=50_000,  # INCREASED: 20x larger chunk size = vastly less loop overhead
+                    device=device
+                )
+                
+            compute_mod.save_stats(seed_dir, stats)
+            source = "computed"
+            
+            # Free memory immediately on the GPU
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+        # 3. Format Output
+        eigs = {
+            "lH1T": stats["h1"]["target"]["second_moment"],
+            "lH1P": stats["h1"]["perp"]["second_moment"],
+            "lH3T": stats["h3"]["target"]["second_moment"],
+            "lH3P": stats["h3"]["perp"]["second_moment"],
+        }
+        return {"seed_name": seed_name, "ok": True, "eigs": eigs, "source": source}
+        
+    except Exception as e:
+        return {"seed_name": seed_name, "ok": False, "error": f"compute failed: {e}"}
+
 def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title: str = ""):
     """
     Create a high-quality, arxiv/thesis-ready plot of H3 projections only.
@@ -154,6 +228,7 @@ def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title
         print(data)
         for k in meas_keys:
             run_vals = [float(data[r][k][0]) for r in data if k in data[r]]
+
             all_values[k] = run_vals
             if run_vals:
                 means.append(np.mean(run_vals))
@@ -170,7 +245,7 @@ def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title
         x = np.arange(len(meas_keys))
         width = 0.6
         
-        # Scatter plot individual runs with transparency
+        # Scatter plot individual runs in dark blue for visibility
         np.random.seed(42)  # For reproducibility of jitter
         for i, k in enumerate(meas_keys):
             run_vals = all_values[k]
@@ -179,18 +254,24 @@ def plot_projections_arxiv_fcn3(results_map, t_vals, out_path: Path, param_title
                 jitter = np.random.normal(0, 0.02, len(run_vals))
                 ax.scatter(
                     x[i] + jitter, run_vals,
-                    color='steelblue', alpha=0.35, s=60, zorder=2,
+                    color='#0B3D91', alpha=1.0, s=60, zorder=5,
                     edgecolors='none'
                 )
         
         # Bar plot with error bars (empirical)
         bars = ax.bar(
             x, means, width=width,
-            yerr=errs, capsize=8,
             color='steelblue', alpha=0.75,
-            error_kw={'elinewidth': 1.5, 'capthick': 1.5},
             label='Empirical (Mean ± SEM)',
-            zorder=3
+            zorder=2
+        )
+
+        # Draw SEM explicitly on top of everything else.
+        ax.errorbar(
+            x, means, yerr=errs,
+            fmt='none', ecolor='black',
+            elinewidth=2.0, capsize=8, capthick=2.0,
+            zorder=10
         )
         
         # Theory comparison - horizontal lines
@@ -331,7 +412,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
         out_path = run_paths[0] / "eigen_report_fcn3"
     out_path.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
     # Parse model parameters early so we can use them in plot titles
     d0, P0, N0, chi0, kappa0, eps0 = compute_mod.parse_run_params(run_paths[0])
@@ -491,7 +572,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
             timeend = torch.cuda.Event(enable_timing=True)
             timestart.record()
             # 1) large-batch H3 projections (use 200 million total samples as requested)
-            stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=3_000_000, batch_size=10000, device=device)
+            stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=200_000_000, batch_size=100000, device=device)
             results_map["h_proj"][idx] = {
                 "lH1_T": (stats["h1"]["target"]["second_moment"], 0.0),
                 "lH1_P": (stats["h1"]["perp"]["second_moment"], 0.0),
@@ -641,7 +722,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
             if theo_val is not None and theo_val > 0:
                 percent_gap = abs(mean_val - theo_val) / theo_val * 100
                 y_pos = mean_val + err_val + 0.10 * max(means)
-                ax.text(xi, y_pos, f'{percent_gap:.1f}%', ha='center', va='bottom', fontsize=8, color='darkred', weight='bold')
+                ax.text(xi, y_pos, f'{percent_gap:.1f}% - $\sigma^2/\sqrt{{\\text{{# seeds}}}} =$ {err_val:.2f}', ha='center', va='bottom', fontsize=8, color='darkred', weight='bold')
         
         # Add theory lines (target + perpendicular) across all panels
         if theory_lh1t is not None:
@@ -804,7 +885,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
         if w0_emp_lwt:
             jitter = np.random.normal(0, 0.02, len(w0_emp_lwt))
             ax.scatter(np.full(len(w0_emp_lwt), x_pos[0]) + jitter, w0_emp_lwt,
-                       s=60, alpha=0.5, color=emp_colors[0], label='Empirical lWT samples')
+                       s=60, alpha=1.0, color='black', label='Empirical lWT samples')
             mean_lwt = float(np.mean(w0_emp_lwt))
             sem_lwt = float(np.std(w0_emp_lwt) / np.sqrt(len(w0_emp_lwt)))
             ax.errorbar(x_pos[0], mean_lwt, yerr=sem_lwt, fmt='o', color=emp_colors[0],
@@ -819,7 +900,7 @@ def eigen_report_fcn3(train_runs: List[str], out_dir: str = None, force_recomput
         if w0_emp_lwp:
             jitter = np.random.normal(0, 0.02, len(w0_emp_lwp))
             ax.scatter(np.full(len(w0_emp_lwp), x_pos[1]) + jitter, w0_emp_lwp,
-                       s=60, alpha=0.5, color=emp_colors[1], label='Empirical lWP samples')
+                       s=60, alpha=1.0, color='black', label='Empirical lWP samples')
             mean_lwp = float(np.mean(w0_emp_lwp))
             sem_lwp = float(np.std(w0_emp_lwp) / np.sqrt(len(w0_emp_lwp)))
             ax.errorbar(x_pos[1], mean_lwp, yerr=sem_lwp, fmt='o', color=emp_colors[1],
@@ -899,7 +980,7 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
             parts.append(rf"$\kappa={kappa0}$")
         if eps0 is not None and eps0 != 0:
             parts.append(rf"$\epsilon={eps0}$")
-        param_title = r",\ \ ".join(parts)
+        param_title = ", ".join(parts)
     
     # Compute kappa_eff and theory values (cached)
     theory_lh1t = None
@@ -966,46 +1047,37 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         except Exception as e:
             print(f"Warning: could not compute theory: {e}")
     
-    # Collect h3 projections from each seed (cache per-seed JSON like main function does)
+    # Collect h3 projections from each seed in parallel with torch.multiprocessing
     seed_eigenvalues = {}  # seed_name -> {"lH1T": val, "lH1P": val, "lH3T": val, "lH3P": val}
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-    
-    for seed_dir in tqdm(seed_dirs, desc="Computing h3 projections"):
-        seed_name = seed_dir.name
-        h3_json = seed_dir / "h3_projections_fcn3.json"
-        stats = None
-        
-        # Try to load cached projections if they exist and recompute not forced
-        if h3_json.exists() and not force_recompute:
-            try:
-                with open(h3_json, "r") as f:
-                    stats = json.load(f)
-                print(f"  Loaded cached projections for {seed_name}")
-            except Exception as e:
-                print(f"  Warning: could not load cached projections for {seed_name}: {e}")
-        
-        # Compute if not loaded from cache or force_recompute is True
-        if stats is None:
-            try:
-                model = compute_mod.load_model_from_run(seed_dir, device)
-                d = int(getattr(model, "d", None) or 0)
-                stats = compute_mod.compute_h3_projections_streaming(model, d, P_total=100_000_000, batch_size=100000, device=device)
-                # Save the computed projections for future use
-                compute_mod.save_stats(seed_dir, stats)
-            except Exception as e:
-                print(f"  Warning: could not compute h3 projections for {seed_name}: {e}")
-                continue
-        
-        # Extract eigenvalues
-        try:
-            seed_eigenvalues[seed_name] = {
-                "lH1T": stats["h1"]["target"]["second_moment"],
-                "lH1P": stats["h1"]["perp"]["second_moment"],
-                "lH3T": stats["h3"]["target"]["second_moment"],
-                "lH3P": stats["h3"]["perp"]["second_moment"],
-            }
-        except Exception as e:
-            print(f"  Warning: could not extract eigenvalues for {seed_name}: {e}")
+    num_workers = min(2, len(seed_dirs))
+    worker_args = [(str(seed_dir), force_recompute) for seed_dir in seed_dirs]
+    print(f"Running H3 projection jobs with torch.multiprocessing ({num_workers} processes)...")
+
+    if num_workers == 1:
+        results_iter = (_compute_seed_projection_worker(arg) for arg in worker_args)
+        for worker_result in tqdm(results_iter, total=len(worker_args), desc="Computing h3 projections"):
+            seed_name = worker_result["seed_name"]
+            if worker_result.get("ok"):
+                seed_eigenvalues[seed_name] = worker_result["eigs"]
+                if worker_result.get("source") == "cache":
+                    print(f"  Loaded cached projections for {seed_name}")
+            else:
+                print(f"  Warning: {seed_name}: {worker_result.get('error', 'unknown error')}")
+    else:
+        mp_ctx = tmp.get_context("spawn")
+        with mp_ctx.Pool(processes=num_workers) as pool:
+            for worker_result in tqdm(
+                pool.imap_unordered(_compute_seed_projection_worker, worker_args),
+                total=len(worker_args),
+                desc="Computing h3 projections",
+            ):
+                seed_name = worker_result["seed_name"]
+                if worker_result.get("ok"):
+                    seed_eigenvalues[seed_name] = worker_result["eigs"]
+                    if worker_result.get("source") == "cache":
+                        print(f"  Loaded cached projections for {seed_name}")
+                else:
+                    print(f"  Warning: {seed_name}: {worker_result.get('error', 'unknown error')}")
     
     if not seed_eigenvalues:
         print("No seed eigenvalues collected. Exiting.")
@@ -1039,7 +1111,7 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
     num_seeds = len(seed_names)
     seed_colors = plt.cm.tab20(np.linspace(0, 1, num_seeds))
     seed_color_map = {name: seed_colors[i] for i, name in enumerate(seed_names)}
-    
+
     # Create figure with 4 subplots (one per eigenvalue type) or 2x2 grid
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     axes = axes.flatten()
@@ -1068,21 +1140,25 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         np.random.seed(42)  # Consistent jitter across runs
         x_jitter = x_pos + np.random.normal(0, jitter_strength, len(seed_vals))
         
+        seed_dot_color = "#0B3D91"
         for i, (seed_name, val) in enumerate(zip(seed_names_list, seed_vals)):
-            color = seed_color_map[seed_name]
-            ax.scatter(x_jitter[i], val, s=60, alpha=0.6, color=color, label=seed_name, zorder=3)
+            ax.scatter(x_jitter[i], val, s=60, alpha=1.0, color=seed_dot_color, label=seed_name, zorder=3)
         
         # Plot mean as solid black dot
         mean_val = np.mean(seed_vals)
-        ax.scatter(x_pos, mean_val, s=150, marker='D', color="black", alpha=0.95, 
-                   label="Mean", zorder=4, edgecolors="white", linewidth=2)
+        sem_val = float(np.std(seed_vals, ddof=1) / np.sqrt(len(seed_vals))) if len(seed_vals) > 1 else 0.0
+        ax.errorbar(x_pos, mean_val, yerr=sem_val, fmt='none', ecolor='black', elinewidth=2.2,
+                capsize=5, capthick=2.2, zorder=3.5)
+        ax.scatter(x_pos, mean_val, s=150, marker='D', color="black", alpha=0.95,
+               label="Mean", zorder=4, edgecolors="white", linewidth=2)
         
         # Plot theory line if available
         if theory_val is not None:
-            # Calculate percentage gap between mean and theory
-            pct_gap = 100.0 * (1.0 - theory_val / mean_val) if mean_val > 0 else 0.0
+            pct_gaps = [100.0 * (val - theory_val) / theory_val for val in seed_vals if theory_val > 0]
+            pct_gap = float(np.mean(pct_gaps)) if pct_gaps else 0.0
             theory_label = f"Theory (κ_eff): {pct_gap:+.1f}%"
-            ax.axhline(theory_val, color="red", linestyle="--", linewidth=2.5, alpha=0.8, label=theory_label, zorder=2)
+            ax.axhline(theory_val, color="red", linestyle="--", linewidth=2.5, alpha=0.8,
+                       label=theory_label, zorder=2)
         
         ax.set_xlim(-0.2, 1.2)
         ax.set_xticks([])
@@ -1092,7 +1168,8 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         ax.grid(axis='y', alpha=0.3)
         ax.legend(loc="upper right", fontsize=9)
     
-    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds — {param_title}", fontsize=13, y=0.995)
+    seed_count = len(seed_eigenvalues)
+    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds (n={seed_count}) — {param_title}", fontsize=13, y=0.995)
     fig.tight_layout()
     aggregate_plot = out_path / "aggregate_h3_eigenvalues.png"
     fig.savefig(aggregate_plot, dpi=300)
@@ -1109,6 +1186,7 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         "lH3T": "#54A24B",
         "lH3P": "#B279A2",
     }
+    unified_mean_vals = []
     
     for x_idx, (eig_type, eig_label, theory_val) in enumerate(zip(eig_types, eig_labels, theory_vals)):
         # Collect values per seed for this eigenvalue type
@@ -1131,36 +1209,49 @@ def eigen_report_seed_aggregate(seed_parent_dir: str, out_dir: str = None, force
         
         eig_color = eig_type_colors.get(eig_type, "gray")
         
+        seed_dot_color = "#0B3D91"
         for i, (seed_name, val) in enumerate(zip(seed_names, seed_vals)):
-            seed_color = seed_color_map[seed_name]
-            ax.scatter(x_jitter[i], val, s=50, alpha=0.5, color=seed_color, zorder=3)
+            ax.scatter(x_jitter[i], val, s=50, alpha=1.0, color=seed_dot_color, zorder=3)
         
         # Plot mean as solid dot with eigenvalue-type color
         mean_val = np.mean(seed_vals)
+        unified_mean_vals.append(mean_val)
+        sem_val = float(np.std(seed_vals, ddof=1) / np.sqrt(len(seed_vals))) if len(seed_vals) > 1 else 0.0
+        ax.errorbar(x_pos, mean_val, yerr=sem_val, fmt='none', ecolor='black', elinewidth=2.2,
+                capsize=5, capthick=2.2, zorder=3.5)
         ax.scatter(x_pos, mean_val, s=200, marker='o', color=eig_color, alpha=0.9,
-                   edgecolors="white", linewidth=2, zorder=4, label=eig_label)
+               edgecolors="white", linewidth=2, zorder=4, label=eig_label)
         
         # Plot theory line if available and add error text
         if theory_val is not None:
-            pct_gap = 100.0 * (1.0 - theory_val / mean_val) if mean_val > 0 else 0.0
+            pct_gaps = [100.0 * (val - theory_val) / theory_val for val in seed_vals if theory_val > 0]
+            pct_gap = float(np.mean(pct_gaps)) if pct_gaps else 0.0
             # Draw a short horizontal line at theory value
             ax.plot([x_pos - 0.15, x_pos + 0.15], [theory_val, theory_val],
                    color="red", linestyle="--", linewidth=2.5, alpha=0.7, zorder=2)
             # Add error text above the mean dot
             ax.text(x_pos, mean_val * 1.3, f"{pct_gap:+.1f}%", 
-                   ha="center", va="bottom", fontsize=10, fontweight="bold",
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7, edgecolor="none"), zorder=5)
+                    ha="center", va="bottom", fontsize=10, fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7, edgecolor="none"), zorder=5)
     
     ax.set_xticks(range(len(eig_types)))
     ax.set_xticklabels([label.replace("$", "").replace("\\", "") for label in eig_labels], fontsize=11)
     ax.set_ylabel("Eigenvalue", fontsize=12)
     ax.set_xlabel("Eigenvalue Type", fontsize=12)
     ax.set_yscale('log')
+    if unified_mean_vals:
+        finite_means = [v for v in unified_mean_vals if np.isfinite(v) and v > 0]
+        if finite_means:
+            y_top = 2.0 * float(np.mean(finite_means))
+            y_bottom = min(finite_means) * 0.5
+            if y_top > y_bottom:
+                ax.set_ylim(bottom=y_bottom, top=y_top)
     ax.grid(axis='y', alpha=0.3)
-    ax.legend(loc="upper right", fontsize=10, title="Mean (colored dots)")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2,
+              fontsize=10, title="Mean (colored dots)")
     
-    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds (Unified) — {param_title}", fontsize=13)
-    fig.tight_layout()
+    fig.suptitle(f"He3 Projection Eigenvalues Across Seeds (Unified, n={seed_count}) — {param_title}", fontsize=13)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     aggregate_plot_unified = out_path / "aggregate_h3_eigenvalues_unified.png"
     fig.savefig(aggregate_plot_unified, dpi=300)
     print(f"Saved aggregate plot (unified): {aggregate_plot_unified}")

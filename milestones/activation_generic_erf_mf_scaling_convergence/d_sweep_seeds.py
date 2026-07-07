@@ -29,7 +29,7 @@ class FCN3NetworkErfOptimized(torch.nn.Module):
     Each seed has its own ensemble of networks.
     """
     
-    def __init__(self, d, n1, n2, P, num_seeds=1, ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device='cuda'):
+    def __init__(self, d, n1, n2, P, num_seeds=1, ens=1, weight_initialization_variance=(1.0, 1.0, 1.0), device='cuda:1'):
         super().__init__()
         
         self.d = d
@@ -42,7 +42,7 @@ class FCN3NetworkErfOptimized(torch.nn.Module):
         self.device = device
         
         v0, v1, v2 = weight_initialization_variance
-        
+
         # Initialize weights with seed dimension: (num_seeds, ens, ...)
         self.W0 = torch.nn.Parameter(
             torch.randn(num_seeds, ens, n1, d, device=device, dtype=torch.float32) * (v0 ** 0.5),
@@ -169,7 +169,7 @@ def compute_theory(d: int, P: int, N: int, chi: float, kappa: float, eps: float)
 
 
 def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, eps=0.03, num_seeds=1, ens=50, 
-                    base_seed=42, log_interval=10_000):
+                    base_seed=42, log_interval=10_000, exact_epochs=False):
     """Train network with multiple dataset seeds and track eigenvalues over epochs."""
     
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
@@ -178,11 +178,11 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, e
     lr = lr0 / P
     
     # Setup directories
-    base_name = f"d{d}_P{P}_N{N}_chi{chi}_kappa{kappa}_nseeds{num_seeds}_ens{ens}"
+    base_name = f"d{d}_P{P}_N{N}_chi{int(chi)}_kappa{kappa}"#_nseeds{num_seeds}_ens{ens}"
     parent_dir = Path(__file__).parent
     run_dir = parent_dir / storage_dir / base_name
     run_dir.mkdir(exist_ok=True, parents=True)
-    seed_dir = run_dir / f"base_seed{base_seed}"
+    seed_dir = run_dir / f"seed{base_seed}"
     seed_dir.mkdir(exist_ok=True, parents=True)
     
     # Initialize TensorBoard writer
@@ -219,8 +219,9 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, e
     torch.manual_seed(70)
     model = FCN3NetworkErfOptimized(
         d, N, N, P, num_seeds=num_seeds, ens=ens,
-        weight_initialization_variance=(1/d, 1/N, 1/(N * chi))
-    ).to(device)
+        weight_initialization_variance=(1/d, 1/N, 1/(N * chi)), 
+        device=device
+    )
     
     # Check if resuming from checkpoint
     model_checkpoint = seed_dir / "model.pt"
@@ -259,13 +260,20 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, e
         torch.manual_seed(base_seed + s + 1000)
         Xinf[s] = torch.randn(3000, d, device=device)
     
+    if exact_epochs:
+        effective_epochs = int(epochs)
+    else:
+        effective_epochs = int(epochs * 0.9 + epochs * 0.1 * 3)
+
     loss = None
-    for epoch in range(start_epoch, epochs + 1):
+    for epoch in range(start_epoch, effective_epochs + 1):
         if epoch > 0:
             torch.manual_seed(7 + epoch)
             
-            # Adjust learning rate in final 10%
-            if epoch > epochs * 0.9:
+            # Adjust learning rate in final 10% unless continuing with a fixed LR.
+            if exact_epochs:
+                lr = lr0 / P
+            elif epoch > epochs * 0.9:
                 lr = lr0 / (3 * P)
             else:
                 lr = lr0 / P
@@ -323,6 +331,8 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, storage_dir, e
                     traceback.print_exc()
                     print(f"  Warning: Could not compute/log W0 covariance eigenvalues at epoch {epoch}: {e}")
             torch.save(model.state_dict(), seed_dir / "model.pt")
+        if epoch % (log_interval * 5) == 0:
+            torch.save(model.state_dict(), seed_dir / f"model_epoch{epoch}.pt")
     # Save final model
     torch.save(model.state_dict(), seed_dir / "model_final.pt")
     
@@ -376,6 +386,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Run a quick test with epochs=1 and delete results afterwards')
     parser.add_argument('--eps', type=float, default=0.03, help='Epsilon parameter for cubic target generation')
     parser.add_argument('--to', type=str, default='results', help='Directory to store results')
+    parser.add_argument('--exact-epochs', action='store_true', help='Use the requested epochs exactly and keep lr constant throughout training')
     args = parser.parse_args()
     
     epochs = 1 if args.dry_run else args.epochs
@@ -400,7 +411,8 @@ def main():
         num_seeds=args.num_seeds,
         ens=args.ens,
         base_seed=args.base_seed,
-        eps=args.eps
+        eps=args.eps,
+        exact_epochs=args.exact_epochs
     )
     
     print(f"\nTraining completed!")

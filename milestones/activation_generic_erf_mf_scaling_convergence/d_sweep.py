@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 """
 Train a single network with specified parameters.
 
@@ -71,7 +71,7 @@ def compute_theory(d: int, P: int, N: int, chi: float, kappa: float, eps: float)
         "lH3P": perp.get("lH3P"),
     }
 
-def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, seed=42, ens=50, log_interval=10_000, to='results'):
+def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, seed=42, ens=50, log_interval=10_000, to='results', exact_epochs=False):
     """Train network and track eigenvalues over epochs."""
 
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
@@ -178,13 +178,21 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 print(f"  Epoch {0:7d} (init): max_eig={eigenvalues.max():.6f}, mean_eig={eigenvalues[1:].mean():.6f}")
             except Exception as e:
                 print(f"  Warning: Could not compute initial eigenvalues at epoch 0: {e}")
-    
-    for epoch in range(start_epoch, epochs + 1):  # Resume from start_epoch
+    if exact_epochs:
+        transition_epoch = None
+        effective_epochs = int(epochs)
+    else:
+        transition_epoch = int(epochs * 0.9)
+        effective_epochs = int(epochs * 0.9 + epochs * 0.1 * 3)  # Extend total epochs to allow for post-transition training
+
+    for epoch in range(start_epoch, effective_epochs + 1):  # Resume from start_epoch
         # Forward pass (skip for epoch 0)
         if epoch > 0:
             torch.manual_seed(7 + epoch)  # Langevin dynamics seed
 
-            if epoch > epochs * 0.9:
+            if exact_epochs:
+                lr = lr0 / P
+            elif epoch > transition_epoch:
                 lr = lr0 / ( 3 * P)
             else: 
                 lr = lr0 / P
@@ -340,7 +348,7 @@ def train_and_track(d, P, N, chi, kappa, lr0, epochs, device_str, eps = 0.03, se
                 
                 # Save checkpoint
                 if epoch > 0 and epoch % 50000 == 0:
-                    torch.save(model.state_dict(), seed_dir / "model.pt")
+                    torch.save(model.state_dict(), seed_dir / (f"model_{epoch}.pt"))
 
                     # # Also save intermediate results periodically
                     # try:
@@ -414,6 +422,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Run a quick test with epochs=1 and delete results afterwards')
     parser.add_argument('--eps', type=float, default=0.03, help='Epsilon parameter for cubic target generation')
     parser.add_argument('--to', type=str, default='results', help='Directory to save results')
+    parser.add_argument('--exact-epochs', action='store_true', help='Use the requested epochs exactly and keep lr constant throughout training')
     args = parser.parse_args()
 
     epochs = 1 if args.dry_run else args.epochs
@@ -436,7 +445,8 @@ def main():
         seed=args.seed,
         ens=args.ens,
         eps=args.eps,
-        to=args.to
+        to=args.to,
+        exact_epochs=args.exact_epochs
     )
 
     print(f"\nTraining completed!")

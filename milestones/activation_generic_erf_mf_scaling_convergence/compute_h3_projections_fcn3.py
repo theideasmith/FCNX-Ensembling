@@ -194,7 +194,6 @@ def second_moment(projections):
     k = projections.flatten().shape[0]
     return torch.sum(projections**2) / k
 
-
 def compute_h3_projections_streaming(
     model,
     d: int,
@@ -206,66 +205,81 @@ def compute_h3_projections_streaming(
 ):
     """
     Stream random inputs and compute cubic projections of hidden-layer preactivations.
-    Uses model.h1_preactivation for FCN3.
-    Returns a dict with mean/std/var for target and perpendicular projections.
+    Optimized for extreme throughput using memory pre-allocation and GEMM fusion.
     """
-    assert perp_dim >= 0 and perp_dim < d, f"perp_dim {perp_dim} out of range for d={d}"
+    assert 0 <= perp_dim < d, f"perp_dim {perp_dim} out of range for d={d}"
 
     dtype = torch.float32
+    model.to(device=device, dtype=dtype)
+    model.eval()
+    
     ens = model.ens
     n1 = model.n1
-    model.to(dtype)
-    
-    # Accumulators for summed projections over P (He3 and He1)
-    proj3_target_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
-    proj3_perp_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
-    proj1_target_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
-    proj1_perp_sum = torch.zeros(ens, n1, dtype=dtype, device=device)
+
+    # Pre-allocate a single accumulator matrix for all 4 projections
+    # Shape: (4, ens * n1). Rows: [h1_target, h1_perp, h3_target, h3_perp]
+    accum = torch.zeros((4, ens * n1), dtype=dtype, device=device)
+
+    # Pre-allocate the input batch memory to avoid reallocation overhead
+    X_batch = torch.empty((batch_size, d), dtype=dtype, device=device)
 
     num_batches = P_total // batch_size
     remainder = P_total % batch_size
+
+    # Inner core computation - we separate this to leverage PyTorch 2.0+ Compiler
+    def _compute_step(x):
+        # Flatten preactivations to (bs, ens * n1)
+        a1 = model.h1_preactivation(x).reshape(x.shape[0], -1)
+        
+        x0 = x[:, 0]
+        x_perp = x[:, perp_dim]
+        
+        # Stack polynomials into a single matrix (bs, 4)
+        # Note: We omit the /sqrt(6) and /P_total scaling here for speed. 
+        # We will scale the accumulated result once at the very end.
+        phi = torch.stack([
+            x0,                      # h1 target
+            x_perp,                  # h1 perp
+            x0**3 - 3.0 * x0,        # h3 target (unscaled)
+            x_perp**3 - 3.0 * x_perp # h3 perp (unscaled)
+        ], dim=1)
+        
+        # Single fused Matrix Multiplication replaces the 4 einsums
+        # (4, bs) @ (bs, ens*n1) -> (4, ens*n1)
+        return torch.mm(phi.t(), a1)
+
+    # Compile the inner step if PyTorch 2.0+ is available (massive speedup)
+    if hasattr(torch, "compile") and device.type == "cuda":
+        _compute_step = torch.compile(_compute_step)
 
     with torch.no_grad():
         for i in tqdm(range(num_batches + (1 if remainder > 0 else 0)), desc="Batches"):
             bs = batch_size if i < num_batches else remainder
             if bs == 0:
                 break
-            X_batch = torch.randn(bs, d, dtype=dtype, device=device)
-
-            # Cubic Hermite features (normalized to project; scaling by P later)
-            x0 = X_batch[:, 0]
-            x_perp = X_batch[:, perp_dim]
-            phi3_target = (x0**3 - 3.0 * x0) / 6**0.5
-            phi3_perp = (x_perp**3 - 3.0 * x_perp) / 6**0.5
-            # Linear features (He1)
-            phi1_target = x0
-            phi1_perp = x_perp
             
-            # Hidden preactivations a1: (bs, ens, n1) - FCN3 uses h1_preactivation
-            a1 = model.h1_preactivation(X_batch)
+            # Fill pre-allocated memory in-place
+            current_X = X_batch if bs == batch_size else X_batch[:bs]
+            current_X.normal_()
 
-            # Accumulate projections (sum over samples)
-            proj3_target_sum += torch.einsum('pqn,p->qn', a1, phi3_target) / P_total
-            proj3_perp_sum += torch.einsum('pqn,p->qn', a1, phi3_perp) / P_total
-            proj1_target_sum += torch.einsum('pqn,p->qn', a1, phi1_target) / P_total
-            proj1_perp_sum += torch.einsum('pqn,p->qn', a1, phi1_perp) / P_total
-            torch.cuda.empty_cache()
-            del X_batch, x0, x_perp, phi3_target, phi3_perp, phi1_target, phi1_perp, a1
+            # Execute forward pass and matmul, add directly to accumulator
+            accum.add_(_compute_step(current_X))
     
-    # Normalize by total P to get expectation
-    proj3_target = proj3_target_sum
-    proj3_perp = proj3_perp_sum
-    proj1_target = proj1_target_sum
-    proj1_perp = proj1_perp_sum
+    # --- Post-loop Scaling ---
+    accum.div_(P_total)                   # Scale all by 1 / P_total
+    accum[2:].div_(6**0.5)        # Scale the h3 rows by 1 / sqrt(6)
 
-    # Save all h3 projections as eigenvalues: target and d-1 degenerate perp
+    # Reshape back to individual component tensors of shape (ens, n1)
+    accum = accum.view(4, ens, n1)
+    proj1_target, proj1_perp, proj3_target, proj3_perp = accum[0], accum[1], accum[2], accum[3]
+
+    # --- Standardize Outputs (Identical to your original code) ---
     eig_target1 = proj1_target.var().cpu().numpy().flatten()
     eig_perp1 = proj1_perp.var().cpu().numpy().flatten()
     eig_target3 = proj3_target.var().cpu().numpy().flatten()
     eig_perp3 = proj3_perp.var().cpu().numpy().flatten()
     d_minus_1 = d - 1
 
-    # Eigenvalues: [target, perp, perp, ..., perp] (d-1 times)
     if all_eigs:
         eigenvalues = np.concatenate([
             eig_target1, 
@@ -276,21 +290,18 @@ def compute_h3_projections_streaming(
     else:
         eigenvalues = np.concatenate([])
 
-    # Compute per-ensemble statistics (mean across neurons for each ensemble)
-    # proj3_target: shape (ens, n1)
     proj3_target_per_ens = proj3_target.mean(dim=1) if proj3_target.numel() > 0 else torch.tensor([])
     proj3_perp_per_ens = proj3_perp.mean(dim=1) if proj3_perp.numel() > 0 else torch.tensor([])
     proj1_target_per_ens = proj1_target.mean(dim=1) if proj1_target.numel() > 0 else torch.tensor([])
     proj1_perp_per_ens = proj1_perp.mean(dim=1) if proj1_perp.numel() > 0 else torch.tensor([])
 
-    # Ensemble-level moments
     def ens_stats(tensor_per_ens):
         if tensor_per_ens.numel() == 0:
             return {"ens_mean": None, "ens_std": None, "ens_sem": None}
         ens_mean = float(torch.mean(tensor_per_ens).item())
         ens_std = float(torch.std(tensor_per_ens).item())
-        ens = tensor_per_ens.shape[0]
-        ens_sem = float(ens_std / (ens ** 0.5)) if ens > 0 else None
+        e_count = tensor_per_ens.shape[0]
+        ens_sem = float(ens_std / (e_count ** 0.5)) if e_count > 0 else None
         return {"ens_mean": ens_mean, "ens_std": ens_std, "ens_sem": ens_sem}
 
     proj3_target_ens = ens_stats(proj3_target_per_ens)
@@ -298,6 +309,7 @@ def compute_h3_projections_streaming(
     proj1_target_ens = ens_stats(proj1_target_per_ens)
     proj1_perp_ens = ens_stats(proj1_perp_per_ens)
 
+    # (Assuming second_moment is defined elsewhere in your script, as it was in the original)
     stats = {
         "ens": int(ens),
         "n1": int(n1),

@@ -85,7 +85,7 @@ function parse_commandline()
         "--anneal-steps"
         help = "Number of annealing steps"
         arg_type = Int
-        default = 3000
+        default = 30000
         "--tol"
         help = "Tolerance for solver"
         arg_type = Float64
