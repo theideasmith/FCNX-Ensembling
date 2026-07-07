@@ -249,7 +249,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=10_000, ens=50
             #     lr = target_lr
 
             # 2. Re-calculate noise scale based on the smoothly changing LR
-            torch.manual_seed(epoch)
+            torch.manual_seed(epoch + dataset_seed)  # For reproducibility of noise
             noise_scale = np.sqrt(2.0 * lr * effective_temperature)
 
 
