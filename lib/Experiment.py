@@ -196,7 +196,7 @@ class Experiment:
         except Exception as _e:
             # If anything goes wrong here, continue and let load_state_dict try
             print(f"Warning while aligning ensemble size from state_dict: {_e}")
-
+        self.model = self.networkWithDefaults()
         self.model.load_state_dict(state_dict)
 
         # After loading weights, ensure the model is on the desired device and
