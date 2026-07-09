@@ -5,19 +5,17 @@
 
 set -euo pipefail
 
-DEVICE=${1:-cuda:1}
-
 # Hyperparameters
 D=50
 P=400
 TEMPERATURE=0.2
-LR=3e-6
+LR=1e-5
 ENSEMBLE_SIZE=10
-EPOCHS=100000000
+EPOCHS=50000000
 EPS=0.03
 
 # Sweep over chi values with N = chi
-CHI_VALUES=(60)# 120 180 240 600)
+CHI_VALUES=(60 120) # 180 240 600)
 SEEDS=(0 1)
 
 # Script directory
@@ -30,7 +28,6 @@ mkdir -p "$LOG_BASE_DIR"
 echo "=========================================="
 echo "Training FCN2 ERF Network - MiniGrokking Sweep"
 echo "=========================================="
-echo "Device: $DEVICE"
 echo "Hyperparameters:"
 echo "  D=$D, P=$P"
 echo "  T=$TEMPERATURE, lr=$LR, ens=$ENSEMBLE_SIZE"
@@ -39,14 +36,14 @@ echo "  chi/N values: ${CHI_VALUES[*]}"
 echo "  seeds per chi: ${SEEDS[*]}"
 echo ""
 
-for CHI in "${CHI_VALUES[@]}"; do
-    N=$CHI
+for SEED in "${SEEDS[@]}"; do
     echo "=========================================="
-    echo "Starting chi=$CHI (N=$N)"
+    echo "Starting seed=$SEED"
     echo "=========================================="
 
-    for SEED in "${SEEDS[@]}"; do
-        echo "Launching seed $SEED for chi=$CHI"
+    for CHI in "${CHI_VALUES[@]}"; do
+        N=$CHI
+        echo "Launching chi=$CHI (N=$N) for seed=$SEED"
 
         LOG_FILE="$LOG_BASE_DIR/d${D}_P${P}_N${N}_chi${CHI}_T${TEMPERATURE}_seed${SEED}.log"
 
@@ -59,7 +56,6 @@ for CHI in "${CHI_VALUES[@]}"; do
             --lr "$LR" \
             --temperature "$TEMPERATURE" \
             --chi "$CHI" \
-            --device "$DEVICE" \
             --dataset-seed "$SEED" \
             --ens "$ENSEMBLE_SIZE" \
             --eps "$EPS" \

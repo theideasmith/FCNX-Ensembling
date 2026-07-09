@@ -71,6 +71,13 @@ model_dirs = [
     '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/MiniGrokkingMFScalingResults/d150_P1500_N1600_chi_1600.0_lr_0.0003_T_5.0_seed_1'
 ]
 
+model_dirs = [
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P400_N60_chi_60.0_lr_3e-05_T_0.2_seed_0_eps_0.03',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P400_N120_chi_120.0_lr_3e-05_T_0.2_seed_0_eps_0.03',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P400_N60_chi_60.0_lr_3e-05_T_0.2_seed_1_eps_0.03',
+'/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/d50_P400_N120_chi_120.0_lr_3e-05_T_0.2_seed_1_eps_0.03'
+]
+
 def parse_config_from_dirname(dirname):
     parts = Path(dirname).name.split('_')
     d = int(parts[0][1:])
@@ -94,7 +101,7 @@ def parse_config_from_dirname(dirname):
 
 def load_model(model_dir, device):
     d, P, N, chi, seed, *_ = parse_config_from_dirname(model_dir)
-    model_path = Path(model_dir) / "model.pt"
+    model_path = Path(model_dir) / "model_final.pt"
     if not model_path.exists():
         model_path = Path(model_dir) / "model_final.pt"
     if not model_path.exists():
