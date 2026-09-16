@@ -1,0 +1,8 @@
+Per-(t,q) feature ridge; mean/SEM over T and ens (SEM=std/sqrt(T*ens)).
+T=50 ens=10 M=500 sigma2=1.5004180346 (kappa_eff)
+MSE_y Langevin mean_(T,q) = 0.04998760297894478
+MSE_y per-net KRR mean_(T,q) = 0.0325724296271801
+corr(means)=0.9998128085127326
+slope Langevin ~ a * KRR = 0.9466289030119334
+mean_i SEM_Langevin(i) = 0.014244263344685435
+mean_i SEM_KRR(i) = 0.006185057002318255

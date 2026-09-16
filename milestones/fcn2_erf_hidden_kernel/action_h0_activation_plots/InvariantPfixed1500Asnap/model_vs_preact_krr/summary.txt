@@ -1,0 +1,15 @@
+group=InvariantPfixed1500Asnap  split=train  features=erf(W0 x) (readout features)
+run                                                                                P_tr   P_ev     sigma2      MSE_m_krr      MSE_m_y    MSE_krr_y     corr
+invariant_beta1.000_alpha19.77_d50_P1500_N1000_sa01.0000_kappa2.8125_seed0         1500   1500      2.929     1.3569e-01   1.7416e-01   4.4351e-02   0.9116
+invariant_beta1.732_alpha19.77_d66_P1500_N1147_sa00.6623_kappa1.8628_seed0         1500   1500      1.972     8.8573e-02   1.4456e-01   3.7308e-02   0.9340
+invariant_beta3.000_alpha19.77_d87_P1500_N1316_sa00.4387_kappa1.2338_seed0         1500   1500      1.337     6.5316e-02   1.2339e-01   3.0585e-02   0.9590
+invariant_beta5.196_alpha19.77_d114_P1500_N1510_sa00.2906_kappa0.8172_seed0        1500   1500     0.9145     8.8227e-02   1.5575e-01   2.3200e-02   0.9427
+invariant_beta9.000_alpha19.77_d150_P1500_N1732_sa00.1925_kappa0.5413_seed0        1500   1500     0.6337     8.6214e-02   1.5677e-01   1.9310e-02   0.9619
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                P_tr   P_ev      eps    <y,He3>    learned     corr   MSE_vs_He3
+invariant_beta1.000_alpha19.77_d50_P1500_N1000_sa01.0000_kappa2.8125_seed0         1500   1500     0.03   -0.01402     1.5574   0.0618   7.2241e+02
+invariant_beta1.732_alpha19.77_d66_P1500_N1147_sa00.6623_kappa1.8628_seed0         1500   1500     0.03   -0.06241     0.2230   0.0520   2.3560e+01
+invariant_beta3.000_alpha19.77_d87_P1500_N1316_sa00.4387_kappa1.2338_seed0         1500   1500     0.03     0.2052    -0.1075  -0.0677   3.3906e+00
+invariant_beta5.196_alpha19.77_d114_P1500_N1510_sa00.2906_kappa0.8172_seed0        1500   1500     0.03   -0.03452     0.0396   0.0057   5.8126e+01
+invariant_beta9.000_alpha19.77_d150_P1500_N1732_sa00.1925_kappa0.5413_seed0        1500   1500     0.03   0.008825    -0.1872  -0.0086   5.6449e+02

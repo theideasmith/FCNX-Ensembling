@@ -1,0 +1,11 @@
+group=NAblationP1678  features=erf(W0 x) (readout features)
+run                                                                                   P     sigma2     MSE_m_krr      MSE_m_y   MSE_krr_y     corr
+invariant_beta5.196_alpha110.05_d114_P1678_N377_sa00.6623_kappa1.3806_seed0        1678        1.5     9.2382e-02   5.8094e-02   3.3214e-02   0.9333
+ablateN1500_from_beta5.196_alpha110.05_d114_P1678_N1500_sa00.6623_kappa1.3806_seed0   1678        1.5     8.9477e-02   6.4989e-02   3.6628e-02   0.9313
+ablateN3000_from_beta5.196_alpha110.05_d114_P1678_N3000_sa00.6623_kappa1.3806_seed0   1678        1.5     1.1225e-01   8.4464e-02   3.8793e-02   0.9106
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                   P      eps    <y,He3>    learned     corr   MSE_vs_He3
+invariant_beta5.196_alpha110.05_d114_P1678_N377_sa00.6623_kappa1.3806_seed0        1678        0   -0.05765        nan      nan          nan
+ablateN1500_from_beta5.196_alpha110.05_d114_P1678_N1500_sa00.6623_kappa1.3806_seed0   1678        0   -0.05765        nan      nan          nan
+ablateN3000_from_beta5.196_alpha110.05_d114_P1678_N3000_sa00.6623_kappa1.3806_seed0   1678        0   -0.05765        nan      nan          nan

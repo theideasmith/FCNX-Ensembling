@@ -350,7 +350,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=5000, help="Batch size for streaming")
     parser.add_argument("--perp_dim", type=int, default=1, help="Perpendicular dimension index")
     parser.add_argument("--device", type=str, default=None, help="Device (default: cuda if available)")
-    parser.add_argument("--use-cache", action="store_true", help="Skip computation and plot from cached JSON files")when 
+    parser.add_argument("--use-cache", action="store_true", help="Skip computation and plot from cached JSON files")
     args = parser.parse_args()
 
     device = torch.device(args.device) if args.device else (

@@ -1,0 +1,7 @@
+group=LargeN  features=erf(W0 x) (readout features)
+run                                                                                   P     sigma2     MSE_m_krr      MSE_m_y   MSE_krr_y     corr
+d150_P600_N3800_chi_3800.0_lr_0.0001_T_2.0_seed_0_eps_0.03                          600          1     5.1857e-05   5.5271e-03   5.5524e-03   1.0000
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                   P      eps    <y,He3>    learned     corr   MSE_vs_He3
+d150_P600_N3800_chi_3800.0_lr_0.0001_T_2.0_seed_0_eps_0.03                          600     0.03    0.00868    -0.1441  -0.1028   3.5068e+00

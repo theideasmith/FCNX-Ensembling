@@ -1,0 +1,14 @@
+run_dir: /home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/red_robin_alpha_beta_invariant_P0160_Pmax3674_betamax9/models/invariant_beta5.196_alpha110.05_d114_P1678_N377_sa00.6623_kappa1.3806_seed0_continue_Asnap
+snapshots: 50  epochs 10020000..11000000
+sigma2: 1.5004180346 (kappa_eff)  kappa_bare=1.3805924367330555
+
+predictor               MSE_vs_krr  corr_krr     MSE_vs_y
+final_A                  8.6017e-02     0.9375   5.5292e-02
+A_bar_frozen_Phi         6.5189e-01     0.1856   9.3087e-01
+f_bar_snapshots          2.1995e-02     0.9847   4.9988e-02
+feature_krr             0.0000e+00     1.0000   3.4348e-02
+
+rel_rms(A_final,A_ridge)=1.165900
+rel_rms(A_bar,A_ridge)=1.002842
+corr(A_final,A_ridge)=0.631755
+corr(A_bar,A_ridge)=0.094497

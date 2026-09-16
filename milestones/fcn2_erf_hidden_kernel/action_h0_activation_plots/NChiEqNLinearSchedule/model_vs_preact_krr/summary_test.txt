@@ -1,0 +1,11 @@
+group=NChiEqNLinearSchedule  split=test  features=erf(W0 x) (readout features)
+run                                                                                P_tr   P_ev     sigma2      MSE_m_krr      MSE_m_y    MSE_krr_y     corr
+d10_P100_N20_chi_20_lr_0.001_T_1.0_seed_0_eps_0.0_schedule                          100    100     0.5812     1.4932e-03   2.7594e-02   3.0169e-02   0.9994
+d10_P100_N100_chi_100_lr_0.001_T_1.0_seed_0_eps_0.0_schedule                        100    100     0.5812     4.9491e-04   2.2742e-02   2.2863e-02   0.9998
+d10_P100_N1000_chi_1000_lr_0.001_T_1.0_seed_0_eps_0.0_schedule                      100    100     0.5812     2.4430e-04   2.1618e-02   2.2946e-02   1.0000
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                P_tr   P_ev      eps    <y,He3>    learned     corr   MSE_vs_He3
+d10_P100_N20_chi_20_lr_0.001_T_1.0_seed_0_eps_0.0_schedule                          100    100        0    -0.1168        nan      nan          nan
+d10_P100_N100_chi_100_lr_0.001_T_1.0_seed_0_eps_0.0_schedule                        100    100        0    -0.1168        nan      nan          nan
+d10_P100_N1000_chi_1000_lr_0.001_T_1.0_seed_0_eps_0.0_schedule                      100    100        0    -0.1168        nan      nan          nan

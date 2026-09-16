@@ -1,0 +1,15 @@
+group=AlphaBetaInvariant  features=erf(W0 x) (readout features)
+run                                                                                   P     sigma2     MSE_m_krr      MSE_m_y   MSE_krr_y     corr
+invariant_beta1.000_alpha1.00_d50_P160_N250_sa01.0000_kappa0.3000_seed0             160     0.4411     9.8925e-02   4.6929e-02   5.8463e-02   0.9342
+invariant_beta1.732_alpha4.79_d66_P350_N287_sa00.8717_kappa0.4990_seed0             350     0.6292     9.5718e-02   4.9617e-02   4.6706e-02   0.9222
+invariant_beta3.000_alpha22.96_d87_P767_N329_sa00.7598_kappa0.8300_seed0            767     0.9539     9.2241e-02   4.7364e-02   3.6118e-02   0.9471
+invariant_beta5.196_alpha110.05_d114_P1678_N377_sa00.6623_kappa1.3806_seed0        1678        1.5     9.2382e-02   5.8094e-02   3.3214e-02   0.9333
+invariant_beta9.000_alpha527.34_d150_P3674_N433_sa00.5774_kappa2.2964_seed0        3674      2.414     8.1874e-02   6.9895e-02   3.0994e-02   0.9394
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                   P      eps    <y,He3>    learned     corr   MSE_vs_He3
+invariant_beta1.000_alpha1.00_d50_P160_N250_sa01.0000_kappa0.3000_seed0             160        0    -0.1862        nan      nan          nan
+invariant_beta1.732_alpha4.79_d66_P350_N287_sa00.8717_kappa0.4990_seed0             350        0    -0.1999        nan      nan          nan
+invariant_beta3.000_alpha22.96_d87_P767_N329_sa00.7598_kappa0.8300_seed0            767        0     0.2652        nan      nan          nan
+invariant_beta5.196_alpha110.05_d114_P1678_N377_sa00.6623_kappa1.3806_seed0        1678        0   -0.05765        nan      nan          nan
+invariant_beta9.000_alpha527.34_d150_P3674_N433_sa00.5774_kappa2.2964_seed0        3674        0   -0.04908        nan      nan          nan

@@ -1,0 +1,14 @@
+run_dir: red_robin_alpha_beta_invariant_Pfixed1500_betamax9_nu0.25_N01000_lam_eq_omega_alpha_fixed_ens1_Asnap_eps0.03_schedule/models/invariant_beta5.196_alpha19.77_d114_P1500_N1510_sa00.2906_kappa0.8172_seed0
+snapshots: 51  epochs 35000000..36000000
+sigma2: 0.914532418 (kappa_eff)  kappa_bare=0.817205196442252
+
+predictor                MSE_vs_krr   corr_krr     MSE_vs_y
+final_A                  8.8227e-02     0.9427   1.5575e-01
+A_bar_frozen_Phi         7.0474e-01     0.3414   9.2343e-01
+f_bar_snapshots          3.6536e-02     0.9949   9.5550e-02
+feature_krr              0.0000e+00     1.0000   2.3200e-02
+
+rel_rms(A_final,A_ridge)=1.587553
+rel_rms(A_bar,A_ridge)=1.010526
+corr(A_final,A_ridge)=0.443922
+corr(A_bar,A_ridge)=0.096731
