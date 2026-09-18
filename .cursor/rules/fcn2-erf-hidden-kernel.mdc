@@ -18,4 +18,4 @@ Best existing posterior for bimodality: `red_robin_d50_T0.2_P3000_N400_chi400_ep
 
 VGA CLI: `julia julia_lib/fcn2_vga_erf.jl --d --n1 --P --chi --kappa --epsilon --s0 --sa0 --offdiag --to out.json`. For sigma_a runs you **must** pass `--sa0`. `plot_action_h0_activation.py` currently does **not** — overlays on steepwell/invariant dirs would use `a0=1` and be wrong.
 
-`μ=0` is always a VGA stationary point (`diagnose_vga_bimodality.jl`). Do not treat a μ≈0 solve as proof of unimodality without a μ₀ scan or F(m) check.
+`μ=0` is always a VGA stationary point. `fcn2_vga_erf.jl` default μ₀=0.1 collapses the whole steepwell ray except d=50 onto that saddle (lWT still looks fine). For this ray, scan μ₀∈{0.25,…,0.50} as in `plot_invariant_vga_actions_alpha_scale.jl`; all five points are then bimodal with μ≈0.36–0.41.

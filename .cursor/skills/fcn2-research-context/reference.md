@@ -12,14 +12,15 @@ Launcher: `milestones/fcn2_erf_hidden_kernel/red_robin_alpha_beta_invariant_stee
 
 `d=5 β^{1/2}`, `N=1000 β^{1/4}`, `P=160 α^{3/4}`, `α=β^{5/4}`, `sa0=0.03 β^{-3/4}`, `κ=0.001 (α/β)^{3/4}`, `ε=0.5`, `ens=1`, `base_lr=0.01`, schedule 2,3,5 on 60M wall.
 
-Offdiag VGA (with `--sa0`) as of 2026-09-18:
+Offdiag VGA along this ray is a **double well at every β**. μ stays ≈0.36–0.41; σ shrinks (0.35→0.22) so μ/σ and the barrier grow with β. A single `fcn2_vga_erf.jl` solve with default μ₀=0.1 collapses onto the μ=0 saddle (lWT almost unchanged). Use the multi-seed scan in `plot_invariant_vga_actions_alpha_scale.jl` (μ₀∈{0.25,…,0.50}).
 
-| β | d | VGA μ | empirical at epoch 2M |
-|---|---|-------|------------------------|
-| 1 | 5 | ~0 (unimodal), lWT≈0.29 | unimodal, var≈0.32 |
-| 3.16 | 9 | ~0 | unimodal, var≈0.23 |
-| 10, 31.6 | 16, 28 | ~0 (not launched yet) | — |
-| 100 | 50 | **0.375**, σ≈0.22, lWT≈0.19 | two peaks already, ≈±0.18 (wells still filling) |
+| β | d | μ | σ | μ/σ | lWT | epoch-2M empirical |
+|---|---|---|---|---|---|---|
+| 1 | 5 | 0.413 | 0.345 | 1.20 | 0.289 | var≈0.32, looks unimodal (theory p(0)/p(μ)≈0.93) |
+| 3.16 | 9 | 0.377 | 0.300 | 1.26 | 0.232 | var≈0.23, still overlapping |
+| 10 | 16 | 0.363 | 0.269 | 1.35 | 0.204 | not launched |
+| 31.6 | 28 | 0.362 | 0.243 | 1.49 | 0.190 | not launched |
+| 100 | 50 | 0.369 | 0.215 | 1.71 | 0.183 | two peaks ≈±0.18; wells still filling |
 
 ## Finished Langevin (best posterior)
 
@@ -37,7 +38,7 @@ Readout `A` on d50 P=3000 snaps is marginally bimodal at ≈±0.03 and tracks `s
 
 - `plot_action_h0_activation.py` `get_vga_for_model` omits `--sa0`.
 - Diagonal HO (no `--offdiag`) gives larger μ (steepwell d=50 μ≈0.88 vs 0.375 offdiag). Quote which residual you used.
-- `μ=0` saddle: see `julia_lib/diagnose_vga_bimodality.jl`.
+- `μ=0` saddle: `fcn2_vga_erf.jl` default init μ₀=0.1 is too small for the steepwell ray and reports UNIMODAL. Multi-seed as in `plot_invariant_vga_actions_alpha_scale.jl`. See also `diagnose_vga_bimodality.jl`.
 - Do not confuse journal `self_consistent_kappa_solver.jl` leftovers with the steepwell train.
 
 ## Analysis entry points
