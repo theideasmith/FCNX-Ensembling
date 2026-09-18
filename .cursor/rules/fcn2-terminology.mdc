@@ -1,0 +1,13 @@
+---
+description: Read-in vs readout, sa0/s0, VGA mixture parameters
+alwaysApply: true
+---
+
+# Terminology
+
+- **Read-in** = first-layer `W0`, shape `(ens, N, d)`. Teacher coordinate is `W0[..., 0]`. Prior `σ_W0² = s0/d` (`s0` usually 1).
+- **Readout** = second-layer `A`, shape `(ens, N)`. In `train_fcn2_erf_sigma_a.py`, `σ_A² = sa0/(N χ)` with train `χ` often 1.
+- Classic trainers use `χ = N` and implicit `a0=1` (`var_A = 1/(N χ)`). VGA maps sigma_a training via `χ_readout = χ_train / sa0`.
+- **VGA mixture** (teacher axis): `p(w₀)=½ N(+μ,σ²)+½ N(-μ,σ²)`, `lWT = μ²+σ²`. Code: `muW`, `sigS`. `|μ|≈0` is unimodal. Perp block is `δ=0` (should be unimodal).
+- **Offdiag VGA** (`--offdiag`): rotate teacher `(1,ε)` into the He1–He3 kernel eigenbasis each residual. Does not change the mixture ansatz.
+- Task cubic strength is `eps` / `ε` (steepwell uses 0.5). `T = 2 κ` in the invariant launchers; `plot_action_h0_activation.py` also takes `κ = T/2`.
