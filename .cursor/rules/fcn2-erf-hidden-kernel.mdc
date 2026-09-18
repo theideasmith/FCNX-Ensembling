@@ -1,0 +1,21 @@
+---
+description: FCN2 erf training, snapshots, and VGA overlay pitfalls
+globs: milestones/fcn2_erf_hidden_kernel/**,julia_lib/**
+alwaysApply: false
+---
+
+# Training and analysis
+
+Live steepwell sweep (tmux `steepwell_invariant`, 60M epochs, `MAX_PARALLEL_JOBS=3` on cuda:0):
+
+`milestones/fcn2_erf_hidden_kernel/red_robin_alpha_beta_invariant_steepwell_a01_g1.25_P0160_betamax100_nu0.25_N01000_sa00.03_ens1_Asnap_eps0.5_lr0.01_ep60M_sched2_3_5/`
+
+Five β points; red-robin. `A_snapshots/` are written only **after** the 60M schedule (then 2M extra, interval 20k). Until then use `model.pt` / `checkpoint.pt`.
+
+Snapshot files: `A_snapshots/epoch_*.pt` with `{epoch, A, W0}`. Pool `W0[:,:,0]` for posterior histograms.
+
+Best existing posterior for bimodality: `red_robin_d50_T0.2_P3000_N400_chi400_eps0.5_lr0.01_ep50M_weight_snaps/` (late Langevin, ~196 snaps).
+
+VGA CLI: `julia julia_lib/fcn2_vga_erf.jl --d --n1 --P --chi --kappa --epsilon --s0 --sa0 --offdiag --to out.json`. For sigma_a runs you **must** pass `--sa0`. `plot_action_h0_activation.py` currently does **not** — overlays on steepwell/invariant dirs would use `a0=1` and be wrong.
+
+`μ=0` is always a VGA stationary point (`diagnose_vga_bimodality.jl`). Do not treat a μ≈0 solve as proof of unimodality without a μ₀ scan or F(m) check.

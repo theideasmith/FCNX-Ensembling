@@ -1,0 +1,24 @@
+---
+description: Repo map, machine, and how new agents should start on FCNX-Ensembling
+alwaysApply: true
+---
+
+# FCNX-Ensembling
+
+Mean-field / VGA research on 2-layer erf nets (FCN2) learning a cubic Hermite teacher, not an application codebase. Prefer reading the files below over a full-repo crawl.
+
+## Layout
+
+- `julia_lib/` — theory: `FCS2_VGA.jl` (bimodal VGA), `fcn2_vga_erf.jl` (CLI, `--offdiag`), `FCS2Erf_Cubic.jl` (classical Laplace)
+- `milestones/fcn2_erf_hidden_kernel/` — training (`train_fcn2_erf_sigma_a.py`, `train_fcn2_erf.py`), red-robin launchers, W0/A analysis (`plot_action_h0_activation.py`)
+- `journal/` — Langevin cubic notebooks and d-dimensional sweeps
+
+## This machine (`zohar-gpu-2`)
+
+Self-hosted Cursor worker. nvidia-smi GPU0 = RTX 4080 (often idle); GPU1 = RTX 4090. PyTorch `cuda:0` is the **4090**. Do not start competing GPU jobs or kill `steepwell_invariant` / `train_fcn2_erf*` unless asked.
+
+Check live runs: `tmux ls`, then `tmux capture-pane -t steepwell_invariant -p -S -80`.
+
+## Deeper context
+
+If the task involves VGA, W0 bimodality, steepwell, snapshots, or kappa: read `.cursor/skills/fcn2-research-context/SKILL.md`.
