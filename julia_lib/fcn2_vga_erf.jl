@@ -42,6 +42,15 @@ function parse_cli_args()
         "--s0"
         arg_type = Float64;
         default = 1.0
+        help = "Hidden-weight prior scale w0: σ_w² = s0/d"
+        "--a0"
+        arg_type = Float64;
+        default = 1.0
+        help = "Readout prior scale sa0: multiplies A = a0 · ℓ_T / (n1 χ). a0=1 recovers classic."
+        "--sa0"
+        arg_type = Float64;
+        default = NaN
+        help = "Alias for --a0 (sigma_a^2). If set, overrides --a0."
         "--compare"
         help = "Compare Bimodal VGA (4D) with Classical Laplace (3D)"
         action = :store_true
@@ -60,6 +69,30 @@ function parse_cli_args()
         "--advanced"
         help = "Use exact Gauss–Hermite GMM entropy instead of Hershey–Olsen bound"
         action = :store_true
+        "--regularized"
+        help = "Use m²-preconditioned stationarity residuals (same zeros, better Newton scale)"
+        action = :store_true
+        "--offdiag"
+        help = "HO VGA with He1–He3 off-diagonal discrepancy (rotate teacher into K_H eigenbasis each residual)"
+        action = :store_true
+        "--matrix"
+        help = "2×2 He1–He3 coupling, Q=[λ11 λ13; λ13 λ33], y=(1,ε). On by default for Laplace (V=prior+½cᵀGc). With --vga: matrix discrepancy VGA."
+        action = :store_true
+        "--saddle"
+        help = "δ-well saddle: freeze σ=1e-10, drop variational entropy, solve [lJ1,lJ3,μ] only"
+        action = :store_true
+        "--laplace"
+        help = "Laplace saddle (default mode): μ from V'=0, σ=1/√V''. He1–He3 matrix energy unless --linear."
+        action = :store_true
+        "--linear"
+        help = "Laplace with the linear channel only: V=prior+A₁λ₁(w) (no He1–He3 coupling)"
+        action = :store_true
+        "--vga"
+        help = "Use the variational (entropy) solver instead of the default matrix Laplace saddle. Implied by --offdiag/--advanced/--regularized."
+        action = :store_true
+        "--laplace-mean"
+        help = "Mean-only Laplace: σ frozen at 1e-10, solve [lJ1,lJ3,μ] from V'(μ)=0 only (mode locations of V)"
+        action = :store_true
         "--entropy-rule"
         help = "Gauss–Hermite quadrature order for --advanced entropy"
         arg_type = Int;
@@ -75,31 +108,119 @@ function main()
     kappa = isnan(args["kappa"]) ? 1.0 / chi : args["kappa"]
     epsilon = args["epsilon"]
     s0 = args["s0"]
+    a0 = isnan(args["sa0"]) ? args["a0"] : args["sa0"]
     advanced = args["advanced"]
+    regularized = args["regularized"]
+    offdiag = args["offdiag"]
+    saddle = args["saddle"]
+    laplace_mean = args["laplace-mean"]
+    vga = args["vga"] || offdiag || advanced || regularized
+    # VGA leaves μ weakly pinned (entropy vs prior); the matrix Laplace saddle
+    # ties μ to feature learning and keeps the He1–He3 kernel coupling.
+    laplace = args["laplace"] || laplace_mean || !(vga || saddle)
+    matrix = args["matrix"] || (laplace && !args["linear"])
     entropy_rule = args["entropy-rule"]
+    if saddle && laplace
+        error("Choose only one of --saddle and --laplace/--laplace-mean")
+    end
+    if vga && laplace
+        error("--vga/--offdiag/--advanced/--regularized select VGA; drop --laplace/--laplace-mean")
+    end
 
     # --- Initial Guesses ---
-    # VGA Bimodal (4D): [lJ1, lJ3, sigS, muW]
-    init_mix = [1.0/d, 1.0/d^3, sqrt(0.8/d), 0.1]
+    # VGA Bimodal / Laplace (4D): [lJ1, lJ3, sigS, muW]
+    # Saddle δ-wells (3D): [lJ1, lJ3, muW]
+    # μ₀≈0.1 often collapses onto the μ=0 saddle even when a deep double-well
+    # exists. Try a moderate μ grid and keep the largest-|μ| finite solution.
+    init_mix = saddle ? [1.0/d, 1.0/d^3, 0.5] : [1.0/d, 1.0/d^3, sqrt(0.8/d), 0.1]
 
     # Classical (3D): [lJ1, lJ3, lWT]
     init_class = [1.0/d, 1.0/d^3, 1.0/d]
 
-    function solve_system(δ_val)
-        # 1. Solve Bimodal Mixture (VGA)
+    function solve_vga_best(δ_val)
         vga_params = FCS2_VGA.ProblemParams2(
             d=Float32(d), κ=Float32(kappa), ϵ=Float32(epsilon),
-            P=Float32(P), n1=Float32(n1), χ=Float32(chi), δ=Float32(δ_val), s0=Float32(s0)
+            P=Float32(P), n1=Float32(n1), χ=Float32(chi), δ=Float32(δ_val),
+            s0=Float32(s0), a0=Float32(a0),
         )
-        sol_vga = FCS2_VGA.solve_FCN2_Erf(
+        if saddle
+            return FCS2_VGA.solve_FCN2_Erf(
+                vga_params, init_mix;
+                anneal_steps=args["anneal_steps"], use_anneal=(!args["no-anneal"]),
+                advanced=advanced, regularized=regularized, offdiag=offdiag,
+                matrix=matrix, freeze_U=true, entropy_rule=entropy_rule,
+                saddle=true, laplace=false,
+            )
+        end
+        if laplace
+            # χ-anneal tracks the μ=0 root; solve directly from a μ₀ grid and
+            # keep the largest converged |μ| (deepest self-consistent well).
+            best = nothing
+            T_lap = 1.0 + 2.0 * (d - 1) * s0 / d
+            σ_grid = laplace_mean ? (FCS2_VGA.SIG_SADDLE_DEFAULT,) : (0.05, 0.15, 0.3)
+            for μ0 in (0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.9, 1.3, 2.0), σ0 in σ_grid
+                l1_0 = FCS2_VGA.compute_lambda1(μ0, σ0, T_lap)
+                g0 = laplace_mean ? [l1_0, 1.0/d^3, μ0] : [l1_0, 1.0/d^3, σ0, μ0]
+                cand = FCS2_VGA.solve_FCN2_Erf(
+                    vga_params, g0;
+                    anneal_steps=1, use_anneal=false,
+                    laplace=!laplace_mean, laplace_mean=laplace_mean,
+                    matrix=matrix,
+                )
+                isnan(cand.muW) && continue
+                x_c = laplace_mean ? [cand.lJ1, cand.lJ3, cand.muW] :
+                    [cand.lJ1, cand.lJ3, cand.sigS, cand.muW]
+                r = FCS2_VGA.residuals_fcn2_laplace(
+                    x_c, P, chi, d, kappa, δ_val, n1, s0, epsilon;
+                    a0=a0, mean_only=laplace_mean, matrix=matrix,
+                )
+                sqrt(sum(abs2, r)) < 1e-5 || continue
+                if best === nothing || abs(cand.muW) > abs(best.muW)
+                    best = cand
+                end
+            end
+            best === nothing || return best
+        end
+        guesses = Any[
+            [1.0/d, 1.0/d^3, max(sqrt(0.4/d), 0.12), 0.25],
+            [1.0/d, 1.0/d^3, max(sqrt(0.4/d), 0.12), 0.35],
+            [1.0/d, 1.0/d^3, 0.20, 0.40],
+            [1.0/d, 1.0/d^3, 0.22, 0.45],
+            [1.0/d, 1.0/d^3, 0.18, 0.30],
+            init_mix,
+        ]
+        best = nothing
+        for g in guesses
+            cand = FCS2_VGA.solve_FCN2_Erf(
+                vga_params, Float64.(g);
+                anneal_steps=args["anneal_steps"], use_anneal=(!args["no-anneal"]),
+                advanced=advanced, regularized=regularized, offdiag=offdiag,
+                matrix=matrix, freeze_U=true, entropy_rule=entropy_rule,
+                saddle=false, laplace=laplace && !laplace_mean, laplace_mean=laplace_mean,
+            )
+            isnan(cand.muW) && continue
+            if best === nothing || abs(cand.muW) > abs(best.muW)
+                best = cand
+            end
+            abs(cand.muW) > 0.2 && break
+        end
+        return best === nothing ? FCS2_VGA.solve_FCN2_Erf(
             vga_params, init_mix;
             anneal_steps=args["anneal_steps"], use_anneal=(!args["no-anneal"]),
-            advanced=advanced, entropy_rule=entropy_rule,
-        )
+            advanced=advanced, regularized=regularized, offdiag=offdiag,
+            matrix=matrix, freeze_U=true, entropy_rule=entropy_rule,
+            saddle=false, laplace=laplace && !laplace_mean, laplace_mean=laplace_mean,
+        ) : best
+    end
+
+    function solve_system(δ_val)
+        # 1. Solve Bimodal Mixture (VGA)
+        sol_vga = solve_vga_best(δ_val)
 
         # 2. Solve Classical (Laplace) if requested
         sol_class = nothing
         if args["compare"]
+            # Classical cubic has no a0; leave χ as train χ (a0 enters VGA only).
             class_params = FCS2Erf_Cubic.ProblemParams2(
                 d=Float32(d), κ=Float32(kappa), ϵ=Float32(epsilon),
                 P=Float32(P), n1=Float32(n1), χ=Float32(chi), δ=Float32(δ_val)
@@ -119,8 +240,12 @@ function main()
     # Compile results dictionary
     result = Dict(
         "parameters" => Dict(
-            "d"=>d, "n1"=>n1, "P"=>P, "chi"=>chi, "kappa"=>kappa,
-            "advanced"=>advanced, "entropy_rule"=>entropy_rule,
+            "d"=>d, "n1"=>n1, "P"=>P, "chi"=>chi, "a0"=>a0, "s0"=>s0,
+            "kappa"=>kappa,
+            "advanced"=>advanced, "regularized"=>regularized,
+            "offdiag"=>offdiag, "matrix"=>matrix, "freeze_U"=>true,
+            "saddle"=>saddle, "laplace"=>laplace, "laplace_mean"=>laplace_mean,
+            "entropy_rule"=>entropy_rule,
         ),
         "vga" => Dict("target" => target.vga, "perp" => perp.vga),
         "derived" => Dict(
@@ -136,9 +261,20 @@ function main()
     # --- Printing ---
     if !args["quiet"]
         entropy_label = advanced ? "exact GMM entropy (rule=$(entropy_rule))" : "Hershey–Olsen entropy bound"
+        resid_label = regularized ? "m²-preconditioned stationarity" : "raw stationarity"
         println("\n" * "="^90)
-        println("FCN2 4D Bimodal Mixture Model (VGA) Results")
-        println("Entropy: $entropy_label")
+        chan = matrix ? "He1–He3 matrix V=prior+½cᵀGc" : "linear channel V=prior+A₁λ₁"
+        if laplace_mean
+            println("FCN2 mean-only Laplace ($chan; σ=0, V'(μ)=0)")
+        elseif laplace
+            println("FCN2 Laplace saddle ($chan; σ=1/√V'')")
+        elseif saddle
+            println("FCN2 δ-well saddle (σ→0, prior+energy only)")
+        else
+            println("FCN2 4D Bimodal Mixture Model (VGA) Results")
+            println("Entropy: $entropy_label")
+            println("Residuals: $resid_label")
+        end
         println("="^90)
 
         for (label, sol) in [("Target (δ=1.0)", target.vga), ("Perpendicular (δ=0.0)", perp.vga)]

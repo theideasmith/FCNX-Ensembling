@@ -16,6 +16,8 @@ Snapshot files: `A_snapshots/epoch_*.pt` with `{epoch, A, W0}`. Pool `W0[:,:,0]`
 
 Best existing posterior for bimodality: `red_robin_d50_T0.2_P3000_N400_chi400_eps0.5_lr0.01_ep50M_weight_snaps/` (late Langevin, ~196 snaps).
 
-VGA CLI: `julia julia_lib/fcn2_vga_erf.jl --d --n1 --P --chi --kappa --epsilon --s0 --sa0 --offdiag --to out.json`. For sigma_a runs you **must** pass `--sa0`. `plot_action_h0_activation.py` currently does **not** — overlays on steepwell/invariant dirs would use `a0=1` and be wrong.
+VGA CLI: `julia julia_lib/fcn2_vga_erf.jl --d --n1 --P --chi --kappa --epsilon --s0 --sa0 --to out.json`. **Default is the matrix Laplace saddle.** `--laplace-mean` gives σ=0, `--linear` drops He1–He3 coupling, and `--vga` (or `--offdiag`/`--advanced`/`--regularized`) selects the old variational solver; `--vga --matrix` is matrix VGA. For sigma_a runs you **must** pass `--sa0` (`plot_action_h0_activation.py` does). Laplace modes scan a μ₀×σ₀ grid, accept residual < 1e-5, keep the largest μ.
+
+Overlays: `plot_action_h0_activation.py --group <G> [--vga-laplace|--vga-laplace-mean] [--vga-matrix]` → `<G>_vga_laplace[_mean][_matrix]/`. Always κ_eff (default); never `--vga-bare-kappa` unless asked. σ=0 theory is drawn as ±μ vertical lines.
 
 `μ=0` is always a VGA stationary point. `fcn2_vga_erf.jl` default μ₀=0.1 collapses the whole steepwell ray except d=50 onto that saddle (lWT still looks fine). For this ray, scan μ₀∈{0.25,…,0.50} as in `plot_invariant_vga_actions_alpha_scale.jl`; all five points are then bimodal with μ≈0.36–0.41.

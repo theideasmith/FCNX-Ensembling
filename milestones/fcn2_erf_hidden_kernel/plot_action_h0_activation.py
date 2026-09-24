@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 from FCN2Network import FCN2NetworkActivationGeneric
 from kappa_eff_solver import compute_kappa_eff
 import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
+from matplotlib.colors import LogNorm, Normalize
 from scipy.optimize import minimize
 from scipy.special import erf
 import argparse
@@ -24,6 +24,53 @@ import argparse
 class ExperimentGroup:
     name: str
     model_dirs: list[str]
+
+
+_BETA_NAME_RE = re.compile(r"beta([\d.]+)", re.IGNORECASE)
+
+
+def beta_from_name(name) -> float | None:
+    if name is None:
+        return None
+    m = _BETA_NAME_RE.search(str(name))
+    return float(m.group(1)) if m else None
+
+
+def curve_color_scale(entries, cmap_name: str = "viridis"):
+    """Continuous colormap keyed by beta when available, else by P."""
+    betas = []
+    for entry in entries:
+        beta = entry.get("beta")
+        if beta is None or not np.isfinite(beta):
+            beta = beta_from_name(entry.get("model_name") or entry.get("model_dir"))
+        betas.append(float(beta) if beta is not None and np.isfinite(beta) else np.nan)
+
+    cmap = plt.get_cmap(cmap_name)
+    if all(np.isfinite(b) and b > 0 for b in betas):
+        values = betas
+        key = "beta"
+        label = r"$\beta$"
+        vmin, vmax = min(values), max(values)
+        if vmax > vmin and vmax / vmin >= 3.0:
+            norm = LogNorm(vmin=vmin, vmax=vmax)
+        else:
+            norm = Normalize(vmin=vmin, vmax=max(vmax, vmin + 1e-12))
+    else:
+        values = [float(entry["P"]) for entry in entries]
+        key = "P"
+        label = "P"
+        vmin, vmax = min(values), max(values)
+        norm = Normalize(vmin=vmin, vmax=max(vmax, vmin + 1e-12))
+
+    def color_for(entry):
+        if key == "beta":
+            val = entry.get("beta")
+            if val is None or not np.isfinite(val):
+                val = beta_from_name(entry.get("model_name") or entry.get("model_dir"))
+            return cmap(norm(float(val)))
+        return cmap(norm(float(entry["P"])))
+
+    return color_for, cmap, norm, label
 
 
 def slugify(name: str) -> str:
@@ -39,6 +86,29 @@ def collect_model_dirs(base_dir: Path, pattern: re.Pattern[str]) -> list[str]:
         for path in base_dir.iterdir()
         if path.is_dir() and pattern.match(path.name)
     )
+
+
+def collect_model_dirs_with_asnap(base_dir: Path, pattern: re.Pattern[str]) -> list[str]:
+    """Like collect_model_dirs, but only runs that already wrote A_snapshots/."""
+    out = []
+    for path_str in collect_model_dirs(base_dir, pattern):
+        snap_dir = Path(path_str) / "A_snapshots"
+        if snap_dir.is_dir() and any(snap_dir.glob("epoch_*.pt")):
+            out.append(path_str)
+    return out
+
+
+def collect_model_dirs_with_weights(base_dir: Path, pattern: re.Pattern[str]) -> list[str]:
+    """Include finished A_snapshots runs and mid-train dirs that still have a checkpoint."""
+    out = []
+    for path_str in collect_model_dirs(base_dir, pattern):
+        path = Path(path_str)
+        snap_dir = path / "A_snapshots"
+        has_asnap = snap_dir.is_dir() and any(snap_dir.glob("epoch_*.pt"))
+        has_ckpt = any((path / name).exists() for name in ("model.pt", "model_final.pt", "checkpoint.pt"))
+        if has_asnap or has_ckpt:
+            out.append(path_str)
+    return out
 
 model_dirs = [
     '/home/akiva/FCNX-Ensembling/milestones/fcn2_erf_hidden_kernel/PScaledLR/d150_P600_N1600_chi_1600.0_lr_0.003_T_2.0_seed_0',
@@ -179,6 +249,40 @@ _INVARIANT_PFIXED1500_MODELS_DIR = (
     / "models"
 )
 
+# Hybrid steepwell invariant ray (ε_task=0.5, sa0₀=0.03, cold κ). Prefer
+# A_snapshots/ when present; otherwise plot from the latest model.pt / checkpoint.
+_STEEPWELL_EPS0P5_MODELS_DIR = (
+    Path(__file__).parent
+    / "red_robin_alpha_beta_invariant_steepwell_a01_g1.25_P0160_betamax100_nu0.25_N01000_sa00.03_ens1_Asnap_eps0.5_lr0.01_ep60M_sched2_3_5"
+    / "models"
+)
+
+# Same F-invariant ray as the parent steepwell, but TASK_EPS=0.03 and N/d≈30 at d=50.
+_STEEPWELL_EPS0P03_N30D_MODELS_DIR = (
+    Path(__file__).parent
+    / "red_robin_alpha_beta_invariant_steepwell_a01_g1.25_P0160_betamax100_epsd0.5_nu0.25_N0474_Nod30_sa00.03_ens1_Asnap20M_500k_eps0.03_lr0.01_ep60M_sched2_3_5_devcuda1"
+    / "models"
+)
+
+# Sweep-folder task ε (`_eps0.03_`); do not match the MF exponent `_epsd0.5`.
+_TASK_EPS_IN_PATH_RE = re.compile(r"_eps(\d+(?:\.\d+)?)_")
+
+
+def task_eps_from_model_dir(dir_path: Path, default: float = 0.5) -> float:
+    """Task ε from run dirname (`_eps_0.03`) or parent sweep folder (`_eps0.03_`)."""
+    name_m = re.search(r"_eps_(\d+(?:\.\d+)?)", dir_path.name)
+    if name_m:
+        return float(name_m.group(1))
+    matches = _TASK_EPS_IN_PATH_RE.findall(str(dir_path))
+    if matches:
+        return float(matches[-1])
+    return default
+
+
+def model_dir_uses_offdiag_vga(model_dir) -> bool:
+    """Steepwell σ_a rays always go through residuals_fcn2_offdiag."""
+    return "steepwell" in str(model_dir).lower()
+
 from n_chi_eq_N_linear_schedule import (  # noqa: E402
     MODELS_DIR as _N_CHI_EQ_N_MODELS_DIR,
 )
@@ -256,6 +360,18 @@ EXPERIMENT_GROUPS = [
         ),
     ),
     ExperimentGroup(
+        name="SteepwellInvariantEps0p5Asnap",
+        model_dirs=collect_model_dirs_with_weights(
+            _STEEPWELL_EPS0P5_MODELS_DIR, _invariant_beta_alpha_pattern
+        ),
+    ),
+    ExperimentGroup(
+        name="SteepwellInvariantEps0p03N30dAsnap",
+        model_dirs=collect_model_dirs_with_weights(
+            _STEEPWELL_EPS0P03_N30D_MODELS_DIR, _invariant_beta_alpha_pattern
+        ),
+    ),
+    ExperimentGroup(
         name="NChiEqNLinearSchedule",
         model_dirs=collect_model_dirs(
             _N_CHI_EQ_N_MODELS_DIR,
@@ -295,6 +411,41 @@ EXPERIMENT_GROUPS = [
         name="LangevinCubicEp50k",
         model_dirs=langevin_cubic_model_dirs(_LANGEVIN_CUBIC_EP50K_DIR),
     ),
+    ExperimentGroup(
+        name="LangevinD50Kap0p1Long",
+        model_dirs=[
+            # Prefer weight-snapshot branches (A_snapshots/) when present; else originals.
+            str(
+                Path(__file__).parent
+                / "red_robin_d50_T0.2_P3000_N400_chi400_eps0.5_lr0.01_ep50M_weight_snaps"
+                / "models"
+                / "d50_P3000_N400_chi_400_lr_0.01_T_0.2_seed_42_eps_0.5_schedule_2_3_5_weight_snaps"
+            ),
+            str(
+                Path(__file__).parent
+                / "red_robin_d50_T0.2_P16000_N400_chi400_eps0.5_lr0.053333_ep100M_weight_snaps"
+                / "models"
+                / "d50_P16000_N400_chi_400_lr_0.053333_T_0.2_seed_42_eps_0.5_schedule_2_3_5_from_lr0p01_ep29M_weight_snaps"
+            ),
+        ],
+    ),
+    ExperimentGroup(
+        name="LangevinD50Kap0p1LongSingle",
+        model_dirs=[
+            str(
+                Path(__file__).parent
+                / "red_robin_d50_T0.2_P3000_N400_chi400_eps0.5_lr0.01_ep50M_schedule_2_3_5"
+                / "models"
+                / "d50_P3000_N400_chi_400_lr_0.01_T_0.2_seed_42_eps_0.5_schedule_2_3_5"
+            ),
+            str(
+                Path(__file__).parent
+                / "red_robin_d50_T0.2_P16000_N400_chi400_eps0.5_lr0.053333_ep100M_schedule_2_3_5_resume"
+                / "models"
+                / "d50_P16000_N400_chi_400_lr_0.053333_T_0.2_seed_42_eps_0.5_schedule_2_3_5_from_lr0p01_ep29M"
+            ),
+        ],
+    ),
     *(
         ExperimentGroup(
             name=f"LangevinCubicEp50kD{d_val}",
@@ -302,7 +453,7 @@ EXPERIMENT_GROUPS = [
                 _LANGEVIN_CUBIC_EP50K_DIR, dims={d_val}
             ),
         )
-        for d_val in (5, 10, 20, 30)
+        for d_val in (5, 10, 20, 30, 100)
     ),
     ExperimentGroup(
         name="LangevinCubicEp1M",
@@ -327,10 +478,17 @@ OUTPUT_BASE_DIR = Path(__file__).parent / "action_h0_activation_plots"
 _SCALING_EXPONENT_MODULES = {
     "AlphaBetaInvariant": "red_robin_alpha_beta_invariant",
     "InvariantPfixed1500Asnap": "red_robin_alpha_beta_invariant",
+    "SteepwellInvariantEps0p5Asnap": "red_robin_alpha_beta_invariant_steepwell",
+    "SteepwellInvariantEps0p03N30dAsnap": "red_robin_alpha_beta_invariant_steepwell_eps0p03_N30d",
     "SampleComplexityBetaAlpha": "red_robin_sample_complexity_sweep_cubic_beta_alpha",
     "SampleComplexityLearnableBetaAlpha": "red_robin_sample_complexity_sweep_cubic_beta_alpha",
 }
-_INVARIANT_ACTION_GROUPS = {"AlphaBetaInvariant", "InvariantPfixed1500Asnap"}
+_INVARIANT_ACTION_GROUPS = {
+    "AlphaBetaInvariant",
+    "InvariantPfixed1500Asnap",
+    "SteepwellInvariantEps0p5Asnap",
+    "SteepwellInvariantEps0p03N30dAsnap",
+}
 
 
 def format_math_fraction(value: float) -> str:
@@ -361,7 +519,8 @@ def scaling_exponents_footnote(group_name: str) -> str | None:
             r"N \sim \beta^{\nu},\quad "
             r"\sigma_a^{2} \sim \beta^{\rho},\quad "
             r"P \sim \alpha^{\lambda},\quad "
-            r"\kappa \sim (\alpha/\beta)^{2\omega}$"
+            r"\kappa \sim (\alpha/\beta)^{\omega},\quad "
+            r"T=2\kappa,\quad \chi=1$"
         ),
         (
             rf"$\epsilon={epsilon},\quad "
@@ -376,7 +535,60 @@ def scaling_exponents_footnote(group_name: str) -> str | None:
             0,
             r"Action $F = 2P^{2}\sigma_a^{2}/(\pi\kappa^{2}\,d\,N)$ held invariant",
         )
+        if hasattr(module, "GAMMA"):
+            gamma = format_math_fraction(float(module.GAMMA))
+            alpha0 = float(getattr(module, "ALPHA0", 1.0))
+            lines.insert(
+                1,
+                rf"Ray $\alpha=\alpha_0\beta^{{\gamma}}$ with "
+                rf"$\alpha_0={alpha0:g}$, $\gamma={gamma}$",
+            )
+        task_eps = getattr(module, "TASK_EPS", None)
+        if task_eps is not None:
+            def _fmt_base(val):
+                try:
+                    fval = float(val)
+                except (TypeError, ValueError):
+                    return str(val)
+                return f"{int(fval)}" if fval == int(fval) else f"{fval:g}"
+
+            base_bits = [
+                rf"task $\varepsilon={float(task_eps):g}$",
+                rf"$d_0={_fmt_base(getattr(module, 'D0', '?'))}$",
+                rf"$N_0={_fmt_base(getattr(module, 'N0', '?'))}$",
+                rf"$P_0={_fmt_base(getattr(module, 'P0', '?'))}$",
+                rf"$\sigma_{{a0}}={float(getattr(module, 'SIGMA_A0', float('nan'))):g}$",
+                rf"$\kappa_0={float(getattr(module, 'KAPPA0', float('nan'))):g}$",
+                rf"$s_0={float(getattr(module, 'S0', 1.0)):g}$",
+            ]
+            if hasattr(module, "BASE_LR"):
+                base_bits.append(rf"base lr$={float(module.BASE_LR):g}$")
+            if hasattr(module, "SCHEDULE_DIVISORS"):
+                base_bits.append(rf"sched$={module.SCHEDULE_DIVISORS}$")
+            if hasattr(module, "EPOCHS"):
+                base_bits.append(rf"epochs$={int(module.EPOCHS)}$")
+            lines.append(", ".join(base_bits))
     return "\n".join(lines)
+
+
+def annotate_scaling_exponents(fig, group_name: str, top: float = 1.0) -> None:
+    footnote = scaling_exponents_footnote(group_name)
+    if not footnote:
+        fig.tight_layout(rect=[0, 0, 1, top] if top < 0.999 else None)
+        return
+    n_lines = footnote.count("\n") + 1
+    bottom = 0.03 + 0.038 * n_lines
+    fig.tight_layout(rect=[0, bottom, 1, top])
+    fig.text(
+        0.5,
+        0.008,
+        footnote,
+        ha="center",
+        va="bottom",
+        fontsize=8,
+        linespacing=1.35,
+        color="0.2",
+    )
 
 
 def annotate_theory_empirical_gaps(ax, p_values, empirical, theory, empirical_std=None) -> None:
@@ -424,25 +636,6 @@ def annotate_theory_empirical_gaps(ax, p_values, empirical, theory, empirical_st
             ax.set_ylim(ymin, max(ymax, data_max) * 1.18)
 
 
-def annotate_scaling_exponents(fig, group_name: str) -> None:
-    footnote = scaling_exponents_footnote(group_name)
-    if not footnote:
-        fig.tight_layout()
-        return
-    n_lines = footnote.count("\n") + 1
-    fig.tight_layout(rect=[0, 0.04 + 0.045 * n_lines, 1, 1])
-    fig.text(
-        0.5,
-        0.01,
-        footnote,
-        ha="center",
-        va="bottom",
-        fontsize=9,
-        linespacing=1.45,
-        color="0.2",
-    )
-
-
 def parse_config_from_dirname(dirname):
     dir_path = Path(dirname)
     config_path = dir_path / "config.json"
@@ -451,12 +644,10 @@ def parse_config_from_dirname(dirname):
         seed_match = re.search(r"seed_?(\d+)", name)
         return int(seed_match.group(1)) if seed_match else None
 
-    if config_path.exists():
-        with open(config_path) as f:
-            cfg = json.load(f)
+    def from_cfg(cfg: dict, name: str):
         seed = cfg.get("dataset_seed", cfg.get("seed"))
         if seed is None:
-            seed = seed_from_dirname(dir_path.name)
+            seed = seed_from_dirname(name)
         else:
             seed = int(seed)
         return (
@@ -470,9 +661,30 @@ def parse_config_from_dirname(dirname):
             cfg.get("s0"),
         )
 
+    if config_path.exists():
+        with open(config_path) as f:
+            cfg = json.load(f)
+        return from_cfg(cfg, dir_path.name)
+
+    # Mid-train steepwell / sigma_a runs often have checkpoint.pt before config.json.
+    ckpt_path = dir_path / "checkpoint.pt"
+    if ckpt_path.exists():
+        try:
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            if isinstance(ckpt, dict) and isinstance(ckpt.get("config"), dict):
+                cfg = dict(ckpt["config"])
+                # Trainer checkpoint config may omit eps; recover from dirname / sweep folder.
+                if cfg.get("eps") is None:
+                    cfg["eps"] = task_eps_from_model_dir(dir_path)
+                if cfg.get("s0") is None:
+                    cfg["s0"] = 1.0
+                return from_cfg(cfg, dir_path.name)
+        except Exception as exc:
+            print(f"Could not read config from {ckpt_path}: {exc}")
+
     name = dir_path.name
     beta_alpha_match = re.match(
-        r"(?:learnable_)?beta(?P<beta>[\d.]+)_alpha(?P<alpha>[\d.]+)_d(?P<d>\d+)_P(?P<P>\d+)_N(?P<N>\d+)"
+        r"(?:invariant_|learnable_)?beta(?P<beta>[\d.]+)_alpha(?P<alpha>[\d.]+)_d(?P<d>\d+)_P(?P<P>\d+)_N(?P<N>\d+)"
         r"_sa0(?P<sa0>[\d.]+)_kappa(?P<kappa>[\d.]+)_seed(?P<seed>\d+)",
         name,
     )
@@ -480,12 +692,18 @@ def parse_config_from_dirname(dirname):
         d = int(beta_alpha_match.group("d"))
         p_val = int(beta_alpha_match.group("P"))
         n = int(beta_alpha_match.group("N"))
-        chi = float(n)
+        chi = float(n)  # dirname path uses χ=N convention for classic; sa0 runs use χ=1 via config
+        # Prefer χ=1 for sa0-named invariant / learnable dirs (matches train_fcn2_erf_sigma_a).
+        if name.startswith(("invariant_beta", "learnable_beta", "beta")):
+            chi = 1.0
         seed = int(beta_alpha_match.group("seed"))
         kappa = float(beta_alpha_match.group("kappa"))
         temperature = 2.0 * kappa
-        # Learnable / beta-alpha sweeps use task_eps=0.0 and s0=1.0.
-        return d, p_val, n, chi, seed, temperature, 0.0, 1.0
+        if name.startswith("invariant_beta") or "steepwell" in str(dir_path).lower():
+            eps = task_eps_from_model_dir(dir_path)
+        else:
+            eps = 0.0
+        return d, p_val, n, chi, seed, temperature, eps, 1.0
 
     parts = name.split('_')
     d = int(parts[0][1:])
@@ -932,6 +1150,17 @@ def learnability_from_eigenvalue(eigenvalue, ridge, P):
     return float(eigenvalue / (eigenvalue + ridge / P))
 
 
+def _matrix_learnabilities_from_vga(vga_theory):
+    """(L1, L3) from Julia's matrix solve, f = Q(Q+κ/(a0P))⁻¹y; NaN otherwise."""
+    if not vga_theory or not (vga_theory.get("parameters") or {}).get("matrix"):
+        return np.nan, np.nan
+    target = (vga_theory.get("vga") or {}).get("target") or {}
+    try:
+        return float(target["learnability1"]), float(target["learnability3"])
+    except (KeyError, TypeError, ValueError):
+        return np.nan, np.nan
+
+
 def test_learnability_for_model(model, d, eps, device):
     y_He1, y_He3 = population_teacher_hermite_coeffs(eps)
     return output_learnability_streaming(
@@ -945,16 +1174,69 @@ def test_learnability_for_model(model, d, eps, device):
     )
 
 
-def plot_experiment_group(experiment_group, device, recompute=False, vga_advanced=False):
+def plot_experiment_group(
+    experiment_group,
+    device,
+    recompute=False,
+    vga_advanced=False,
+    vga_offdiag=False,
+    vga_matrix=False,
+    vga_bare_kappa=False,
+    vga_kappa_scale=1.0,
+    refresh_vga=False,
+    vga_laplace=False,
+    vga_laplace_mean=False,
+):
+    if vga_laplace_mean:
+        vga_laplace = True
     model_dirs = experiment_group.model_dirs
-    output_dir = OUTPUT_BASE_DIR / slugify(experiment_group.name)
+    group_slug = slugify(experiment_group.name)
+    if vga_laplace_mean:
+        group_slug = f"{group_slug}_vga_laplace_mean"
+    elif vga_laplace:
+        group_slug = f"{group_slug}_vga_laplace"
+    if vga_laplace and vga_matrix:
+        group_slug = f"{group_slug}_matrix"
+    elif vga_matrix:
+        group_slug = f"{group_slug}_vga_matrix"
+    elif vga_offdiag:
+        group_slug = f"{group_slug}_vga_offdiag"
+    if vga_bare_kappa:
+        group_slug = f"{group_slug}_barekappa"
+    if abs(float(vga_kappa_scale) - 1.0) > 1e-12:
+        scale_tag = str(vga_kappa_scale).replace(".", "p")
+        group_slug = f"{group_slug}_kappax{scale_tag}"
+    output_dir = OUTPUT_BASE_DIR / group_slug
     output_dir.mkdir(parents=True, exist_ok=True)
     computation_cache_path = output_dir / 'computation_cache.pkl'
+    baseline_cache_path = (
+        OUTPUT_BASE_DIR / slugify(experiment_group.name) / 'computation_cache.pkl'
+    )
 
     print("=" * 42)
     print(f"Experiment group: {experiment_group.name}")
     print(f"  Output dir: {output_dir}")
     print(f"  VGA entropy: {'exact GMM (--vga-advanced)' if vga_advanced else 'Hershey-Olsen (default)'}")
+    lap_chan = "He1–He3 matrix" if vga_matrix else "linear channel"
+    if vga_laplace_mean:
+        print(f"  VGA Laplace mean-only: ON ({lap_chan}; V'=0, σ=0; largest converged μ)")
+    elif vga_laplace:
+        print(f"  VGA Laplace: ON ({lap_chan}; V'=0, σ=1/√V''; largest converged μ)")
+    elif vga_matrix:
+        print("  VGA matrix: ON (2×2 yᵀTy discrepancy)")
+    else:
+        offdiag_effective = bool(vga_offdiag) or any(
+            model_dir_uses_offdiag_vga(m) for m in model_dirs
+        )
+        print(f"  VGA offdiag: {'ON (He1–He3 K_H mix)' if offdiag_effective else 'OFF (diagonal HO)'}")
+    if vga_bare_kappa:
+        print("  VGA kappa: bare κ=T/2 (--vga-bare-kappa)")
+    else:
+        print("  VGA kappa: κ_eff (default)")
+    if abs(float(vga_kappa_scale) - 1.0) > 1e-12:
+        print(f"  VGA kappa scale: ×{vga_kappa_scale:g}")
+    if refresh_vga:
+        print("  VGA theory: FORCE REFRESH")
     print("=" * 42)
 
     if not model_dirs:
@@ -1025,8 +1307,30 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
     fig_hist, axes_hist = plt.subplots(nrows_hist, ncols_hist, figsize=(5*ncols_hist, 4*nrows_hist), squeeze=False)
     p_summary_entries = []
 
-    def log_density_curve(values, bins=40, min_samples=3, eps=1e-9):
-        values_np = np.asarray(values, dtype=np.float64)
+    def log_density_curve(
+        values,
+        bins=40,
+        min_samples=3,
+        eps=1e-9,
+        tail_quantile=0.0,
+    ):
+        """Empirical action curve -log p from a histogram.
+
+        If ``tail_quantile`` > 0, discard the lowest/highest that fraction of
+        samples before binning (kills sparse heavy-tail bins that dominate
+        -log p noise). Density is still normalized on the kept support.
+        """
+        values_np = np.asarray(values, dtype=np.float64).reshape(-1)
+        values_np = values_np[np.isfinite(values_np)]
+        if values_np.size == 0:
+            return np.array([]), np.array([])
+        if tail_quantile and tail_quantile > 0.0:
+            lo = float(np.quantile(values_np, float(tail_quantile)))
+            hi = float(np.quantile(values_np, 1.0 - float(tail_quantile)))
+            if hi > lo:
+                values_np = values_np[(values_np >= lo) & (values_np <= hi)]
+        if values_np.size == 0:
+            return np.array([]), np.array([])
         counts_raw, bin_edges = np.histogram(values_np, bins=bins)
         density, _ = np.histogram(values_np, bins=bin_edges, density=True)
         centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
@@ -1108,6 +1412,21 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
             pi = 1.0 - pi
             mu1, mu2 = mu2, mu1
             sigma1, sigma2 = sigma2, sigma1
+
+        # Reject collapsed / runaway fits (e.g. one ultra-wide ghost mode that
+        # lifts -log p into a high plateau and dominates the panel).
+        data_span = float(np.percentile(values_np, 99) - np.percentile(values_np, 1))
+        data_span = max(data_span, 3.0 * std, 1e-3)
+        max_sigma = 3.0 * data_span
+        if (
+            not (0.05 <= pi <= 0.95)
+            or sigma1 > max_sigma
+            or sigma2 > max_sigma
+            or abs(mu1) > 5.0 * data_span
+            or abs(mu2) > 5.0 * data_span
+            or min(sigma1, sigma2) < 1e-4
+        ):
+            return None
 
         return {
             'pi': float(pi),
@@ -1241,8 +1560,35 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         if model_dir in vga_cache:
             return vga_cache[model_dir]
         kappa_bare = bare_kappa_from_config(T, chi)
-        kappa = get_kappa_eff_for_params(d, P, kappa_bare, N, chi)
-        print(f"Using kappa_eff for VGA: {kappa} (bare={kappa_bare}, advanced={vga_advanced})")
+        if vga_bare_kappa:
+            kappa = float(kappa_bare)
+        else:
+            kappa = get_kappa_eff_for_params(d, P, kappa_bare, N, chi)
+        kappa = float(kappa) * float(vga_kappa_scale)
+        sa0 = 1.0
+        cfg_path = Path(model_dir) / "config.json"
+        if cfg_path.exists():
+            try:
+                with open(cfg_path) as f:
+                    cfg_sa = json.load(f)
+                if cfg_sa.get("sa0") is not None:
+                    sa0 = float(cfg_sa["sa0"])
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+        if sa0 == 1.0:
+            sa0_m = re.search(r"sa0([\d.]+)", Path(model_dir).name)
+            if sa0_m:
+                sa0 = float(sa0_m.group(1))
+        use_matrix = bool(vga_matrix)
+        use_offdiag = (not use_matrix) and (not vga_laplace) and (
+            bool(vga_offdiag) or model_dir_uses_offdiag_vga(model_dir)
+        )
+        print(
+            f"Using kappa for VGA: {kappa} "
+            f"({'bare' if vga_bare_kappa else 'eff'}×{float(vga_kappa_scale):g}; "
+            f"bare={kappa_bare}, sa0={sa0}, "
+            f"advanced={vga_advanced}, matrix={use_matrix}, offdiag={use_offdiag})"
+        )
         julia_script = Path(__file__).parent.parent.parent / "julia_lib" / "fcn2_vga_erf.jl"
         tmp_path = None
         try:
@@ -1258,14 +1604,34 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
                 "--kappa", str(kappa),
                 "--epsilon", str(epsilon if epsilon is not None else 0.03),
                 "--s0", str(s0 if s0 is not None else 1.0),
+                "--sa0", str(sa0),
                 "--to", str(tmp_path),
                 "--quiet",
             ]
             if vga_advanced:
                 cmd.append("--advanced")
+            if vga_laplace_mean:
+                cmd.append("--laplace-mean")
+            elif vga_laplace:
+                cmd.append("--laplace")
+            if use_matrix:
+                cmd.append("--matrix")
+                if not vga_laplace:
+                    cmd.append("--vga")
+            elif use_offdiag:
+                cmd.append("--offdiag")
+            print(
+                f"  VGA flags in argv: "
+                f"matrix={'--matrix' in cmd}, offdiag={'--offdiag' in cmd}"
+            )
             subprocess.run(cmd, check=True, capture_output=True)
             with open(tmp_path, "r") as f:
                 vga_cache[model_dir] = json.load(f)
+            jp = (vga_cache[model_dir].get("parameters") or {})
+            print(
+                f"  julia parameters.matrix={jp.get('matrix')} "
+                f"offdiag={jp.get('offdiag')}"
+            )
         except Exception as exc:
             print(f"Could not compute VGA theory for {model_dir}: {exc}")
             vga_cache[model_dir] = None
@@ -1280,29 +1646,79 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
     cached = None
     cache_version = 9  # empirical quantities averaged over A_snapshots when present
     refresh_learnability_only = False
-    if not recompute and computation_cache_path.exists():
+    refresh_vga_theory_only = bool(refresh_vga)
+    if refresh_vga_theory_only:
+        print("Refreshing VGA theory for all cached runs (--refresh-vga).")
+
+    def _try_load_cache(path):
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+
+    if not recompute:
         try:
-            with open(computation_cache_path, 'rb') as f:
-                cached = pickle.load(f)
+            if computation_cache_path.exists():
+                cached = _try_load_cache(computation_cache_path)
+                print(f"Loaded computation cache from {computation_cache_path}")
+            elif (
+                (vga_offdiag or vga_matrix or vga_laplace)
+                and baseline_cache_path.exists()
+                and baseline_cache_path.resolve() != computation_cache_path.resolve()
+            ):
+                cached = _try_load_cache(baseline_cache_path)
+                mode = (
+                    "laplace-mean" if vga_laplace_mean
+                    else "laplace" if vga_laplace
+                    else "matrix" if vga_matrix
+                    else "offdiag"
+                )
+                print(
+                    f"Loaded baseline empirical cache from {baseline_cache_path}; "
+                    f"will refresh VGA theory with --{mode}."
+                )
+                refresh_vga_theory_only = True
+        except Exception as exc:
+            print(f"Could not load computation cache ({exc}); recomputing projections.")
+            cached = None
+
+        if cached is not None:
             cached_version = cached.get('version')
             if cached_version == cache_version:
                 if bool(cached.get('vga_advanced', False)) != bool(vga_advanced):
                     print("Computation cache VGA entropy mode mismatch; recomputing projections.")
                     cached = None
-                else:
-                    print(f"Loaded computation cache from {computation_cache_path}")
+                    refresh_vga_theory_only = False
+                elif bool(cached.get('vga_laplace', False)) != bool(vga_laplace) or bool(
+                    cached.get('vga_laplace_mean', False)
+                ) != bool(vga_laplace_mean) or bool(cached.get('vga_matrix', False)) != bool(vga_matrix) or (
+                    bool(cached.get('vga_offdiag', False)) != bool(vga_offdiag)
+                    and not vga_matrix
+                ) or bool(cached.get('vga_bare_kappa', False)) != bool(vga_bare_kappa) or (
+                    abs(float(cached.get('vga_kappa_scale', 1.0)) - float(vga_kappa_scale)) > 1e-12
+                ):
+                    print(
+                        "Computation cache VGA residual/kappa mode mismatch; "
+                        "reusing empirical projections and refreshing theory."
+                    )
+                    refresh_vga_theory_only = True
             elif cached_version in (5, 6):
-                print(
-                    f"Cache v{cached_version}: reusing h0 projections; "
-                    "refreshing output learnability on a Gaussian test set."
-                )
-                refresh_learnability_only = True
+                if refresh_vga_theory_only:
+                    # Baseline empirical cache is enough for a theory-mode overlay;
+                    # skip the expensive learnability refresh.
+                    mode = "matrix" if vga_matrix else "offdiag"
+                    print(
+                        f"Cache v{cached_version}: reusing empirical projections; "
+                        f"refreshing VGA theory only (--vga-{mode})."
+                    )
+                else:
+                    print(
+                        f"Cache v{cached_version}: reusing h0 projections; "
+                        "refreshing output learnability on a Gaussian test set."
+                    )
+                    refresh_learnability_only = True
             else:
                 print("Computation cache version mismatch; recomputing projections.")
                 cached = None
-        except Exception as exc:
-            print(f"Could not load computation cache ({exc}); recomputing projections.")
-            cached = None
+                refresh_vga_theory_only = False
 
     def compute_one_model(model_dir):
         d, P, N, chi, seed, T, epsilon, s0 = parse_config_from_dirname(model_dir)
@@ -1321,6 +1737,10 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         else:
             A_snaps = W0_snaps = None
             t_snaps = 0
+            print(
+                f"  No A_snapshots yet; using latest checkpoint weights "
+                f"({Path(model_dir).name})"
+            )
 
         eps = float(epsilon) if epsilon is not None else 0.0
         y_He1, y_He3 = population_teacher_hermite_coeffs(eps)
@@ -1402,13 +1822,22 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         target_vga = vga_theory.get("vga", {}).get("target", {}) if vga_theory is not None else {}
         lJ1T = target_vga.get("lJ1")
         lJ3T = target_vga.get("lJ3")
+        L1_vga, L3_vga = _matrix_learnabilities_from_vga(vga_theory)
 
-        hermite3_curve = log_density_curve(proj_h3, bins=40, min_samples=3)
-        linear_curve = log_density_curve(proj_lin, bins=40, min_samples=3)
+        # Coarser bins + drop outer 2.5% tails. He3 is strongly leptokurtic;
+        # sparse wing bins make -log p look spuriously noisy without changing
+        # the central well comparison to Gaussian theory.
+        hermite3_curve = log_density_curve(
+            proj_h3, bins=20, min_samples=5, tail_quantile=0.025
+        )
+        linear_curve = log_density_curve(
+            proj_lin, bins=20, min_samples=5, tail_quantile=0.025
+        )
         h0_entry = {
             "model_dir": model_dir,
             "model_name": Path(model_dir).name,
             "P": P,
+            "beta": beta_from_name(Path(model_dir).name),
             "proj_h3": proj_h3,
             "proj_lin": proj_lin,
             "var_h3": var_h3,
@@ -1423,6 +1852,7 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         }
         empirical_entry = {
             "P": P,
+            "beta": beta_from_name(Path(model_dir).name),
             "model_dir": model_dir,
             "model_name": Path(model_dir).name,
             "hermite3": hermite3_curve,
@@ -1435,6 +1865,7 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         kappa_eff = get_kappa_eff_for_params(d, P, kappa_bare, N, chi)
         p_summary_entry = {
             "P": P,
+            "beta": beta_from_name(Path(model_dir).name),
             "model_dir": model_dir,
             "model_name": Path(model_dir).name,
             "kappa_bare": kappa_bare,
@@ -1446,6 +1877,8 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
             "linear_theory": float(lJ1T) if lJ1T is not None and lJ1T > 0 else np.nan,
             "cubic_empirical": var_h3,
             "cubic_theory": float(lJ3T) if lJ3T is not None and lJ3T > 0 else np.nan,
+            "linear_learnability_theory_matrix": L1_vga,
+            "cubic_learnability_theory_matrix": L3_vga,
             "linear_learnability_empirical": learnability_outputs["linear"],
             "cubic_learnability_empirical": learnability_outputs["cubic"],
             "learnability_n_samples": learnability_outputs["n_samples"],
@@ -1488,7 +1921,7 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
     empirical_curves = []
     p_summary_entries = []
     h0_plot_data = []
-    cache_dirty = recompute or cached is None or refresh_learnability_only
+    cache_dirty = recompute or cached is None or refresh_learnability_only or refresh_vga_theory_only
     for model_dir in model_dirs:
         reuse = (
             not recompute
@@ -1498,9 +1931,43 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         )
         if reuse:
             print(f"Reusing cached projections for {model_dir}")
-            h0_plot_data.append(cached_h0_by_dir[model_dir])
-            empirical_curves.append(cached_emp_by_dir[model_dir])
+            h0_entry = dict(cached_h0_by_dir[model_dir])
+            emp_entry = dict(cached_emp_by_dir[model_dir])
             summary_entry = dict(cached_summary_by_dir[model_dir])
+            if refresh_vga_theory_only:
+                d, P, N, chi, seed, T, epsilon, s0 = parse_config_from_dirname(model_dir)
+                vga_theory = get_vga_for_model(model_dir, d, P, N, chi, T, epsilon, s0)
+                target_vga = (
+                    vga_theory.get("vga", {}).get("target", {})
+                    if vga_theory is not None
+                    else {}
+                )
+                lJ1T = target_vga.get("lJ1")
+                lJ3T = target_vga.get("lJ3")
+                h0_entry["lJ1T"] = lJ1T
+                h0_entry["lJ3T"] = lJ3T
+                emp_entry["lJ1T"] = lJ1T
+                emp_entry["lJ3T"] = lJ3T
+                summary_entry["linear_theory"] = (
+                    float(lJ1T) if lJ1T is not None and lJ1T > 0 else np.nan
+                )
+                summary_entry["cubic_theory"] = (
+                    float(lJ3T) if lJ3T is not None and lJ3T > 0 else np.nan
+                )
+                (
+                    summary_entry["linear_learnability_theory_matrix"],
+                    summary_entry["cubic_learnability_theory_matrix"],
+                ) = _matrix_learnabilities_from_vga(vga_theory)
+                print(
+                    f"  Refreshed VGA theory P={P}: "
+                    f"lJ1={summary_entry['linear_theory']!r} "
+                    f"lJ3={summary_entry['cubic_theory']!r} "
+                    f"muW={target_vga.get('muW')!r} "
+                    f"lWT={target_vga.get('lWT')!r}"
+                )
+                cache_dirty = True
+            h0_plot_data.append(h0_entry)
+            empirical_curves.append(emp_entry)
             if refresh_learnability_only:
                 d, P, N, chi, seed, T, epsilon, s0 = parse_config_from_dirname(model_dir)
                 model, *_ = load_model(model_dir, device)
@@ -1544,12 +2011,34 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         p_summary_entries.append(p_summary_entry)
         cache_dirty = True
 
+    # Refresh H0 action curves from stored projections so bin/tail choices can
+    # change without recomputing streaming projections.
+    for h0_entry, emp_entry in zip(h0_plot_data, empirical_curves):
+        if "proj_h3" in h0_entry and "proj_lin" in h0_entry:
+            h3_curve = log_density_curve(
+                h0_entry["proj_h3"], bins=20, min_samples=5, tail_quantile=0.025
+            )
+            lin_curve = log_density_curve(
+                h0_entry["proj_lin"], bins=20, min_samples=5, tail_quantile=0.025
+            )
+            h0_entry["hermite3_curve"] = h3_curve
+            h0_entry["linear_curve"] = lin_curve
+            emp_entry["hermite3"] = h3_curve
+            emp_entry["linear"] = lin_curve
+            cache_dirty = True
+
     if cache_dirty:
         with open(computation_cache_path, 'wb') as f:
             pickle.dump(
                 {
                     "version": cache_version,
                     "vga_advanced": bool(vga_advanced),
+                    "vga_offdiag": bool(vga_offdiag) and not bool(vga_matrix),
+                    "vga_matrix": bool(vga_matrix),
+                    "vga_laplace": bool(vga_laplace),
+                    "vga_laplace_mean": bool(vga_laplace_mean),
+                    "vga_bare_kappa": bool(vga_bare_kappa),
+                    "vga_kappa_scale": float(vga_kappa_scale),
                     "model_dirs": list(model_dirs),
                     "h0_plot_data": h0_plot_data,
                     "empirical_curves": empirical_curves,
@@ -1570,7 +2059,9 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
             ['royalblue', 'orange'],
             [entry["var_h3"], entry["var_lin"]],
         ):
-            centers, log_density = log_density_curve(v, bins=40, min_samples=3)
+            centers, log_density = log_density_curve(
+                v, bins=20, min_samples=5, tail_quantile=0.025
+            )
             mask = np.isfinite(log_density)
             axh.plot(centers[mask], log_density[mask], label=rf'{label} ($\sigma^2={var:.3g}$)', color=color, linewidth=1.2, marker='x', ms=4)
 
@@ -1614,15 +2105,10 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         ax_hermite = fig_empirical.add_subplot(gs[0, 0])
         ax_linear = fig_empirical.add_subplot(gs[0, 1], sharey=ax_hermite)
         cax = fig_empirical.add_subplot(gs[0, 2])
-        p_values = [entry["P"] for entry in empirical_curves]
-        p_min = min(p_values)
-        p_max = max(p_values)
-        norm = Normalize(vmin=p_min, vmax=p_max)
-        cmap = plt.cm.viridis
+        color_for, cmap, norm, color_label = curve_color_scale(empirical_curves)
 
         for entry in empirical_curves:
-            p_val = entry["P"]
-            color = cmap(norm(p_val))
+            color = color_for(entry)
             centers_h, log_density_h = entry["hermite3"]
             mask_h = np.isfinite(log_density_h)
             ax_hermite.plot(
@@ -1662,7 +2148,7 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         p_scale_handle = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         p_scale_handle.set_array([])
         p_scale_colorbar = fig_empirical.colorbar(p_scale_handle, cax=cax)
-        p_scale_colorbar.set_label(r"$P_{\mathrm{scale}}$", fontsize=13)
+        p_scale_colorbar.set_label(color_label, fontsize=13)
         p_scale_colorbar.ax.tick_params(labelsize=12)
 
         fig_empirical.savefig(output_dir / 'empirical_h0_activation_actions_hermite3_linear.pdf', bbox_inches='tight')
@@ -1676,8 +2162,7 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         cax_theory = fig_empirical_theory.add_subplot(gs_theory[0, 2])
 
         for entry in empirical_curves:
-            p_val = entry["P"]
-            color = cmap(norm(p_val))
+            color = color_for(entry)
 
             centers_h, log_density_h = entry["hermite3"]
             mask_h = np.isfinite(log_density_h)
@@ -1737,7 +2222,7 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         p_scale_handle_theory = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         p_scale_handle_theory.set_array([])
         p_scale_colorbar_theory = fig_empirical_theory.colorbar(p_scale_handle_theory, cax=cax_theory)
-        p_scale_colorbar_theory.set_label(r"$P_{\mathrm{scale}}$", fontsize=13)
+        p_scale_colorbar_theory.set_label(color_label, fontsize=13)
         p_scale_colorbar_theory.ax.tick_params(labelsize=12)
 
         fig_empirical_theory.savefig(output_dir / 'empirical_h0_activation_actions_hermite3_linear_theory_overlay.pdf', bbox_inches='tight')
@@ -1786,7 +2271,12 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
             gaussian_action = 0.5 * x_theory**2 / float(lWT) + 0.5 * np.log(2.0 * np.pi * float(lWT))
             axw.plot(x_theory, gaussian_action, '--', color='black', linewidth=1.4, label=rf'Gaussian theory ($lWT={float(lWT):.3g}$)')
 
-        if vga_target is not None:
+        if vga_target is not None and float(vga_target.get("sigS", 1.0)) < 1e-4:
+            mu_pt = abs(float(vga_target.get("muW", 0.0)))
+            axw.axvline(mu_pt, color='crimson', linewidth=1.8,
+                        label=rf"VGA mode $\pm\mu={mu_pt:.3g}$ ($\sigma=0$)")
+            axw.axvline(-mu_pt, color='crimson', linewidth=1.8)
+        elif vga_target is not None:
             x_min = float(bin_centers[mask].min()) if np.any(mask) else float(bin_edges[0])
             x_max = float(bin_centers[mask].max()) if np.any(mask) else float(bin_edges[-1])
             x_fit = np.linspace(x_min, x_max, 1000)
@@ -1837,10 +2327,24 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         axw.tick_params(axis='both', labelsize=18)
         axw.legend(fontsize=18)
         axw.grid(True, alpha=0.3)
+        # Match the combined overlay: zoom to VGA wells so wing blow-up doesn't
+        # hide the barrier (and so a bad empirical fit can't set a huge ylim).
+        if vga_target is not None:
+            try:
+                mu_z = abs(float(vga_target.get("muW", 0.0)))
+                sig_z = float(vga_target.get("sigS", 0.0))
+            except (TypeError, ValueError):
+                mu_z, sig_z = 0.0, 0.0
+            if sig_z > 1e-4 and mu_z > 0.05:
+                xs = np.array([0.0, mu_z])
+                acts = symmetric_bimodal_action(xs, mu_z, sig_z)
+                axw.set_ylim(float(acts[1]) - 0.2, float(acts[0]) + 0.8)
+                axw.set_xlim(-(mu_z + 4.0 * sig_z), mu_z + 4.0 * sig_z)
 
         empirical_weight_curves.append(
             {
                 "P": P,
+                "beta": beta_from_name(Path(model_dir).name),
                 "model_name": Path(model_dir).name,
                 "target": (bin_centers, action),
                 "lWT": lWT,
@@ -1874,21 +2378,44 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
     print(f'Saved target weight action plots to {output_dir / "weight_action_target_histograms.png"}')
 
     if empirical_weight_curves:
+        def _weight_action_axis_limits(curves):
+            """Shared axes for empirical / empirical+theory weight-action plots.
+
+            Use the empirical support so a theory-only zoom cannot hide that the
+            data are both sharper at 0 and wider in the wings than VGA.
+            """
+            xs, ys = [], []
+            for entry in curves:
+                centers, action = entry["target"]
+                mask = np.isfinite(action)
+                if not np.any(mask):
+                    continue
+                xs.append(np.asarray(centers)[mask])
+                ys.append(np.asarray(action)[mask])
+            if not xs:
+                return None
+            x = np.concatenate(xs)
+            y = np.concatenate(ys)
+            xmax = float(np.max(np.abs(x)))
+            xmax = max(xmax * 1.05, 0.5)
+            ymin = float(np.min(y)) - 0.1
+            # Clip a few sparse wing bins so one count does not set ymax=20.
+            ymax = float(np.percentile(y, 98)) + 0.35
+            ymax = max(ymax, ymin + 1.0)
+            return (-xmax, xmax), (ymin, ymax)
+
+        shared_xlim, shared_ylim = _weight_action_axis_limits(empirical_weight_curves)
+
         fig_weight_empirical, ax_weight_empirical = plt.subplots(figsize=(10, 7))
-        p_values = [entry["P"] for entry in empirical_weight_curves]
-        p_min = min(p_values)
-        p_max = max(p_values)
-        norm = Normalize(vmin=p_min, vmax=p_max)
-        cmap = plt.cm.viridis
+        color_for, cmap, norm, color_label = curve_color_scale(empirical_weight_curves)
 
         for entry in empirical_weight_curves:
-            p_val = entry["P"]
             centers, action = entry["target"]
             mask = np.isfinite(action)
             ax_weight_empirical.plot(
                 centers[mask],
                 action[mask],
-                color=cmap(norm(p_val)),
+                color=color_for(entry),
                 linewidth=1.6,
                 alpha=0.95,
             )
@@ -1897,23 +2424,25 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         ax_weight_empirical.set_xlabel("Target weight value")
         ax_weight_empirical.set_ylabel("Action: -log P")
         ax_weight_empirical.grid(True, alpha=0.3)
+        if shared_xlim is not None:
+            ax_weight_empirical.set_xlim(*shared_xlim)
+            ax_weight_empirical.set_ylim(*shared_ylim)
 
         p_color_handle = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         p_color_handle.set_array([])
         colorbar = fig_weight_empirical.colorbar(p_color_handle, ax=ax_weight_empirical)
-        colorbar.set_label("P")
+        colorbar.set_label(color_label)
 
-        fig_weight_empirical.tight_layout()
+        annotate_scaling_exponents(fig_weight_empirical, experiment_group.name)
         fig_weight_empirical.savefig(output_dir / 'empirical_weight_action_target_histograms.png', dpi=150)
         plt.close(fig_weight_empirical)
         print(f'Saved empirical target weight action plot to {output_dir / "empirical_weight_action_target_histograms.png"}')
 
         fig_weight_empirical_theory, ax_weight_empirical_theory = plt.subplots(figsize=(10, 7))
         for entry in empirical_weight_curves:
-            p_val = entry["P"]
             centers, action = entry["target"]
             mask = np.isfinite(action)
-            color = cmap(norm(p_val))
+            color = color_for(entry)
             ax_weight_empirical_theory.plot(
                 centers[mask],
                 action[mask],
@@ -1923,10 +2452,26 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
             )
 
             lWT_entry = entry.get("lWT")
-            if lWT_entry is not None and lWT_entry > 0 and np.any(mask):
-                x_min = float(centers[mask].min())
-                x_max = float(centers[mask].max())
-                x_theory = np.linspace(x_min, x_max, 1000)
+            vga_target_entry = entry.get("vga_target")
+            mu_abs = 0.0
+            if vga_target_entry is not None:
+                try:
+                    mu_abs = abs(float(vga_target_entry.get("muW", 0.0)))
+                except (TypeError, ValueError):
+                    mu_abs = 0.0
+            # Only show the unimodal Gaussian(lWT) when VGA itself is unimodal;
+            # otherwise it sits on top of the double-well and looks like "theory
+            # has no bimodal peaks."
+            x_lo, x_hi = shared_xlim if shared_xlim is not None else (
+                float(centers[mask].min()), float(centers[mask].max())
+            )
+            if (
+                lWT_entry is not None
+                and lWT_entry > 0
+                and np.any(mask)
+                and mu_abs < 0.05
+            ):
+                x_theory = np.linspace(x_lo, x_hi, 1000)
                 gaussian_action = 0.5 * x_theory**2 / float(lWT_entry) + 0.5 * np.log(2.0 * np.pi * float(lWT_entry))
                 ax_weight_empirical_theory.plot(
                     x_theory,
@@ -1937,18 +2482,22 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
                     alpha=0.95,
                 )
 
-            vga_target_entry = entry.get("vga_target")
-            if vga_target_entry is not None:
-                x_min = float(centers[mask].min()) if np.any(mask) else float(centers[0])
-                x_max = float(centers[mask].max()) if np.any(mask) else float(centers[-1])
-                x_fit = np.linspace(x_min, x_max, 1000)
-                action_fit = symmetric_bimodal_action(x_fit, vga_target_entry.get("muW", 0.0), vga_target_entry.get("sigS", 1.0))
+            if vga_target_entry is not None and float(vga_target_entry.get("sigS", 1.0)) < 1e-4:
+                for sgn in (1.0, -1.0):
+                    ax_weight_empirical_theory.axvline(
+                        sgn * mu_abs, color=color, linewidth=2.0, linestyle='--', alpha=0.95,
+                    )
+            elif vga_target_entry is not None:
+                x_fit = np.linspace(x_lo, x_hi, 1000)
+                action_fit = symmetric_bimodal_action(
+                    x_fit, vga_target_entry.get("muW", 0.0), vga_target_entry.get("sigS", 1.0)
+                )
                 ax_weight_empirical_theory.plot(
                     x_fit,
                     action_fit,
                     color=color,
-                    linewidth=1.1,
-                    linestyle=':',
+                    linewidth=2.0,
+                    linestyle='--',
                     alpha=0.95,
                 )
 
@@ -1956,13 +2505,16 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
         ax_weight_empirical_theory.set_xlabel("Target weight value")
         ax_weight_empirical_theory.set_ylabel("Action: -log P")
         ax_weight_empirical_theory.grid(True, alpha=0.3)
+        if shared_xlim is not None:
+            ax_weight_empirical_theory.set_xlim(*shared_xlim)
+            ax_weight_empirical_theory.set_ylim(*shared_ylim)
 
         p_color_handle_theory = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         p_color_handle_theory.set_array([])
         colorbar_theory = fig_weight_empirical_theory.colorbar(p_color_handle_theory, ax=ax_weight_empirical_theory)
-        colorbar_theory.set_label("P")
+        colorbar_theory.set_label(color_label)
 
-        fig_weight_empirical_theory.tight_layout()
+        annotate_scaling_exponents(fig_weight_empirical_theory, experiment_group.name)
         fig_weight_empirical_theory.savefig(output_dir / 'empirical_weight_action_target_histograms_theory_overlay.png', dpi=150)
         plt.close(fig_weight_empirical_theory)
         print(f'Saved empirical target weight theory overlay plot to {output_dir / "empirical_weight_action_target_histograms_theory_overlay.png"}')
@@ -2036,9 +2588,12 @@ def plot_experiment_group(experiment_group, device, recompute=False, vga_advance
                 if not np.isfinite(kappa_entry):
                     continue
                 linear_emp_val = entry.get("linear_learnability_empirical")
-                linear_theory_val = learnability_from_eigenvalue(entry.get("linear_theory"), kappa_entry, p_val)
                 cubic_emp_val = entry.get("cubic_learnability_empirical")
-                cubic_theory_val = learnability_from_eigenvalue(entry.get("cubic_theory"), kappa_entry, p_val)
+                linear_theory_val = entry.get("linear_learnability_theory_matrix", np.nan)
+                cubic_theory_val = entry.get("cubic_learnability_theory_matrix", np.nan)
+                if not (np.isfinite(linear_theory_val) and np.isfinite(cubic_theory_val)):
+                    linear_theory_val = learnability_from_eigenvalue(entry.get("linear_theory"), kappa_entry, p_val)
+                    cubic_theory_val = learnability_from_eigenvalue(entry.get("cubic_theory"), kappa_entry, p_val)
 
                 if np.isfinite(linear_emp_val):
                     linear_learnability_emp.append(linear_emp_val)
@@ -2385,6 +2940,50 @@ def main():
         action='store_true',
         help='Use exact Gauss-Hermite GMM entropy in VGA (instead of Hershey-Olsen bound). Affects mixture coeffs muW/sigS.',
     )
+    parser.add_argument(
+        '--vga-offdiag',
+        action='store_true',
+        help='Use HO VGA with He1–He3 off-diagonal discrepancy (freeze U/A in free-energy grads). '
+             'Writes to <group>_vga_offdiag/; reuses baseline empirical cache when present.',
+    )
+    parser.add_argument(
+        '--vga-matrix',
+        action='store_true',
+        help='Use HO VGA with 2×2 matrix discrepancy E ∝ yᵀ (Q+κ/P I)⁻¹ y. '
+             'Writes to <group>_vga_matrix/; reuses baseline empirical cache when present. '
+             'Overrides --vga-offdiag.',
+    )
+    parser.add_argument(
+        '--vga-bare-kappa',
+        action='store_true',
+        help='Pass bare κ=T/2 to Julia VGA instead of κ_eff. '
+             'Writes to <group>[_vga_matrix|_vga_offdiag]_barekappa/.',
+    )
+    parser.add_argument(
+        '--vga-kappa-scale',
+        type=float,
+        default=1.0,
+        help='Multiply the κ passed to Julia VGA (after bare/eff choice). '
+             'e.g. --vga-kappa-scale 2 with matrix → <group>_vga_matrix_kappax2/.',
+    )
+    parser.add_argument(
+        '--vga-laplace',
+        action='store_true',
+        help="Use the Laplace saddle (V'=0, σ=1/√V'') instead of VGA; keeps the largest "
+             'converged μ. Writes to <group>_vga_laplace/.',
+    )
+    parser.add_argument(
+        '--vga-laplace-mean',
+        action='store_true',
+        help="Mean-only Laplace (σ=0, V'(μ)=0; mode locations of V). Keeps the largest "
+             'converged μ. Writes to <group>_vga_laplace_mean/.',
+    )
+    parser.add_argument(
+        '--refresh-vga',
+        action='store_true',
+        help='Re-run Julia VGA for every cached run and update theory fields only '
+             '(keep empirical projections). Then regenerate plots.',
+    )
     args = parser.parse_args()
 
     if args.list_groups:
@@ -2402,6 +3001,13 @@ def main():
             device,
             recompute=args.recompute,
             vga_advanced=args.vga_advanced,
+            vga_offdiag=args.vga_offdiag,
+            vga_matrix=args.vga_matrix,
+            vga_bare_kappa=args.vga_bare_kappa,
+            vga_kappa_scale=args.vga_kappa_scale,
+            refresh_vga=args.refresh_vga,
+            vga_laplace=args.vga_laplace,
+            vga_laplace_mean=args.vga_laplace_mean,
         )
 
 if __name__ == "__main__":

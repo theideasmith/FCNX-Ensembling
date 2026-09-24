@@ -10,7 +10,7 @@ Read [reference.md](reference.md) before exploring the repo for VGA or weight-di
 ## Do this, not a full crawl
 
 1. Check tmux `steepwell_invariant` and `nvidia-smi` if GPU/run status matters.
-2. Compare empirical `W0[..., 0]` to `julia julia_lib/fcn2_vga_erf.jl ... --offdiag --sa0 <sa0>`.
+2. Compare empirical `W0[..., 0]` to `julia julia_lib/fcn2_vga_erf.jl ... --laplace --matrix --sa0 <sa0>`. The matrix Laplace saddle is the current best model; `--offdiag` is the older VGA.
 3. Prefer `A_snapshots/` when present; otherwise `model.pt` is a single optimizer state, not a posterior.
 
 ## Do not
