@@ -1,0 +1,37 @@
+Finite-rank kernel: K = sum_a λ1_a He1_a⊗He1_a + λ3_a He3_a⊗He3_a
+(d linear + d cubic modes). Ridge σ²=κ_eff=0.00085617
+Experiment red-robin final L3=0.5914
+
+## VGA lK (d He1+d He3)
+  P=  100  L3=1.0470±0.0040
+  P=  300  L3=1.0520±0.0010
+  P= 1000  L3=1.0540±0.0000
+  P= 3000  L3=1.0540±0.0000
+  P=10000  L3=1.0540±0.0000
+
+## classical lK (d He1+d He3)
+  P=  100  L3=1.0540±0.0010
+  P=  300  L3=1.0540±0.0000
+  P= 1000  L3=1.0540±0.0000
+  P= 3000  L3=1.0550±0.0000
+  P=10000  L3=1.0550±0.0000
+
+## empirical H (d He1+d He3)
+  P=  100  L3=1.0450±0.0050
+  P=  300  L3=1.0520±0.0010
+  P= 1000  L3=1.0540±0.0000
+  P= 3000  L3=1.0540±0.0000
+  P=10000  L3=1.0540±0.0000
+
+## full arcsin erf GPR
+  P=  100  L3=-0.1870±0.3220
+  P=  300  L3=0.2830±0.0590
+  P= 1000  L3=0.5390±0.0620
+  P= 3000  L3=0.7970±0.0270
+  P=10000  L3=0.8970±0.0320
+
+Conclusion: finite-rank Hermite GPR with theory/empirical λ gives L3≈1
+already at P~100 — finite sampling of this oracle does NOT explain
+experimental L3≈0.59. Full arcsin GPR at P=1000 gives L3≈0.54, close
+to the experiment. The gap is rich-kernel / weak-cubic resolution, not
+missing finite-P corrections inside a 2d-mode truncation.

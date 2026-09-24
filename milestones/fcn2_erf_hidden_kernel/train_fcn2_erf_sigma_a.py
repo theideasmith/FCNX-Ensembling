@@ -3,8 +3,8 @@
 Training script for 2-layer erf network with sigma_a^2 readout weight decay.
 
 Analogous to s0/sigma_0^2 for read-in weights W0, sa0 sets sigma_a^2 for the
-readout weights A.  Per-weight init variance is sa0/N (like s0/d for W0), and
-readout weight decay is (N/sa0) * T_eff.
+readout weights A.  Per-weight init variance is sa0/(N χ) (like s0/d for W0),
+and readout weight decay is (N χ / sa0) * T_eff. With χ=1 this is sa0/N.
 
 Usage:
     python train_fcn2_erf_sigma_a.py --d 50 --P 250 --N 250 --sa0 1.0 --epochs 10000000
@@ -80,10 +80,66 @@ def _schedule_effective_from_wall(wall_epoch, effective_epochs):
     return E
 
 
+def _parse_schedule_divisors(spec):
+    """Parse '2,3,5' → (2.0, 3.0, 5.0). Empty / None → None."""
+    if spec is None:
+        return None
+    if isinstance(spec, (list, tuple)):
+        divs = tuple(float(x) for x in spec)
+    else:
+        text = str(spec).strip()
+        if not text:
+            return None
+        divs = tuple(float(x) for x in text.split(","))
+    if not divs or any(d <= 0 for d in divs):
+        raise ValueError(f"schedule divisors must be positive, got {spec!r}")
+    return divs
+
+
+def _equal_wall_lr_divisor(wall_epoch, wall_epochs, divisors):
+    """Equal wall-time phases: phase i uses lr0/divisors[i], no stretch."""
+    n = len(divisors)
+    if wall_epochs <= 0:
+        return float(divisors[-1])
+    w = max(0.0, float(wall_epoch))
+    frac = min(w / float(wall_epochs), 0.999999)
+    idx = min(int(frac * n), n - 1)
+    return float(divisors[idx])
+
+
 def custom_mse_loss(outputs, targets):
     """MSE loss summed over all samples and ensembles."""
     diff = outputs - targets
     return torch.sum(diff * diff)
+
+
+def _he3(vx):
+    """Normalized He3: (x^3 - 3x) / sqrt(6)."""
+    return (vx ** 3 - 3.0 * vx) / (6.0 ** 0.5)
+
+
+def mean_mse(model, x, y):
+    """Mean squared error over samples (and ensembles if present)."""
+    f = model(x)
+    return torch.mean((f - y) ** 2).item()
+
+
+def cubic_learnability(model, x, y):
+    """Residualized cubic Hermite learnability L3 = E[f_res He3] / E[y He3].
+
+    Removes the linear He1 component of f before projecting onto He3, matching
+    the journal Langevin ``he3_ratio`` definition.
+    """
+    f = model(x)
+    he1 = x[:, :1]
+    he3 = _he3(x[:, 0]).unsqueeze(1)
+    inner_f_he1 = torch.mean(f * he1)
+    inner_y_he3 = torch.mean(y * he3)
+    f_res = f - inner_f_he1 * he1
+    num = torch.mean(f_res * he3)
+    if inner_y_he3.abs() <= 1e-8:
+        return 0.0
+    return (num / inner_y_he3).item()
 
 
 def _resolve_warm_start_state_dict(warm_start_path, device):
@@ -168,21 +224,22 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                activation="erf", classic=False, output_dir=None,
                batch_size=None, warm_start=None,
                snapshot_a_interval=None, snapshot_a_burnin=0,
-               schedule=False, extra_epochs=0):
+               schedule=False, schedule_divisors=None, extra_epochs=0):
     """Train 2-layer erf network and track H eigenvalues.
     
     Args:
         d: Input dimension
         P: Number of training samples
         N: Hidden layer width
-        epochs: Effective epoch budget at base_lr (wall epochs match unless --schedule).
+        epochs: With schedule_divisors: wall epoch budget. With legacy --schedule:
+            effective epoch budget (wall stretched). Else wall epochs.
         log_interval: Log eigenvalues every N epochs
         device_str: Device string
-        lr: Learning rate
+        base_lr: Learning-rate numerator; optimizer step is base_lr/P
         temperature: Base temperature for weight decay and Langevin noise
         chi: Scaling factor; effective temperature = temperature / chi
         s0: Scaling factor for the read-in weight variance; sigmaW0 is derived as s0 / d
-        sa0: sigma_a^2 scaling for readout weights; per-weight init variance is sa0 / N
+        sa0: sigma_a^2 scaling for readout weights; per-weight init variance is sa0 / (N χ)
         run_dir: Directory to save checkpoints and results
         writer: TensorBoard writer
         dataset_seed: Random seed for data generation
@@ -194,10 +251,10 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
         snapshot_a_interval: If set, save A (and W0) every this many wall epochs under
             run_dir/A_snapshots/ after snapshot_a_burnin steps past resume.
         snapshot_a_burnin: Extra wall epochs after resume before the first A snapshot.
-        schedule: If True, stretch wall epochs so ∫(lr/lr0)=--epochs and set lr to
-            lr0/3, lr0/8, lr0/9 at wall times for effective 0.5/0.7/0.9.
+        schedule: Legacy stretched schedule lr0/{1,3,8,9}. Ignored if schedule_divisors set.
+        schedule_divisors: Equal wall-time phases (e.g. (2,3,5)); wall = --epochs.
         extra_epochs: Additional true/wall epochs after the scheduled budget, held
-            at the last learning rate (lr0/9 if --schedule).
+            at the last learning rate.
         
     Returns:
         (final_eigenvalues, eigenvalues_over_time, run_dir)
@@ -205,7 +262,10 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
     sigmaW0_value = s0 / d
-    sigmaA_value = sa0 / N
+    sigmaA_value = sa0 / (N * chi)
+    equal_divs = _parse_schedule_divisors(schedule_divisors)
+    use_stretched_schedule = bool(schedule) and equal_divs is None
+    use_equal_schedule = equal_divs is not None
 
     # Setup directory
     if run_dir is None:
@@ -218,7 +278,10 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                 f"d{d}_P{P}_N{N}_chi_{chi}_lr_{base_lr}_T_{temperature}_seed_{dataset_seed}_eps_{eps}"
                 f"_s0_{s0}_sigmaW0_{sigmaW0_value}_sa0_{sa0}_sigmaA_{sigmaA_value}"
             )
-            if schedule:
+            if use_equal_schedule:
+                tag = "_".join(str(int(x)) if float(x).is_integer() else f"{x:g}" for x in equal_divs)
+                run_dir = Path(str(run_dir) + f"_schedule_{tag}")
+            elif use_stretched_schedule:
                 run_dir = Path(str(run_dir) + "_schedule")
     run_dir = Path(run_dir)
     run_dir.mkdir(exist_ok=True, parents=True)
@@ -241,7 +304,24 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
 
     print(f"  lr={lr:.6e}, T={temperature:.6f}, chi={chi:.6f}, T_eff={effective_temperature:.6f}")
     print(f"  batch_size={B} ({'minibatch, grad scale P/B=' + f'{grad_scale:.4g}' if use_minibatch else 'full batch'})")
-    if schedule:
+    if use_equal_schedule:
+        nph = len(equal_divs)
+        phase = epochs / nph
+        parts = ", ".join(
+            f"lr0/{d:g} for wall [{int(i*phase)}, {int((i+1)*phase)})"
+            for i, d in enumerate(equal_divs)
+        )
+        print(
+            f"  schedule=equal-wall divisors={equal_divs}: {parts}; "
+            f"wall budget = --epochs={epochs} (no stretch)"
+        )
+        if extra_epochs:
+            print(
+                f"  extra-epochs={extra_epochs}: after the schedule, hold final lr "
+                f"(lr0/{equal_divs[-1]:g}) for {extra_epochs} more wall steps "
+                f"(wall end={epochs + extra_epochs})"
+            )
+    elif use_stretched_schedule:
         wall_budget = _schedule_wall_epochs_for_effective(epochs)
         print(
             f"  schedule=ON: lr → lr0/3 @50%, lr0/8 @70%, lr0/9 @90% effective; "
@@ -261,8 +341,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     torch.manual_seed(dataset_seed)
     X = torch.randn(P, d, device=device)
     z = X[:, 0].unsqueeze(-1)  # (P, 1)
-    z3 = (z ** 3 - 3 * z)/6**0.5  # Cubic nonlinearity
-    Y = z + eps * z3  # (P, 1)
+    Y = z + eps * _he3(z)  # (P, 1)
     # Model
     ens = ens  # ensemble size
     model = FCN2NetworkActivationGeneric(
@@ -278,8 +357,27 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     eigenvalues_over_time = {}
     losses = {}
     loss_stds = {}
+    test_mse_over_time = {}
+    cubic_learnability_over_time = {}
     pred_vs_true = {}
     pred_vs_true_path = run_dir / "pred_vs_true.json"
+    eigenvalues_path = run_dir / "eigenvalues_over_time.json"
+    losses_path = run_dir / "losses.json"
+
+    def _load_loss_histories():
+        nonlocal losses, loss_stds, test_mse_over_time, cubic_learnability_over_time
+        if not losses_path.exists():
+            return
+        with open(losses_path, "r") as f:
+            loss_data = json.load(f)
+        losses = {int(k): v for k, v in loss_data.get("losses", {}).items()}
+        loss_stds = {int(k): v for k, v in loss_data.get("loss_stds", {}).items()}
+        test_mse_over_time = {
+            int(k): v for k, v in loss_data.get("test_mse", {}).items()
+        }
+        cubic_learnability_over_time = {
+            int(k): v for k, v in loss_data.get("cubic_learnability", {}).items()
+        }
     
     # Try loading full checkpoint first
     if checkpoint_path.exists():
@@ -290,17 +388,10 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
         print(f"Resuming from epoch {start_epoch}")
         
         # Load training history from JSON files if they exist
-        eigenvalues_path = run_dir / "eigenvalues_over_time.json"
-        losses_path = run_dir / "losses.json"
-        
         if eigenvalues_path.exists():
             with open(eigenvalues_path, "r") as f:
                 eigenvalues_over_time = json.load(f)
-        if losses_path.exists():
-            with open(losses_path, "r") as f:
-                loss_data = json.load(f)
-                losses = {int(k): v for k, v in loss_data.get("losses", {}).items()}
-                loss_stds = {int(k): v for k, v in loss_data.get("loss_stds", {}).items()}
+        _load_loss_histories()
         if pred_vs_true_path.exists():
             with open(pred_vs_true_path, "r") as f:
                 pred_vs_true = {int(k): v for k, v in json.load(f).items()}
@@ -312,9 +403,6 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
         model.load_state_dict(state_dict)
         
         # Load training state
-        eigenvalues_path = run_dir / "eigenvalues_over_time.json"
-        losses_path = run_dir / "losses.json"
-        
         if eigenvalues_path.exists():
             with open(eigenvalues_path, "r") as f:
                 eigenvalues_over_time = json.load(f)
@@ -322,11 +410,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                 start_epoch = max([int(k) for k in eigenvalues_over_time.keys()])
                 print(f"Resuming from epoch {start_epoch}")
         
-        if losses_path.exists():
-            with open(losses_path, "r") as f:
-                loss_data = json.load(f)
-                losses = {int(k): v for k, v in loss_data.get("losses", {}).items()}
-                loss_stds = {int(k): v for k, v in loss_data.get("loss_stds", {}).items()}
+        _load_loss_histories()
         if pred_vs_true_path.exists():
             with open(pred_vs_true_path, "r") as f:
                 pred_vs_true = {int(k): v for k, v in json.load(f).items()}
@@ -337,7 +421,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     
     model.train()
     
-    # Weight decay: W0 uses sigma_0^2 ~ s0/d; A uses sigma_a^2 ~ sa0/N
+    # Weight decay: W0 uses sigma_0^2 ~ s0/d; A uses sigma_a^2 ~ sa0/(N χ)
     wd_W0 = (1 / sigmaW0_value) * effective_temperature
     wd_A = (1 / sigmaA_value) * effective_temperature
     
@@ -366,8 +450,11 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
             f"+{snapshot_a_burnin} burn-in -> {snapshot_dir}"
         )
     
-    # Large eval set for eigenvalues
+    # Large eval set for eigenvalues / projections / test metrics
+    torch.manual_seed(dataset_seed + 1)
     Xinf = torch.randn(3000, d, device=device)
+    z_inf = Xinf[:, 0].unsqueeze(-1)
+    Yinf = z_inf + eps * _he3(z_inf)
     
     # Compute initial eigenvalues
     if start_epoch == 0 and 0 not in eigenvalues_over_time:
@@ -393,11 +480,25 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
         loss_avg = loss.item() / ens
         loss_std = per_ensemble_loss.std().item()
         print(f"  loss={loss_avg:.6e}±{loss_std:.6e}")
-        # Log to TensorBoard
+        try:
+            te_mse0 = mean_mse(model, Xinf, Yinf)
+            he3_L0 = cubic_learnability(model, Xinf, Yinf)
+            test_mse_over_time[0] = float(te_mse0)
+            cubic_learnability_over_time[0] = float(he3_L0)
+            print(f"  Test metrics - MSE={te_mse0:.6e}, cubic_L3={he3_L0:.4f}")
+        except Exception as e:
+            print(f"  Warning: Could not compute initial test metrics: {e}")
+            te_mse0 = None
+            he3_L0 = None
+        # Log to TensorBoard (epoch 0 only; thereafter at log_interval)
         if writer is not None:
             writer.add_scalar('loss/sum_total', loss.item(), 0)
             writer.add_scalar('loss/mean', loss_avg, 0)
             writer.add_scalar('loss/std', loss_std, 0)
+            if te_mse0 is not None:
+                writer.add_scalar('metrics/test_mse', te_mse0, 0)
+            if he3_L0 is not None:
+                writer.add_scalar('metrics/cubic_learnability', he3_L0, 0)
         if 0 % pred_log_interval == 0 and 0 not in pred_vs_true:
             rec = _pred_record(0, Y, output)
             pred_vs_true[0] = rec
@@ -405,11 +506,17 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                 json.dump(pred_vs_true, f, indent=2)
     last_output = output
 
-    # Training loop. Storage/resume use true wall epochs; --schedule maps wall→LR.
-    end_epoch = (_schedule_wall_epochs_for_effective(epochs) if schedule else epochs) + extra_epochs
+    # Training loop. Storage/resume use true wall epochs.
+    # --schedule: stretched wall ≈ 3.6 * --epochs; --schedule-divisors: wall = --epochs.
+    if use_stretched_schedule:
+        end_epoch = _schedule_wall_epochs_for_effective(epochs) + extra_epochs
+    else:
+        end_epoch = epochs + extra_epochs
     for epoch in range(start_epoch, end_epoch + 1):
         if epoch > 0:
-            if schedule:
+            if use_equal_schedule:
+                lr_divisor = _equal_wall_lr_divisor(epoch, epochs, equal_divs)
+            elif use_stretched_schedule:
                 lr_divisor = _schedule_lr_divisor_from_wall(epoch, epochs)
             else:
                 lr_divisor = 1.0
@@ -441,20 +548,6 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
             loss_avg = loss.item() / ens
             loss_std = per_ensemble_loss.std().item()
             
-            # Log to TensorBoard
-            if writer is not None:
-                writer.add_scalar('loss/sum_total', loss.item(), epoch)
-                writer.add_scalar('learning_rate/lr', lr, epoch)
-                if use_minibatch:
-                    writer.add_scalar('training/batch_size', B, epoch)
-                    writer.add_scalar('training/grad_scale', scale, epoch)
-                if schedule and epoch % log_interval == 0:
-                    writer.add_scalar('learning_rate/schedule_divisor', lr_divisor, epoch)
-                    writer.add_scalar(
-                        'learning_rate/effective_epoch',
-                        _schedule_effective_from_wall(epoch, epochs),
-                        epoch,
-                    )
             # Backward
             model.zero_grad()
             loss.backward()
@@ -504,9 +597,41 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
             if epoch % max(snapshot_a_interval, 1) == 0 or epoch == start_epoch + snapshot_a_burnin:
                 print(f"  Saved A snapshot: {snap_path.name}")
         
-        # Logging and checkpointing
+        # Logging and checkpointing (TensorBoard only on this cadence)
         if epoch % log_interval == 0:
+            if epoch > 0 and writer is not None:
+                writer.add_scalar('loss/sum_total', loss.item(), epoch)
+                writer.add_scalar('learning_rate/lr', lr, epoch)
+                if use_minibatch:
+                    writer.add_scalar('training/batch_size', B, epoch)
+                    writer.add_scalar('training/grad_scale', scale, epoch)
+                if use_equal_schedule or use_stretched_schedule:
+                    writer.add_scalar('learning_rate/schedule_divisor', lr_divisor, epoch)
+                    if use_stretched_schedule:
+                        writer.add_scalar(
+                            'learning_rate/effective_epoch',
+                            _schedule_effective_from_wall(epoch, epochs),
+                            epoch,
+                        )
+
             with torch.no_grad():
+                # Test MSE + residualized cubic learnability on fixed eval set
+                te_mse = None
+                he3_L = None
+                try:
+                    te_mse = mean_mse(model, Xinf, Yinf)
+                    he3_L = cubic_learnability(model, Xinf, Yinf)
+                    test_mse_over_time[epoch] = float(te_mse)
+                    cubic_learnability_over_time[epoch] = float(he3_L)
+                    if writer is not None:
+                        writer.add_scalar('metrics/test_mse', te_mse, epoch)
+                        writer.add_scalar('metrics/cubic_learnability', he3_L, epoch)
+                    print(
+                        f"  Test metrics - MSE={te_mse:.6e}, cubic_L3={he3_L:.4f}"
+                    )
+                except Exception as e:
+                    print(f"  Warning: Could not compute test metrics at epoch {epoch}: {e}")
+
                 # Compute eigenvalues
                 try:
                     # Move to CPU for eigenvalue computation
@@ -632,6 +757,8 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                         },
                         'loss': float(loss_avg) if epoch > 0 else None,
                         'loss_std': float(loss_std) if epoch > 0 else None,
+                        'test_mse': float(te_mse) if te_mse is not None else None,
+                        'cubic_learnability': float(he3_L) if he3_L is not None else None,
                     }
                     if eigenvalues is not None:
                         checkpoint['eigenvalues'] = eigenvalues.tolist()
@@ -642,7 +769,16 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                         json.dump(eigenvalues_over_time, f, indent=2)
                     
                     with open(run_dir / "losses.json", "w") as f:
-                        json.dump({"losses": losses, "loss_stds": loss_stds}, f, indent=2)
+                        json.dump(
+                            {
+                                "losses": losses,
+                                "loss_stds": loss_stds,
+                                "test_mse": test_mse_over_time,
+                                "cubic_learnability": cubic_learnability_over_time,
+                            },
+                            f,
+                            indent=2,
+                        )
                     with open(pred_vs_true_path, "w") as f:
                         json.dump(pred_vs_true, f, indent=2)
 
@@ -659,6 +795,21 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     
     # Save final model
     torch.save(model.state_dict(), run_dir / "model_final.pt")
+
+    # Final flush of metrics histories (covers last log_interval if not on 2*log cadence)
+    with open(run_dir / "losses.json", "w") as f:
+        json.dump(
+            {
+                "losses": losses,
+                "loss_stds": loss_stds,
+                "test_mse": test_mse_over_time,
+                "cubic_learnability": cubic_learnability_over_time,
+            },
+            f,
+            indent=2,
+        )
+    with open(run_dir / "eigenvalues_over_time.json", "w") as f:
+        json.dump(eigenvalues_over_time, f, indent=2)
     
     # Save config
     config = {
@@ -671,7 +822,8 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
         "batch_size": int(B),
         "minibatch": bool(use_minibatch),
         "warm_start": str(warm_start) if warm_start is not None else None,
-        "schedule": bool(schedule),
+        "schedule": bool(use_stretched_schedule),
+        "schedule_divisors": list(equal_divs) if equal_divs else None,
         "extra_epochs": int(extra_epochs),
         "effective_epochs_target": int(epochs),
         "wall_epochs_target": int(end_epoch),
@@ -726,12 +878,12 @@ def main():
     parser.add_argument('--P', type=int, default=30, help='Number of samples')
     parser.add_argument('--N', type=int, default=256, help='Hidden layer width')
     parser.add_argument('--epochs', type=int, default=10_000_000, help='Number of epochs')
-    parser.add_argument('--log-interval', type=int, default=100_000, help='Logging interval for eigenvalues, projections, predictions, and checkpoints')
+    parser.add_argument('--log-interval', type=int, default=100_000, help='Logging interval for train loss, LR, test MSE, cubic learnability, eigenvalues, projections, predictions, and TensorBoard')
     parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate')
     parser.add_argument('--temperature', type=float, default=1.0, help='Base temperature for Langevin')
     parser.add_argument('--chi', type=float, default=1.0, help='Scale factor; effective temperature = temperature/chi')
     parser.add_argument('--s0', type=float, default=1.0, help='Scale factor for W0 variance; sigmaW0 is computed as s0/d')
-    parser.add_argument('--sa0', type=float, default=1.0, help='sigma_a^2 for readout weights; per-weight init variance is sa0/N')
+    parser.add_argument('--sa0', type=float, default=1.0, help='sigma_a^2 for readout weights; per-weight init variance is sa0/(N χ)')
     parser.add_argument('--device', type=str, default='cuda:0', help='Device')
     parser.add_argument('--dataset-seed', type=int, default=42, help='Random seed for dataset generation')
     parser.add_argument('--ens', type=int, default=10, help='Ensemble size')
@@ -769,16 +921,24 @@ def main():
     parser.add_argument(
         '--schedule',
         action='store_true',
-        help='LR schedule on stretched wall time: lr0/3, lr0/8, lr0/9 after effective '
-             '0.5/0.7/0.9. --epochs is the effective budget (wall ≈ 3.6×). Checkpoints '
-             'and resume use true wall epochs.',
+        help='Legacy LR schedule on stretched wall time: lr0/3, lr0/8, lr0/9 after effective '
+             '0.5/0.7/0.9. --epochs is the effective budget (wall ≈ 3.6×). Ignored if '
+             '--schedule-divisors is set.',
+    )
+    parser.add_argument(
+        '--schedule-divisors',
+        type=str,
+        default=None,
+        help='Equal wall-time LR schedule, no stretch. Comma-separated divisors, e.g. '
+             '"2,3,5" → lr0/2, lr0/3, lr0/5 on equal thirds of --epochs (wall = --epochs). '
+             'Overrides --schedule.',
     )
     parser.add_argument(
         '--extra-epochs',
         type=int,
         default=0,
-        help='Additional true/wall epochs after the (--schedule) budget, held at the '
-             'final learning rate (lr0/9 if --schedule).',
+        help='Additional true/wall epochs after the schedule/--epochs budget, held at the '
+             'final learning rate.',
     )
     args = parser.parse_args()
     
@@ -788,7 +948,12 @@ def main():
     
     # Setup TensorBoard
     sigmaW0_tag = args.s0 / args.d
-    sigmaA_tag = args.sa0 / args.N
+    sigmaA_tag = args.sa0 / (args.N * args.chi)
+    schedule_divisors = None
+    if args.schedule_divisors:
+        schedule_divisors = tuple(
+            float(x.strip()) for x in args.schedule_divisors.split(",") if x.strip()
+        )
     if args.tensorboard_dir is not None:
         tensorboard_dir = Path(args.tensorboard_dir)
     elif args.classic:
@@ -798,7 +963,10 @@ def main():
             f"d{args.d}_P{args.P}_N{args.N}_chi_{args.chi}_seed_{args.dataset_seed}_lr_{args.lr}_T_{args.temperature}_eps_{args.eps}"
             f"_s0_{args.s0}_sigmaW0_{sigmaW0_tag}_sa0_{args.sa0}_sigmaA_{sigmaA_tag}"
         )
-    if args.schedule and args.tensorboard_dir is None:
+    if schedule_divisors is not None and args.tensorboard_dir is None:
+        tag = "_".join(str(int(x)) if float(x).is_integer() else f"{x:g}" for x in schedule_divisors)
+        tensorboard_dir = Path(str(tensorboard_dir) + f"_schedule_{tag}")
+    elif args.schedule and args.tensorboard_dir is None:
         tensorboard_dir = Path(str(tensorboard_dir) + "_schedule")
     tensorboard_dir.mkdir(exist_ok=True, parents=True)
     writer = SummaryWriter(log_dir=str(tensorboard_dir))
@@ -815,6 +983,7 @@ def main():
         snapshot_a_interval=args.snapshot_A_interval,
         snapshot_a_burnin=args.snapshot_A_burnin,
         schedule=args.schedule,
+        schedule_divisors=schedule_divisors,
         extra_epochs=args.extra_epochs,
     )
     

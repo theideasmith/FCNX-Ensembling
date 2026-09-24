@@ -1,0 +1,8 @@
+group=D5T0p001P1000EigVsL3  split=train  features=erf(W0 x) (readout features)
+train_hyps=d=5, P=1000, N=χ=400, T=0.001, ε=0.074, s0=1, lr=0.01, seed=0, ens=1, epochs=1e6, schedule
+run                                                                                P_tr   P_ev     sigma2      MSE_m_krr      MSE_m_y    MSE_krr_y     corr
+d5_P1000_N400_chi_400.0_lr_0.01_T_0.001_seed_0_eps_0.074_schedule                  1000   1000  0.0008562     7.4738e-06   9.1789e-05   1.3209e-04   1.0000
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                P_tr   P_ev      eps    <y,He3>    learned     corr   MSE_vs_He3
+d5_P1000_N400_chi_400.0_lr_0.01_T_0.001_seed_0_eps_0.074_schedule                  1000   1000    0.074    -0.1013    -0.3751  -0.9750   1.5703e+00

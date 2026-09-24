@@ -1,0 +1,89 @@
+device=cuda  P_total=100,000,000  batch=50000  n_perp=4
+     P      He3          λ3T          λ3P      T/P         varT         varP
+
+=== P=50 ===
+    streamed 10.0M/100M  6.71M/s  ETA 0.2 min
+    streamed 20.0M/100M  6.52M/s  ETA 0.2 min
+    streamed 30.0M/100M  6.46M/s  ETA 0.2 min
+    streamed 40.0M/100M  6.43M/s  ETA 0.2 min
+    streamed 50.0M/100M  6.42M/s  ETA 0.1 min
+    streamed 60.0M/100M  6.40M/s  ETA 0.1 min
+    streamed 70.0M/100M  6.40M/s  ETA 0.1 min
+    streamed 80.0M/100M  6.39M/s  ETA 0.1 min
+    streamed 90.0M/100M  6.38M/s  ETA 0.0 min
+    streamed 100.0M/100M  6.38M/s  ETA 0.0 min
+    50  -0.0217   5.1279e-07   4.5757e-07     1.12   5.1145e-07   4.5735e-07  (0.3 min, λP±3.61e-08)
+
+=== P=100 ===
+    streamed 10.0M/100M  7.06M/s  ETA 0.2 min
+    streamed 20.0M/100M  6.68M/s  ETA 0.2 min
+    streamed 30.0M/100M  6.56M/s  ETA 0.2 min
+    streamed 40.0M/100M  6.50M/s  ETA 0.2 min
+    streamed 50.0M/100M  6.47M/s  ETA 0.1 min
+    streamed 60.0M/100M  6.45M/s  ETA 0.1 min
+    streamed 70.0M/100M  6.43M/s  ETA 0.1 min
+    streamed 80.0M/100M  6.42M/s  ETA 0.1 min
+    streamed 90.0M/100M  6.41M/s  ETA 0.0 min
+    streamed 100.0M/100M  6.40M/s  ETA 0.0 min
+   100  -0.0446   5.1831e-07   4.7864e-07     1.08   5.1694e-07   4.7844e-07  (0.3 min, λP±1.75e-08)
+
+=== P=500 ===
+    streamed 10.0M/100M  7.06M/s  ETA 0.2 min
+    streamed 20.0M/100M  6.67M/s  ETA 0.2 min
+    streamed 30.0M/100M  6.55M/s  ETA 0.2 min
+    streamed 40.0M/100M  6.50M/s  ETA 0.2 min
+    streamed 50.0M/100M  6.46M/s  ETA 0.1 min
+    streamed 60.0M/100M  6.44M/s  ETA 0.1 min
+    streamed 70.0M/100M  6.42M/s  ETA 0.1 min
+    streamed 80.0M/100M  6.41M/s  ETA 0.1 min
+    streamed 90.0M/100M  6.40M/s  ETA 0.0 min
+    streamed 100.0M/100M  6.39M/s  ETA 0.0 min
+   500  -0.0183   5.1548e-07   4.5247e-07     1.14   5.1395e-07   4.5224e-07  (0.3 min, λP±4.00e-08)
+
+=== P=1000 ===
+    streamed 10.0M/100M  7.05M/s  ETA 0.2 min
+    streamed 20.0M/100M  6.66M/s  ETA 0.2 min
+    streamed 30.0M/100M  6.54M/s  ETA 0.2 min
+    streamed 40.0M/100M  6.49M/s  ETA 0.2 min
+    streamed 50.0M/100M  6.45M/s  ETA 0.1 min
+    streamed 60.0M/100M  6.43M/s  ETA 0.1 min
+    streamed 70.0M/100M  6.41M/s  ETA 0.1 min
+    streamed 80.0M/100M  6.40M/s  ETA 0.1 min
+    streamed 90.0M/100M  6.39M/s  ETA 0.0 min
+    streamed 100.0M/100M  6.39M/s  ETA 0.0 min
+  1000  -0.0216   5.1463e-07   4.6333e-07     1.11   5.1338e-07   4.6312e-07  (0.3 min, λP±3.28e-08)
+
+=== P=2000 ===
+    streamed 10.0M/100M  7.06M/s  ETA 0.2 min
+    streamed 20.0M/100M  6.68M/s  ETA 0.2 min
+    streamed 30.0M/100M  6.56M/s  ETA 0.2 min
+    streamed 40.0M/100M  6.50M/s  ETA 0.2 min
+    streamed 50.0M/100M  6.46M/s  ETA 0.1 min
+    streamed 60.0M/100M  6.44M/s  ETA 0.1 min
+    streamed 70.0M/100M  6.42M/s  ETA 0.1 min
+    streamed 80.0M/100M  6.41M/s  ETA 0.1 min
+    streamed 90.0M/100M  6.40M/s  ETA 0.0 min
+    streamed 100.0M/100M  6.40M/s  ETA 0.0 min
+  2000  -0.0199   5.5085e-07   4.6115e-07     1.19   5.4930e-07   4.6096e-07  (0.3 min, λP±4.69e-08)
+
+=== P=3000 ===
+    streamed 10.0M/100M  7.05M/s  ETA 0.2 min
+    streamed 20.0M/100M  6.67M/s  ETA 0.2 min
+    streamed 30.0M/100M  6.55M/s  ETA 0.2 min
+    streamed 40.0M/100M  6.49M/s  ETA 0.2 min
+    streamed 50.0M/100M  6.46M/s  ETA 0.1 min
+    streamed 60.0M/100M  6.43M/s  ETA 0.1 min
+    streamed 70.0M/100M  6.42M/s  ETA 0.1 min
+    streamed 80.0M/100M  6.40M/s  ETA 0.1 min
+    streamed 90.0M/100M  6.39M/s  ETA 0.0 min
+    streamed 100.0M/100M  6.39M/s  ETA 0.0 min
+  3000   0.0015   5.8062e-07   4.5133e-07     1.29   5.7920e-07   4.5113e-07  (0.3 min, λP±4.61e-09)
+
+=== SUMMARY (streaming projections, 1e+08 samples, λ=2nd moment of E_x[h0·He3]) ===
+     P      He3          λ3T          λ3P      T/P
+    50  -0.0217   5.1279e-07   4.5757e-07     1.12
+   100  -0.0446   5.1831e-07   4.7864e-07     1.08
+   500  -0.0183   5.1548e-07   4.5247e-07     1.14
+  1000  -0.0216   5.1463e-07   4.6333e-07     1.11
+  2000  -0.0199   5.5085e-07   4.6115e-07     1.19
+  3000   0.0015   5.8062e-07   4.5133e-07     1.29

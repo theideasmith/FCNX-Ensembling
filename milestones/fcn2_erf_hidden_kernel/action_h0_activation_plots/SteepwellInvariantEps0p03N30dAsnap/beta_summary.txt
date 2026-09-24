@@ -1,0 +1,9 @@
+group=SteepwellInvariantEps0p03N30dAsnap
+empirical_source=A_snapshots_stacked_as_ensemble
+arcsin_gpr_sigma2=kappa_eff  P_test=None
+    beta     d      N      P  kappa_eff  He1_emp   He1_th  He1_gpr  He3_emp   He3_th  He3_gpr
+       1     5    474    160   0.005505   0.9587   0.9997   0.8717  -1.9161   0.9792  -0.6249
+   3.162     9    633    471   0.009551   0.9515   0.9998   1.0044  -2.4353   0.9810  -3.7589
+      10    16    844   1386    0.01348   0.9743   0.9999   0.9503  -1.7831   0.9881  -0.9538
+   31.62    28   1125   4077     0.0131   0.9757   1.0000   0.9499  -1.5246   0.9963  -0.3651
+     100    50   1500  11998   0.008024   0.9851   1.0000   0.9863  -1.3534   0.9989  -0.2764

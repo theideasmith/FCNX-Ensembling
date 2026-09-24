@@ -1,0 +1,33 @@
+device=cuda  P_total=100,000,000  batch=50000  n_perp=4
+     P      He3          λ3T          λ3P      T/P         varT         varP
+
+=== P=8000 ===
+    streamed 10.0M/100M  8.54M/s  ETA 0.2 min
+    streamed 20.0M/100M  8.33M/s  ETA 0.2 min
+    streamed 30.0M/100M  8.26M/s  ETA 0.1 min
+    streamed 40.0M/100M  8.23M/s  ETA 0.1 min
+    streamed 50.0M/100M  8.21M/s  ETA 0.1 min
+    streamed 60.0M/100M  8.19M/s  ETA 0.1 min
+    streamed 70.0M/100M  8.18M/s  ETA 0.1 min
+    streamed 80.0M/100M  8.18M/s  ETA 0.0 min
+    streamed 90.0M/100M  8.17M/s  ETA 0.0 min
+    streamed 100.0M/100M  8.16M/s  ETA 0.0 min
+  8000   0.0113   1.9506e-06   4.6701e-07     4.18   1.9490e-06   4.6690e-07  (0.2 min, λP±4.13e-08)
+
+=== P=16000 ===
+    streamed 10.0M/100M  9.05M/s  ETA 0.2 min
+    streamed 20.0M/100M  8.55M/s  ETA 0.2 min
+    streamed 30.0M/100M  8.40M/s  ETA 0.1 min
+    streamed 40.0M/100M  8.33M/s  ETA 0.1 min
+    streamed 50.0M/100M  8.28M/s  ETA 0.1 min
+    streamed 60.0M/100M  8.25M/s  ETA 0.1 min
+    streamed 70.0M/100M  8.23M/s  ETA 0.1 min
+    streamed 80.0M/100M  8.21M/s  ETA 0.0 min
+    streamed 90.0M/100M  8.20M/s  ETA 0.0 min
+    streamed 100.0M/100M  8.19M/s  ETA 0.0 min
+ 16000   0.5317   9.4436e-06   4.9046e-07    19.25   9.4431e-06   4.9036e-07  (0.2 min, λP±6.20e-08)
+
+=== SUMMARY (streaming projections, 1e+08 samples, λ=2nd moment of E_x[h0·He3]) ===
+     P      He3          λ3T          λ3P      T/P
+  8000   0.0113   1.9506e-06   4.6701e-07     4.18
+ 16000   0.5317   9.4436e-06   4.9046e-07    19.25

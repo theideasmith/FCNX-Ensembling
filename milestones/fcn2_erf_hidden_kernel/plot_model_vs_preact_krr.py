@@ -29,6 +29,7 @@ Pass --sigma2 to override.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -126,6 +127,45 @@ def collect_sample_complexity_test_i_dirs() -> list[str]:
     return [str(p) for p in _SAMPLE_COMPLEXITY_TEST_I_DIRS if p.is_dir()]
 
 
+def collect_d5_t0p001_p1000_eig_vs_l3_dirs() -> list[str]:
+    """Single scheduled Langevin run: d=5, T=0.001, P=1000, N=chi=400, eps=0.074."""
+    p = (
+        SCRIPT_DIR
+        / "red_robin_d5_T0.001_P1000_N400_chi400_eps0.074_lr0.01_eig_vs_L3_schedule"
+        / "models"
+        / "d5_P1000_N400_chi_400.0_lr_0.01_T_0.001_seed_0_eps_0.074_schedule"
+    )
+    return [str(p)] if p.is_dir() else []
+
+
+def collect_steepwell_eps0p5_asnap_dirs() -> list[str]:
+    """Hybrid steepwell invariant ray; include mid-train checkpoints without A_snapshots."""
+    import re
+
+    models_dir = (
+        SCRIPT_DIR
+        / "red_robin_alpha_beta_invariant_steepwell_a01_g1.25_P0160_betamax100_nu0.25_N01000_sa00.03_ens1_Asnap_eps0.5_lr0.01_ep60M_sched2_3_5"
+        / "models"
+    )
+    if not models_dir.is_dir():
+        return []
+    pattern = re.compile(
+        r"^invariant_beta[\d.]+_alpha[\d.]+_d\d+_P\d+_N\d+_sa0[\d.]+_kappa[\d.]+_seed\d+$"
+    )
+    out = []
+    for path in sorted(models_dir.iterdir()):
+        if not path.is_dir() or not pattern.match(path.name):
+            continue
+        snap_dir = path / "A_snapshots"
+        has_asnap = snap_dir.is_dir() and any(snap_dir.glob("epoch_*.pt"))
+        has_ckpt = any(
+            (path / name).exists() for name in ("model.pt", "model_final.pt", "checkpoint.pt")
+        )
+        if has_asnap or has_ckpt:
+            out.append(str(path))
+    return out
+
+
 def collect_n_chi_eq_n_linear_dirs() -> list[str]:
     import re
 
@@ -162,6 +202,14 @@ EXPERIMENT_GROUP_BY_NAME = {
             "model_dirs": collect_invariant_pfixed1500_asnap_dirs(),
         },
     )(),
+    "SteepwellInvariantEps0p5Asnap": type(
+        "ExperimentGroup",
+        (),
+        {
+            "name": "SteepwellInvariantEps0p5Asnap",
+            "model_dirs": collect_steepwell_eps0p5_asnap_dirs(),
+        },
+    )(),
     "NChiEqNLinearSchedule": type(
         "ExperimentGroup",
         (),
@@ -181,6 +229,14 @@ EXPERIMENT_GROUP_BY_NAME = {
         {
             "name": "SampleComplexityTestI",
             "model_dirs": collect_sample_complexity_test_i_dirs(),
+        },
+    )(),
+    "D5T0p001P1000EigVsL3": type(
+        "ExperimentGroup",
+        (),
+        {
+            "name": "D5T0p001P1000EigVsL3",
+            "model_dirs": collect_d5_t0p001_p1000_eig_vs_l3_dirs(),
         },
     )(),
 }
@@ -255,6 +311,115 @@ def parse_config_from_dirname(dirname):
             1.0,
         )
     raise ValueError(f"Could not parse config from {dirname}")
+
+
+def load_train_hyps(model_dir: str) -> dict:
+    """Training hyperparameters from config.json, falling back to the dirname parser."""
+    from plot_action_h0_activation import parse_config_from_dirname as parse_cfg
+
+    d, P, N, chi, seed, T, epsilon, s0 = parse_cfg(model_dir)
+    hyps = {
+        "d": d,
+        "P": P,
+        "N": N,
+        "chi": chi,
+        "seed": seed,
+        "T": T,
+        "eps": epsilon,
+        "s0": s0,
+    }
+    cfg_path = Path(model_dir) / "config.json"
+    if cfg_path.exists():
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+        if cfg.get("base_lr") is not None:
+            hyps["lr"] = cfg["base_lr"]
+        elif cfg.get("lr") is not None:
+            hyps["lr"] = cfg["lr"]
+        hyps["epochs"] = cfg.get("effective_epochs_target", cfg.get("epochs"))
+        hyps["schedule"] = bool(cfg.get("schedule")) or ("schedule" in Path(model_dir).name)
+        if cfg.get("ens") is not None:
+            hyps["ens"] = cfg["ens"]
+    elif "schedule" in Path(model_dir).name:
+        hyps["schedule"] = True
+    return hyps
+
+
+def _fmt_num(val) -> str:
+    if val is None:
+        return "?"
+    if isinstance(val, bool):
+        return str(val)
+    try:
+        fval = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+    if abs(fval - int(fval)) < 1e-12 and abs(fval) >= 1e-6:
+        return str(int(fval))
+    return f"{fval:g}"
+
+
+def format_train_hyps(hyps: dict) -> str:
+    """One-line training-hyps caption, e.g. d=5, P=1000, N=χ=400, T=0.001, …"""
+    bits = []
+    if hyps.get("d") is not None:
+        bits.append(f"d={_fmt_num(hyps['d'])}")
+    if hyps.get("P") is not None:
+        bits.append(f"P={_fmt_num(hyps['P'])}")
+    N, chi = hyps.get("N"), hyps.get("chi")
+    if N is not None and chi is not None and abs(float(chi) - float(N)) < 1e-9:
+        bits.append(f"N=χ={_fmt_num(N)}")
+    else:
+        if N is not None:
+            bits.append(f"N={_fmt_num(N)}")
+        if chi is not None:
+            bits.append(f"χ={_fmt_num(chi)}")
+    if hyps.get("T") is not None:
+        bits.append(f"T={_fmt_num(hyps['T'])}")
+    if hyps.get("eps") is not None:
+        bits.append(f"ε={_fmt_num(hyps['eps'])}")
+    if hyps.get("s0") is not None:
+        bits.append(f"s0={_fmt_num(hyps['s0'])}")
+    if hyps.get("lr") is not None:
+        bits.append(f"lr={_fmt_num(hyps['lr'])}")
+    if hyps.get("seed") is not None:
+        bits.append(f"seed={_fmt_num(hyps['seed'])}")
+    if hyps.get("ens") is not None:
+        bits.append(f"ens={_fmt_num(hyps['ens'])}")
+    if hyps.get("epochs") is not None:
+        ep = float(hyps["epochs"])
+        if abs(ep) >= 1e5 and abs(ep - 10 ** round(np.log10(ep))) < 1e-9 * max(abs(ep), 1.0):
+            bits.append(f"epochs={ep:.0e}".replace("e+0", "e").replace("e+", "e"))
+        else:
+            bits.append(f"epochs={_fmt_num(hyps['epochs'])}")
+    if hyps.get("schedule"):
+        bits.append("schedule")
+    return ", ".join(bits)
+
+
+def shared_hyps_line(hyps_list: list[dict]) -> str:
+    if not hyps_list:
+        return ""
+    keys = ("d", "P", "N", "chi", "T", "eps", "s0", "lr", "seed", "ens", "epochs", "schedule")
+    shared = {}
+    for key in keys:
+        vals = [h.get(key) for h in hyps_list]
+        first = vals[0]
+        same = True
+        for v in vals[1:]:
+            if first is None and v is None:
+                continue
+            try:
+                if first is None or v is None or abs(float(v) - float(first)) > 1e-12:
+                    same = False
+                    break
+            except (TypeError, ValueError):
+                if v != first:
+                    same = False
+                    break
+        if same and first is not None:
+            shared[key] = first
+    return format_train_hyps(shared)
 
 
 def reconstruct_training_inputs(P, d, seed, device):
@@ -585,6 +750,47 @@ def _fill_split_panels(
         ax3.legend(fontsize=7)
 
 
+def _split_hyps_title(hyps_line: str, width: int = 108) -> str:
+    if not hyps_line or len(hyps_line) <= width:
+        return hyps_line
+    parts = [p.strip() for p in hyps_line.split(",") if p.strip()]
+    lines, cur = [], ""
+    for part in parts:
+        piece = part if not cur else f"{cur}, {part}"
+        if len(piece) <= width:
+            cur = piece
+        else:
+            if cur:
+                lines.append(cur)
+            cur = part
+    if cur:
+        lines.append(cur)
+    return "\n".join(lines)
+
+
+def _figure_header(group_name: str, headline: str, split_title: str, feat_name: str, hyps_line: str) -> tuple[str, int]:
+    lines = [
+        f"{group_name}: {headline} [{split_title}]",
+        f"features = {feat_name}",
+    ]
+    wrapped = _split_hyps_title(hyps_line)
+    if wrapped:
+        lines.append(wrapped)
+    title = "\n".join(lines)
+    n_lines = title.count("\n") + 1
+    return title, n_lines
+
+
+def _finish_figure(fig, group_name: str, title: str, n_title_lines: int, out_path: Path):
+    from plot_action_h0_activation import annotate_scaling_exponents
+
+    fig.suptitle(title, fontsize=11, y=0.995)
+    top = 0.90
+    annotate_scaling_exponents(fig, group_name, top=top)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.22)
+    plt.close(fig)
+
+
 def _save_split_figures(
     *,
     group_name: str,
@@ -604,6 +810,7 @@ def _save_split_figures(
     axes_he3,
     summary_rows: list,
     he3_summary_rows: list,
+    hyps_line: str = "",
 ):
     for j in range(n, nrows * ncols):
         r, c = divmod(j, ncols)
@@ -615,45 +822,39 @@ def _save_split_figures(
     suffix = "" if split_label == "train" else f"_{split_label}"
     split_title = "train" if split_label == "train" else "test (KRR fit on train)"
 
-    fig_agree.suptitle(
-        f"{group_name}: model vs KRR [{split_title}] | features = {feat_name}", fontsize=12
-    )
-    fig_agree.tight_layout()
     agree_path = output_dir / f"model_vs_krr_scatter{suffix}.png"
-    fig_agree.savefig(agree_path, dpi=150)
-    plt.close(fig_agree)
-
-    fig_target.suptitle(
-        f"{group_name}: model / KRR vs true target y [{split_title}] | features = {feat_name}",
-        fontsize=12,
+    title, n_lines = _figure_header(
+        group_name, "model vs KRR", split_title, feat_name, hyps_line
     )
-    fig_target.tight_layout()
+    _finish_figure(fig_agree, group_name, title, n_lines, agree_path)
+
     target_path = output_dir / f"model_vs_target_scatter{suffix}.png"
-    fig_target.savefig(target_path, dpi=150)
-    plt.close(fig_target)
-
-    fig_x0.suptitle(
-        f"{group_name}: y / KRR / model vs X[:,0] [{split_title}] | features = {feat_name}",
-        fontsize=12,
+    title, n_lines = _figure_header(
+        group_name, "model / KRR vs true target y", split_title, feat_name, hyps_line
     )
-    fig_x0.tight_layout()
+    _finish_figure(fig_target, group_name, title, n_lines, target_path)
+
     x0_path = output_dir / f"model_krr_vs_x0{suffix}.png"
-    fig_x0.savefig(x0_path, dpi=150)
-    plt.close(fig_x0)
-
-    fig_he3.suptitle(
-        rf"{group_name}: $(f - \langle f,\mathrm{{He}}_1\rangle \mathrm{{He}}_1)/\langle y,\mathrm{{He}}_3\rangle$ vs $X[:,0]$"
-        f" [{split_title}] | features = {feat_name}",
-        fontsize=12,
+    title, n_lines = _figure_header(
+        group_name, "y / KRR / model vs X[:,0]", split_title, feat_name, hyps_line
     )
-    fig_he3.tight_layout()
+    _finish_figure(fig_x0, group_name, title, n_lines, x0_path)
+
     he3_path = output_dir / f"cubic_he3_learned{suffix}.png"
-    fig_he3.savefig(he3_path, dpi=150)
-    plt.close(fig_he3)
+    title, n_lines = _figure_header(
+        group_name,
+        r"$(f - \langle f,\mathrm{He}_1\rangle \mathrm{He}_1)/\langle y,\mathrm{He}_3\rangle$ vs $X[:,0]$",
+        split_title,
+        feat_name,
+        hyps_line,
+    )
+    _finish_figure(fig_he3, group_name, title, n_lines, he3_path)
 
     summary_path = output_dir / f"summary{suffix}.txt"
     with open(summary_path, "w") as f:
         f.write(f"group={group_name}  split={split_label}  features={feat_name}\n")
+        if hyps_line:
+            f.write(f"train_hyps={hyps_line}\n")
         f.write(
             f"{'run':<80} {'P_tr':>6} {'P_ev':>6} {'sigma2':>10} "
             f"{'MSE_m_krr':>14} {'MSE_m_y':>12} {'MSE_krr_y':>12} {'corr':>8}\n"
@@ -687,6 +888,9 @@ def plot_group(
     raw_preact: bool,
     P_test: int | None = None,
 ):
+    # Prefer the shared dirname/checkpoint parser (handles mid-train steepwell dirs).
+    from plot_action_h0_activation import parse_config_from_dirname as parse_config_from_dirname
+
     group = EXPERIMENT_GROUP_BY_NAME[group_name]
     output_dir = OUTPUT_BASE_DIR / slugify(group.name) / "model_vs_preact_krr"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -701,20 +905,24 @@ def plot_group(
     nrows = (n + ncols - 1) // ncols
     feat_name = "W0 x (raw preact)" if raw_preact else "erf(W0 x) (readout features)"
     kappa_eff_cache: dict[tuple, float] = {}
+    hyps_list = [load_train_hyps(p) for p in model_dirs]
+    hyps_line = shared_hyps_line(hyps_list)
+    fig_w = max(7.2, 5.0 * ncols)
+    fig_h = 4.4 * nrows + 0.55
 
     split_state = {}
     for split_label in ("train", "test"):
         fig_agree, axes_agree = plt.subplots(
-            nrows, ncols, figsize=(4.2 * ncols, 4.0 * nrows), squeeze=False
+            nrows, ncols, figsize=(fig_w, fig_h), squeeze=False
         )
         fig_target, axes_target = plt.subplots(
-            nrows, ncols, figsize=(4.2 * ncols, 4.0 * nrows), squeeze=False
+            nrows, ncols, figsize=(fig_w, fig_h), squeeze=False
         )
         fig_x0, axes_x0 = plt.subplots(
-            nrows, ncols, figsize=(4.2 * ncols, 4.0 * nrows), squeeze=False
+            nrows, ncols, figsize=(fig_w, fig_h), squeeze=False
         )
         fig_he3, axes_he3 = plt.subplots(
-            nrows, ncols, figsize=(4.2 * ncols, 4.0 * nrows), squeeze=False
+            nrows, ncols, figsize=(fig_w, fig_h), squeeze=False
         )
         split_state[split_label] = {
             "fig_agree": fig_agree,
@@ -826,6 +1034,7 @@ def plot_group(
             axes_he3=st["axes_he3"],
             summary_rows=st["summary_rows"],
             he3_summary_rows=st["he3_summary_rows"],
+            hyps_line=hyps_line,
         )
 
 

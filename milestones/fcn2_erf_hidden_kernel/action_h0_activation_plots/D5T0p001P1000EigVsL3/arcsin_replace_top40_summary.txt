@@ -1,0 +1,35 @@
+Replace largest 40 eigenvalues of empirical arcsin Gram; eigenvectors unchanged.
+×P means theory population λ multiplied by P (Gram scaling).
+match_sum rescales theory top40 to preserve sum of original top40 eigs.
+Cross-covariance K(test,train) left as original arcsin.
+
+## arcsin unmodified
+  P=  300  L3=0.1902±0.1072
+  P= 1000  L3=0.5550±0.0840
+  P= 3000  L3=0.7385±0.0312
+
+## top40 ← VGA lK ×P
+  P=  300  L3=-1.2087±0.7124
+  P= 1000  L3=-0.5918±0.5352
+  P= 3000  L3=-0.6454±0.5425
+
+## top40 ← empirical H ×P
+  P=  300  L3=-1.1498±0.0833
+  P= 1000  L3=-0.9611±0.1033
+  P= 3000  L3=-0.8664±0.0394
+
+## top40 ← VGA lK raw
+  P=  300  L3=-825.7309±81.1514
+  P= 1000  L3=-2542.4376±218.2425
+  P= 3000  L3=-7474.0037±1490.1550
+
+## top40 ← VGA match_sum
+  P=  300  L3=-0.5279±0.3118
+  P= 1000  L3=-0.2030±0.2330
+  P= 3000  L3=-0.1348±0.2450
+
+## top40 ← emp match_sum
+  P=  300  L3=-1.1467±0.0830
+  P= 1000  L3=-0.9625±0.0997
+  P= 3000  L3=-0.8708±0.0332
+

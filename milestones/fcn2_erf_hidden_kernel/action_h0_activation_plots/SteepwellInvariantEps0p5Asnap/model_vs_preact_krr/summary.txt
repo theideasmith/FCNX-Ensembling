@@ -1,0 +1,15 @@
+group=SteepwellInvariantEps0p5Asnap  split=train  features=erf(W0 x) (readout features)
+run                                                                                P_tr   P_ev     sigma2      MSE_m_krr      MSE_m_y    MSE_krr_y     corr
+invariant_beta1.000_alpha1.00_d5_P160_N1000_sa00.0300_kappa0.0010_seed0             160    160   0.003728     5.2710e-02   8.2430e-02   9.4703e-03   0.9739
+invariant_beta10.000_alpha17.78_d16_P1386_N1778_sa00.0053_kappa0.0015_seed0        1386   1386    0.01052     1.4874e-01   2.5912e-01   4.8346e-02   0.9516
+invariant_beta100.000_alpha316.23_d50_P11998_N3162_sa00.0009_kappa0.0024_seed0    11998  11998   0.003926     7.0790e-02   1.6969e-01   9.6929e-02   0.9690
+invariant_beta3.162_alpha4.22_d9_P471_N1334_sa00.0127_kappa0.0012_seed0             471    471   0.007383     2.4835e-01   3.3166e-01   2.8275e-02   0.9449
+invariant_beta31.623_alpha74.99_d28_P4077_N2371_sa00.0022_kappa0.0019_seed0        4077   4077    0.00884     9.7168e-02   1.7435e-01   5.1072e-02   0.9553
+
+He3 cubic: (f - <f,He1> He1) / <y,He3> vs x0; learned = that residual's He3 coeff:
+run                                                                                P_tr   P_ev      eps    <y,He3>    learned     corr   MSE_vs_He3
+invariant_beta1.000_alpha1.00_d5_P160_N1000_sa00.0300_kappa0.0010_seed0             160    160      0.5      0.181     0.8203   0.6755   1.5415e+00
+invariant_beta10.000_alpha17.78_d16_P1386_N1778_sa00.0053_kappa0.0015_seed0        1386   1386      0.5     0.8506     0.2772   0.5962   1.0891e+00
+invariant_beta100.000_alpha316.23_d50_P11998_N3162_sa00.0009_kappa0.0024_seed0    11998  11998      0.5     0.4898     0.3103   0.5682   6.7404e-01
+invariant_beta3.162_alpha4.22_d9_P471_N1334_sa00.0127_kappa0.0012_seed0             471    471      0.5     0.9808     0.1512   0.4939   1.2469e+00
+invariant_beta31.623_alpha74.99_d28_P4077_N2371_sa00.0022_kappa0.0019_seed0        4077   4077      0.5     0.4572     0.3636   0.5507   7.0833e-01

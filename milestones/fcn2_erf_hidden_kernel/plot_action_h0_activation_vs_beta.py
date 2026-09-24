@@ -38,6 +38,7 @@ from plot_action_h0_activation import (
     OUTPUT_BASE_DIR,
     annotate_scaling_exponents,
     annotate_theory_empirical_gaps,
+    curve_color_scale,
     learnability_from_eigenvalue,
     load_a_snapshots,
     make_training_dataset,
@@ -51,9 +52,11 @@ from plot_model_vs_preact_krr import (
     make_test_dataset,
 )
 
-# Groups whose natural control parameter is beta (typically fixed P).
+# Groups whose natural control parameter is beta (typically fixed P / invariant ray).
 BETA_INDEXED_GROUPS = (
     "InvariantPfixed1500Asnap",
+    "SteepwellInvariantEps0p5Asnap",
+    "SteepwellInvariantEps0p03N30dAsnap",
 )
 
 # Must match plot_action_h0_activation.plot_experiment_group cache_version when
@@ -80,22 +83,23 @@ def beta_from_entry(entry: dict) -> float | None:
 
 
 def require_a_snapshots(model_dirs: list[str]) -> dict[str, int]:
-    """Fail fast unless every run has A_snapshots; return model_dir -> T."""
+    """Return model_dir -> T. Mid-train runs without A_snapshots get T=0."""
     counts: dict[str, int] = {}
     missing = []
     for model_dir in model_dirs:
         pack = load_a_snapshots(model_dir, device=None)
         if pack is None:
             missing.append(model_dir)
+            counts[model_dir] = 0
             continue
         A_snaps, _W0, _epochs = pack
         counts[model_dir] = int(A_snaps.shape[0])
         del A_snaps, _W0
     if missing:
-        preview = "\n  ".join(missing[:5])
-        raise FileNotFoundError(
-            "plot_action_h0_activation_vs_beta requires A_snapshots/ for every run.\n"
-            f"Missing for {len(missing)} dirs, e.g.:\n  {preview}"
+        preview = "\n  ".join(Path(m).name for m in missing[:5])
+        print(
+            f"Note: {len(missing)} run(s) lack A_snapshots/; "
+            f"plotting from latest checkpoint, e.g.:\n  {preview}"
         )
     return counts
 
@@ -114,6 +118,9 @@ def cache_uses_a_snapshots(cached: dict | None, snap_counts: dict[str, int]) -> 
         if model_dir not in snap_counts:
             return False
         expected = snap_counts[model_dir]
+        # Mid-train: no A_snapshots yet; a checkpoint-based cache is valid.
+        if expected == 0:
+            continue
         # Number of Langevin snapshots averaged into empirical quantities.
         ens = entry.get("n_snapshots", entry.get("ensemble_size"))
         src = entry.get("learnability_source", "")
@@ -429,9 +436,10 @@ def plot_empirical_actions_vs_beta(empirical_curves: list[dict], output_dir: Pat
         return
 
     curves.sort(key=lambda t: t[0])
-    betas = [b for b, _ in curves]
-    norm = Normalize(vmin=min(betas), vmax=max(betas))
-    cmap = plt.cm.viridis
+    # Attach beta onto entries so curve_color_scale can key continuously by beta.
+    for beta, entry in curves:
+        entry["beta"] = beta
+    color_for, cmap, norm, color_label = curve_color_scale([e for _, e in curves])
 
     fig = plt.figure(figsize=(11, 6), dpi=300)
     gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.06], wspace=0.28)
@@ -440,7 +448,7 @@ def plot_empirical_actions_vs_beta(empirical_curves: list[dict], output_dir: Pat
     cax = fig.add_subplot(gs[0, 2])
 
     for beta, entry in curves:
-        color = cmap(norm(beta))
+        color = color_for(entry)
         for ax, key in ((ax_h, "hermite3"), (ax_l, "linear")):
             centers, action = entry[key]
             mask = np.isfinite(action)
@@ -459,7 +467,7 @@ def plot_empirical_actions_vs_beta(empirical_curves: list[dict], output_dir: Pat
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     cb = fig.colorbar(sm, cax=cax)
-    cb.set_label(r"$\beta$", fontsize=13)
+    cb.set_label(color_label, fontsize=13)
 
     out = output_dir / "empirical_h0_activation_actions_vs_beta.pdf"
     fig.savefig(out, bbox_inches="tight")
@@ -474,7 +482,7 @@ def plot_empirical_actions_vs_beta(empirical_curves: list[dict], output_dir: Pat
     cax_t = fig_t.add_subplot(gs_t[0, 2])
 
     for beta, entry in curves:
-        color = cmap(norm(beta))
+        color = color_for(entry)
         for ax, key, lkey in (
             (ax_ht, "hermite3", "lJ3T"),
             (ax_lt, "linear", "lJ1T"),
@@ -502,7 +510,7 @@ def plot_empirical_actions_vs_beta(empirical_curves: list[dict], output_dir: Pat
     sm_t = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm_t.set_array([])
     cb_t = fig_t.colorbar(sm_t, cax=cax_t)
-    cb_t.set_label(r"$\beta$", fontsize=13)
+    cb_t.set_label(color_label, fontsize=13)
     out_t = output_dir / "empirical_h0_activation_actions_vs_beta_theory_overlay.pdf"
     fig_t.savefig(out_t, bbox_inches="tight")
     plt.close(fig_t)

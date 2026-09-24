@@ -1,0 +1,26 @@
+Hybrid kernel on train Gram:
+  K = Φ diag(λ_theory) Φᵀ + (I-P_Φ) K_arcsin (I-P_Φ)
+Φ = all deg-1 + deg-3 Hermite features (40 cols).
+Naive 'replace top 40 eigs of arcsin' failed earlier because those
+eigenvectors are not the Hermite modes.
+
+## arcsin unmodified
+  P=  300  L3=0.1809±0.1495
+  P= 1000  L3=0.6180±0.0502
+  P= 3000  L3=0.7423±0.0698
+
+## hybrid: theory VGA in Hermite span + arcsin residual
+  P=  300  L3=-1.1572±0.0956
+  P= 1000  L3=-1.3150±0.0698
+  P= 3000  L3=-1.2876±0.0325
+
+## hybrid: empirical λ in Hermite span + arcsin residual
+  P=  300  L3=-0.3469±0.1113
+  P= 1000  L3=-0.5303±0.0817
+  P= 3000  L3=-0.4979±0.0389
+
+## pure theory Hermite 40-mode (no residual)
+  P=  300  L3=1.0015±0.0012
+  P= 1000  L3=1.0046±0.0001
+  P= 3000  L3=1.0049±0.0000
+
