@@ -431,26 +431,26 @@ end
 """
     laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
 
-Cavity kernel for the M=4 Laplace residual only. Replica field
-`τ ~ N(i χ' R⁻¹ y, χ' R⁻¹)` on `R = Q + ρ' I`, `y = (1, ε, 0, …)`:
+4×4 cavity kernel on (He1, He3, He5, He7). `Q` must be 4×4
+(`hermite_kernel_block_he57`). Replica field
+`τ ~ N(i χ' R⁻¹ y, χ' R⁻¹)` with `R = Q + ρ' I₄` and
+`y = (1, ε, 0, 0)`:
 
-    v = R⁻¹ y
-    G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' R⁻¹ ]
+    v = R⁻¹ y ∈ ℝ⁴
+    G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' R⁻¹ ] ∈ ℝ⁴ˣ⁴
 
-`Q` is `E[c cᵀ]` from `hermite_kernel_block_he57` (same `c` as in `V`).
-This is `FCS.discrepancy_T`; it does **not** use the 2×2 `Q⁻¹` Onsager.
+Same `c ∈ ℝ⁴` as in `V`. Not the 2×2 `Q⁻¹` Onsager.
 """
 function laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+    Qm = Matrix(Q)
+    size(Qm) == (4, 4) || throw(DimensionMismatch(
+        "laplace_amplitude_matrix_he57 expects a 4×4 Q, got $(size(Qm))"))
     chi_p = chi / a0
     ρp = kappa / (a0 * P)
-    Qm = Matrix(Q)
-    m = size(Qm, 1)
     Tq = eltype(Qm)
-    y = zeros(Tq, m)
-    y[1] = one(Tq)
-    m >= 2 && (y[2] = oftype(y[1], epsilon))
+    y = Tq[one(Tq), oftype(one(Tq), epsilon), zero(Tq), zero(Tq)]
     ρ_safe = max(ρp, eps(typeof(ρp + chi_p)))
-    R = Qm + ρ_safe * I(m)
+    R = Qm + ρ_safe * I(4)
     Rinv = inv(R)
     v = Rinv * y
     G = -(chi_p^2 * delta) * (v * v') + chi_p * Rinv
@@ -792,8 +792,9 @@ end
 M=4 Laplace saddle (He1, He3, He5, He7). Gram and potential use the
 same features `c = (c1, c3, c5, c7)`, teacher `y = (1, ε, 0, 0)`:
 
-    Q_{mn} = E[c_m c_n]
-    G = laplace_amplitude_matrix_he57  (replica R⁻¹, not the 2×2 Q⁻¹)
+    Q_{mn} = E[c_m c_n] ∈ ℝ⁴ˣ⁴
+    y = (1, ε, 0, 0) ∈ ℝ⁴
+    G ∈ ℝ⁴ˣ⁴  from laplace_amplitude_matrix_he57 (replica R⁻¹)
     V(w) = (d/(2 s0)) w² + ½ c(w)ᵀ G c(w)
 
 State is still `x = [lJ1, lJ3, σ, μ]`; dummy residuals match `lJ1, lJ3`
