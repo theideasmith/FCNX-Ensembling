@@ -8,10 +8,13 @@ using Base: @kwdef
 
 export ProblemParams2, Solution2, residuals_fcn2, residuals_fcn2_advanced,
     residuals_fcn2_offdiag, residuals_fcn2_matrix, residuals_regularized,
-    residuals_fcn2_saddle, residuals_fcn2_laplace, solve_FCN2_Erf,
+    residuals_fcn2_saddle, residuals_fcn2_laplace, residuals_fcn2_laplace_he57,
+    solve_FCN2_Erf,
     exact_symmetric_gmm_entropy_1d, training_signal, training_amplitude,
-    compute_lambda13, hermite_kernel_block, training_amplitudes_offdiag,
-    lambda1_point, hermite_point_features, laplace_amplitude_matrix,
+    compute_lambda13, hermite_kernel_block, hermite_kernel_block_he57,
+    training_amplitudes_offdiag,
+    lambda1_point, hermite_point_features, hermite_point_features_he57,
+    laplace_amplitude_matrix, matrix_learnabilities_he57,
     SIG_SADDLE_DEFAULT
 
 # ---------------------------------------------------------
@@ -56,6 +59,8 @@ end
     muW=NaN;
     learnability1=NaN;
     learnability3=NaN;
+    learnability5=NaN;          # f₅ = ⟨f, He5⟩; teacher has y₅=0
+    learnability7=NaN;          # f₇ = ⟨f, He7⟩
     kappa_eff=NaN
 end
 
@@ -197,6 +202,50 @@ function hermite_kernel_block(μ, σ, T)
     λ33 = compute_lambda3(μ, σ, T)
     λ13 = compute_lambda13(μ, σ, T)
     return Symmetric([λ11 λ13; λ13 λ33])
+end
+
+"""
+    hermite_point_features_he57(w, T) -> (c1, c3, c5, c7)
+
+M=4 truncation of the erf generating function. He1/He3 match
+`hermite_point_features`. Leakage modes:
+
+    c5 =  12/√(30π)  w⁵ / D^{5/2}
+    c7 = -20/√(35π)  w⁷ / D^{7/2}
+
+with `D = T + 2w²`. Same as
+`c_{2k+1} = (2/√π)(-1)^k γ^{2k+1} (2k)! / (k! √(2k+1)!)` for k=0..3,
+`γ = w/√D`.
+"""
+function hermite_point_features_he57(w, T)
+    D = T + 2.0 * w * w
+    c1 = sqrt(4.0 / π) * w / sqrt(D)
+    c3 = -sqrt(8.0 / (3.0 * π)) * w^3 / D^1.5
+    c5 = (12.0 / sqrt(30.0 * π)) * w^5 / D^2.5
+    c7 = -(20.0 / sqrt(35.0 * π)) * w^7 / D^3.5
+    return c1, c3, c5, c7
+end
+
+"""
+    hermite_kernel_block_he57(μ, σ, T) -> Symmetric{4}
+
+Teacher-axis Gram `Q_{mn} = E[c_m(w) c_n(w)]` on (He1, He3, He5, He7)
+under `N(μ, σ²)`. Products are even, so one well of the ±μ mixture
+suffices. Same 11-point GH rule as `compute_lambda3`.
+"""
+function hermite_kernel_block_he57(μ, σ, T)
+    Q = zeros(typeof(μ + σ + T), 4, 4)
+    σs = max(σ, 1e-10)
+    for i in 1:11
+        w_val = μ + σs * GH_NODES[i]
+        c1, c3, c5, c7 = hermite_point_features_he57(w_val, T)
+        c = [c1, c3, c5, c7]
+        wt = GH_WEIGHTS[i]
+        for a in 1:4, b in 1:4
+            Q[a, b] += wt * c[a] * c[b]
+        end
+    end
+    return Symmetric(Q)
 end
 
 """
@@ -362,11 +411,18 @@ component `v₃ = −λ13 v₁/(λ33+ρ')` survives at `ε = 0`.
 function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
     chi_p = chi / a0
     ρp = kappa / (a0 * P)
-    y = [one(epsilon), epsilon]
     Qm = Matrix(Q)
-    qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
-    Qreg = Qm + eps(typeof(qscale)) * (one(qscale) + qscale) * I(2)
-    v = (Qreg + ρp * I(2)) \ y
+    m = size(Qm, 1)
+    Tq = eltype(Qm)
+    y = zeros(Tq, m)
+    y[1] = one(Tq)
+    m >= 2 && (y[2] = oftype(y[1], epsilon))
+    qscale = zero(Tq)
+    for i in 1:m
+        qscale += abs(Qm[i, i])
+    end
+    Qreg = Qm + (1e-10 * (one(Tq) + qscale)) * I(m)
+    v = (Qreg + ρp * I(m)) \ y
     G = -(chi_p^2 * delta) * (v * v') + chi_p * inv(Qreg)
     return (a0 / (n1 * chi)) * G
 end
@@ -700,6 +756,53 @@ function residuals_fcn2_laplace(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
     return [rj1, rj3, rsig, rmu]
 end
 
+"""
+    residuals_fcn2_laplace_he57(x, ...)
+
+Same Laplace saddle as `residuals_fcn2_laplace` with `matrix=true`, but
+the feature map and Gram are the M=4 block (He1, He3, He5, He7):
+
+    c = (c1, c3, c5, c7),   y = (1, ε, 0, 0)
+    Q_{mn} = E[c_m c_n],    G = a0/(n1 χ) [−χ'² δ v vᵀ + χ' Q⁻¹]
+    V(w) = (d/(2 s0)) w² + ½ c(w)ᵀ G c(w)
+
+State is still `x = [lJ1, lJ3, σ, μ]`; dummy residuals match `lJ1, lJ3`
+to `Q₁₁, Q₃₃`. `mean_only=true` drops the curvature residual as in
+the 2×2 Laplace.
+"""
+function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
+    a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT)
+    T_floor = 1.0 + 2.0 * (d - 1.0) * s0 / d
+
+    if mean_only
+        lJ1, lJ3, muW = x
+        sigS = oftype(muW + lJ1, sig_saddle)
+    else
+        lJ1, lJ3, sigS, muW = x
+    end
+
+    Q = hermite_kernel_block_he57(muW, sigS, T_floor)
+    G = laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=a0)
+    V = w -> begin
+        c1, c3, c5, c7 = hermite_point_features_he57(w, T_floor)
+        c = [c1, c3, c5, c7]
+        (d / s0) * 0.5 * w^2 + 0.5 * dot(c, G * c)
+    end
+
+    dV = ForwardDiff.derivative(V, muW)
+    rj1 = lJ1 - Q[1, 1]
+    rj3 = lJ3 - Q[2, 2]
+    rmu = dV
+
+    if mean_only
+        return [rj1, rj3, rmu]
+    end
+
+    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
+    rsig = sigS^2 * d2V - 1.0
+    return [rj1, rj3, rsig, rmu]
+end
+
 # ---------------------------------------------------------
 # Saddle-point (δ-well) residuals: σ → 0, stationarity in μ only
 # ---------------------------------------------------------
@@ -771,7 +874,7 @@ end
 # Solver
 # ---------------------------------------------------------
 
-function nlsolve_solver_fcn2(initial_guess; anneal=false, chi=1.0, a0=1.0, d=1.0, s0=1.0, kappa=1.0, delta=1.0, n1=1.0, P=nothing, anneal_steps=50, tol=1e-8, advanced::Bool=false, regularized::Bool=false, offdiag::Bool=false, matrix::Bool=false, freeze_U::Bool=true, entropy_rule::Int=64, epsilon=1.0, saddle::Bool=false, laplace::Bool=false, laplace_mean::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT)
+function nlsolve_solver_fcn2(initial_guess; anneal=false, chi=1.0, a0=1.0, d=1.0, s0=1.0, kappa=1.0, delta=1.0, n1=1.0, P=nothing, anneal_steps=50, tol=1e-8, advanced::Bool=false, regularized::Bool=false, offdiag::Bool=false, matrix::Bool=false, freeze_U::Bool=true, entropy_rule::Int=64, epsilon=1.0, saddle::Bool=false, laplace::Bool=false, laplace_mean::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT, he57::Bool=false)
     curr_P = (P === nothing) ? d^1.2 : P
     chi_path = anneal ? exp.(range(log(1e-5), log(chi), length=anneal_steps)) : fill(chi, anneal_steps)
     curr_x = copy(initial_guess)
@@ -787,16 +890,29 @@ function nlsolve_solver_fcn2(initial_guess; anneal=false, chi=1.0, a0=1.0, d=1.0
                 )
             elseif laplace_mean
                 # 3D: [lJ1, lJ3, μ], σ→0, V' only (linear channel)
-                F .= residuals_fcn2_laplace(
-                    xp, curr_P, c, d, kappa, delta, n1, s0, epsilon;
-                    a0=a0, mean_only=true, sig_saddle=sig_saddle, matrix=matrix,
-                )
+                if he57
+                    F .= residuals_fcn2_laplace_he57(
+                        xp, curr_P, c, d, kappa, delta, n1, s0, epsilon;
+                        a0=a0, mean_only=true, sig_saddle=sig_saddle,
+                    )
+                else
+                    F .= residuals_fcn2_laplace(
+                        xp, curr_P, c, d, kappa, delta, n1, s0, epsilon;
+                        a0=a0, mean_only=true, sig_saddle=sig_saddle, matrix=matrix,
+                    )
+                end
             elseif laplace
                 # 4D: [lJ1, lJ3, σ, μ] from V' = 0 and σ² V'' = 1
-                F .= residuals_fcn2_laplace(
-                    xp, curr_P, c, d, kappa, delta, n1, s0, epsilon; a0=a0,
-                    matrix=matrix,
-                )
+                if he57
+                    F .= residuals_fcn2_laplace_he57(
+                        xp, curr_P, c, d, kappa, delta, n1, s0, epsilon; a0=a0,
+                    )
+                else
+                    F .= residuals_fcn2_laplace(
+                        xp, curr_P, c, d, kappa, delta, n1, s0, epsilon; a0=a0,
+                        matrix=matrix,
+                    )
+                end
             elseif regularized
                 F .= residuals_regularized(
                     xp, curr_P, c, d, kappa, delta, n1, s0, epsilon;
@@ -844,8 +960,25 @@ function matrix_learnabilities(μ, σ, params)
     return f[1], L3
 end
 
+"""
+    matrix_learnabilities_he57(μ, σ, params) -> (L1, L3, f5, f7)
+
+Kernel ridge on the 4×4 He1–He3–He5–He7 block,
+`f = Q (Q + ρ' I)⁻¹ y` with `y = (1, ε, 0, 0)`. `L3 = f₃/ε`;
+`f5, f7` are raw leakages (teacher has no He5/He7).
+"""
+function matrix_learnabilities_he57(μ, σ, params)
+    T = 1.0 + 2.0 * (params.d - 1.0) * params.s0 / params.d
+    Q = Matrix(hermite_kernel_block_he57(μ, σ, T))
+    ρp = params.κ / (params.a0 * params.P)
+    y = [1.0, Float64(params.ϵ), 0.0, 0.0]
+    f = Q * ((Q + ρp * I(4)) \ y)
+    L3 = params.ϵ == 0 ? f[2] : f[2] / params.ϵ
+    return f[1], L3, f[3], f[4]
+end
+
 function populate_solution_fcn2(sol_vec, params; sig_saddle::Real=SIG_SADDLE_DEFAULT,
-    matrix::Bool=false)
+    matrix::Bool=false, he57::Bool=false)
     if isnothing(sol_vec) || any(isnan.(sol_vec))
         return Solution2()
     end
@@ -860,7 +993,10 @@ function populate_solution_fcn2(sol_vec, params; sig_saddle::Real=SIG_SADDLE_DEF
     ts = lWT + (params.d - 1.0) / params.d
     gy = (4/π) / (1 + 2.0 * ts)
     kt = params.κ / params.P
-    if matrix
+    L5, L7 = NaN, NaN
+    if he57
+        L1, L3, L5, L7 = matrix_learnabilities_he57(abs(muW), abs(sigS), params)
+    elseif matrix
         L1, L3 = matrix_learnabilities(abs(muW), abs(sigS), params)
     else
         L1, L3 = lJ1 / (lJ1 + kt), lJ3 / (lJ3 + kt)
@@ -870,7 +1006,9 @@ function populate_solution_fcn2(sol_vec, params; sig_saddle::Real=SIG_SADDLE_DEF
         lJ1=lJ1, lJ3=lJ3, lK1=gy*lJ1, lK3=gy*lJ3, lWT=lWT,
         sigS=sigS, muW=muW,
         learnability1=L1,
-        learnability3=L3
+        learnability3=L3,
+        learnability5=L5,
+        learnability7=L7,
     )
 end
 
@@ -878,7 +1016,7 @@ function solve_FCN2_Erf(params, guess; anneal_steps=100, use_anneal=true, tol=1e
     advanced::Bool=false, regularized::Bool=false, offdiag::Bool=false,
     matrix::Bool=false, freeze_U::Bool=true, entropy_rule::Int=64,
     saddle::Bool=false, laplace::Bool=false, laplace_mean::Bool=false,
-    sig_saddle::Real=SIG_SADDLE_DEFAULT)
+    sig_saddle::Real=SIG_SADDLE_DEFAULT, he57::Bool=false)
     if saddle || laplace_mean
         # Expect [lJ1, lJ3, μ].  Old 4D / lWT-style guesses are remapped.
         if length(guess) == 4
@@ -903,8 +1041,10 @@ function solve_FCN2_Erf(params, guess; anneal_steps=100, use_anneal=true, tol=1e
         regularized=regularized, offdiag=offdiag, matrix=matrix,
         freeze_U=freeze_U, entropy_rule=entropy_rule, epsilon=params.ϵ,
         saddle=saddle, laplace=laplace, laplace_mean=laplace_mean, sig_saddle=sig_saddle,
+        he57=he57,
     )
-    return populate_solution_fcn2(sol, params; sig_saddle=sig_saddle, matrix=matrix)
+    return populate_solution_fcn2(sol, params; sig_saddle=sig_saddle, matrix=matrix || he57,
+        he57=he57)
 end
 
 end
