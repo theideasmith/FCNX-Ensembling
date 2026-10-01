@@ -14,7 +14,8 @@ export ProblemParams2, Solution2, residuals_fcn2, residuals_fcn2_advanced,
     compute_lambda13, hermite_kernel_block, hermite_kernel_block_he57,
     training_amplitudes_offdiag,
     lambda1_point, hermite_point_features, hermite_point_features_he57,
-    laplace_amplitude_matrix, matrix_learnabilities_he57,
+    laplace_amplitude_matrix, laplace_amplitude_matrix_he57,
+    matrix_learnabilities_he57,
     SIG_SADDLE_DEFAULT
 
 # ---------------------------------------------------------
@@ -427,6 +428,35 @@ function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
     return (a0 / (n1 * chi)) * G
 end
 
+"""
+    laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+
+Cavity kernel for the M=4 Laplace residual only. Replica field
+`τ ~ N(i χ' R⁻¹ y, χ' R⁻¹)` on `R = Q + ρ' I`, `y = (1, ε, 0, …)`:
+
+    v = R⁻¹ y
+    G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' R⁻¹ ]
+
+`Q` is `E[c cᵀ]` from `hermite_kernel_block_he57` (same `c` as in `V`).
+This is `FCS.discrepancy_T`; it does **not** use the 2×2 `Q⁻¹` Onsager.
+"""
+function laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+    chi_p = chi / a0
+    ρp = kappa / (a0 * P)
+    Qm = Matrix(Q)
+    m = size(Qm, 1)
+    Tq = eltype(Qm)
+    y = zeros(Tq, m)
+    y[1] = one(Tq)
+    m >= 2 && (y[2] = oftype(y[1], epsilon))
+    ρ_safe = max(ρp, eps(typeof(ρp + chi_p)))
+    R = Qm + ρ_safe * I(m)
+    Rinv = inv(R)
+    v = Rinv * y
+    G = -(chi_p^2 * delta) * (v * v') + chi_p * Rinv
+    return (a0 / (n1 * chi)) * G
+end
+
 # ---------------------------------------------------------
 # Core Residual Functions
 # ---------------------------------------------------------
@@ -759,16 +789,16 @@ end
 """
     residuals_fcn2_laplace_he57(x, ...)
 
-Same Laplace saddle as `residuals_fcn2_laplace` with `matrix=true`, but
-the feature map and Gram are the M=4 block (He1, He3, He5, He7):
+M=4 Laplace saddle (He1, He3, He5, He7). Gram and potential use the
+same features `c = (c1, c3, c5, c7)`, teacher `y = (1, ε, 0, 0)`:
 
-    c = (c1, c3, c5, c7),   y = (1, ε, 0, 0)
-    Q_{mn} = E[c_m c_n],    G = a0/(n1 χ) [−χ'² δ v vᵀ + χ' Q⁻¹]
+    Q_{mn} = E[c_m c_n]
+    G = laplace_amplitude_matrix_he57  (replica R⁻¹, not the 2×2 Q⁻¹)
     V(w) = (d/(2 s0)) w² + ½ c(w)ᵀ G c(w)
 
 State is still `x = [lJ1, lJ3, σ, μ]`; dummy residuals match `lJ1, lJ3`
 to `Q₁₁, Q₃₃`. `mean_only=true` drops the curvature residual as in
-the 2×2 Laplace.
+the 2×2 Laplace. Does not change `residuals_fcn2_laplace`.
 """
 function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
     a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT)
@@ -782,7 +812,7 @@ function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon
     end
 
     Q = hermite_kernel_block_he57(muW, sigS, T_floor)
-    G = laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=a0)
+    G = laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=a0)
     V = w -> begin
         c1, c3, c5, c7 = hermite_point_features_he57(w, T_floor)
         c = [c1, c3, c5, c7]

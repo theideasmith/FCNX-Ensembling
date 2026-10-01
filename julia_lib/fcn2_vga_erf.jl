@@ -88,7 +88,7 @@ function parse_cli_args()
         help = "Laplace with the linear channel only: V=prior+A₁λ₁(w) (no He1–He3 coupling)"
         action = :store_true
         "--he57"
-        help = "Laplace matrix with M=4 (He1,He3,He5,He7); y=(1,ε,0,0). Implies --laplace --matrix."
+        help = "Laplace M=4 (He1,He3,He5,He7); y=(1,ε,0,0); cavity G uses replica (Q+ρ'I)⁻¹. Implies --laplace --matrix."
         action = :store_true
         "--vga"
         help = "Use the variational (entropy) solver instead of the default matrix Laplace saddle. Implied by --offdiag/--advanced/--regularized."
