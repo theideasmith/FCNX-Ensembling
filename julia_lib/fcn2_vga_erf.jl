@@ -87,6 +87,9 @@ function parse_cli_args()
         "--linear"
         help = "Laplace with the linear channel only: V=prior+A₁λ₁(w) (no He1–He3 coupling)"
         action = :store_true
+        "--he57"
+        help = "Laplace matrix with M=4 (He1,He3,He5,He7); y=(1,ε,0,0). Implies --laplace --matrix."
+        action = :store_true
         "--vga"
         help = "Use the variational (entropy) solver instead of the default matrix Laplace saddle. Implied by --offdiag/--advanced/--regularized."
         action = :store_true
@@ -114,11 +117,15 @@ function main()
     offdiag = args["offdiag"]
     saddle = args["saddle"]
     laplace_mean = args["laplace-mean"]
+    he57 = args["he57"]
     vga = args["vga"] || offdiag || advanced || regularized
     # VGA leaves μ weakly pinned (entropy vs prior); the matrix Laplace saddle
     # ties μ to feature learning and keeps the He1–He3 kernel coupling.
-    laplace = args["laplace"] || laplace_mean || !(vga || saddle)
+    laplace = args["laplace"] || laplace_mean || he57 || !(vga || saddle)
     matrix = args["matrix"] || (laplace && !args["linear"])
+    if he57 && args["linear"]
+        error("--he57 is a matrix truncation; drop --linear")
+    end
     entropy_rule = args["entropy-rule"]
     if saddle && laplace
         error("Choose only one of --saddle and --laplace/--laplace-mean")
@@ -165,15 +172,24 @@ function main()
                     vga_params, g0;
                     anneal_steps=1, use_anneal=false,
                     laplace=!laplace_mean, laplace_mean=laplace_mean,
-                    matrix=matrix,
+                    matrix=matrix, he57=he57,
                 )
                 isnan(cand.muW) && continue
                 x_c = laplace_mean ? [cand.lJ1, cand.lJ3, cand.muW] :
                     [cand.lJ1, cand.lJ3, cand.sigS, cand.muW]
-                r = FCS2_VGA.residuals_fcn2_laplace(
-                    x_c, P, chi, d, kappa, δ_val, n1, s0, epsilon;
-                    a0=a0, mean_only=laplace_mean, matrix=matrix,
-                )
+                r = he57 ?
+                    FCS2_VGA.residuals_fcn2_laplace_he57(
+                        x_c, P, chi, d, kappa, δ_val, n1, s0, epsilon;
+                        a0=a0, mean_only=laplace_mean,
+                    ) :
+                    FCS2_VGA.residuals_fcn2_laplace(
+                        x_c, P, chi, d, kappa, δ_val, n1, s0, epsilon;
+                        a0=a0, mean_only=laplace_mean, matrix=matrix,
+                    )
+                # V''(μ) = 1/σ² can reach ~1e4 in narrow wells, so V'(μ) stalls
+                # near 1e-5 once Newton's μ step hits xtol; judge V' as the
+                # step V'/V'' = σ² V' instead.
+                laplace_mean || (r[4] *= cand.sigS^2)
                 sqrt(sum(abs2, r)) < 1e-5 || continue
                 if best === nothing || abs(cand.muW) > abs(best.muW)
                     best = cand
@@ -197,6 +213,7 @@ function main()
                 advanced=advanced, regularized=regularized, offdiag=offdiag,
                 matrix=matrix, freeze_U=true, entropy_rule=entropy_rule,
                 saddle=false, laplace=laplace && !laplace_mean, laplace_mean=laplace_mean,
+                he57=he57,
             )
             isnan(cand.muW) && continue
             if best === nothing || abs(cand.muW) > abs(best.muW)
@@ -210,6 +227,7 @@ function main()
             advanced=advanced, regularized=regularized, offdiag=offdiag,
             matrix=matrix, freeze_U=true, entropy_rule=entropy_rule,
             saddle=false, laplace=laplace && !laplace_mean, laplace_mean=laplace_mean,
+            he57=he57,
         ) : best
     end
 
@@ -243,7 +261,7 @@ function main()
             "d"=>d, "n1"=>n1, "P"=>P, "chi"=>chi, "a0"=>a0, "s0"=>s0,
             "kappa"=>kappa,
             "advanced"=>advanced, "regularized"=>regularized,
-            "offdiag"=>offdiag, "matrix"=>matrix, "freeze_U"=>true,
+            "offdiag"=>offdiag, "matrix"=>matrix, "he57"=>he57, "freeze_U"=>true,
             "saddle"=>saddle, "laplace"=>laplace, "laplace_mean"=>laplace_mean,
             "entropy_rule"=>entropy_rule,
         ),
@@ -263,7 +281,13 @@ function main()
         entropy_label = advanced ? "exact GMM entropy (rule=$(entropy_rule))" : "Hershey–Olsen entropy bound"
         resid_label = regularized ? "m²-preconditioned stationarity" : "raw stationarity"
         println("\n" * "="^90)
-        chan = matrix ? "He1–He3 matrix V=prior+½cᵀGc" : "linear channel V=prior+A₁λ₁"
+        chan = if he57
+            "He1–He3–He5–He7 matrix V=prior+½cᵀGc"
+        elseif matrix
+            "He1–He3 matrix V=prior+½cᵀGc"
+        else
+            "linear channel V=prior+A₁λ₁"
+        end
         if laplace_mean
             println("FCN2 mean-only Laplace ($chan; σ=0, V'(μ)=0)")
         elseif laplace
@@ -295,7 +319,8 @@ function main()
         end
 
         println("-"^90)
-        println("Learnability (VGA Target): Linear=$(round(target.vga.learnability1, sigdigits=4)), Cubic=$(round(target.vga.learnability3, sigdigits=4))")
+        println("Learnability (VGA Target): Linear=$(round(target.vga.learnability1, sigdigits=4)), Cubic=$(round(target.vga.learnability3, sigdigits=4))" *
+            (he57 ? ", He5=$(round(target.vga.learnability5, sigdigits=4)), He7=$(round(target.vga.learnability7, sigdigits=4))" : ""))
         println("="^90 * "\n")
     end
 
