@@ -795,7 +795,12 @@ same features `c = (c1, c3, c5, c7)`, teacher `y = (1, ε, 0, 0)`:
     Q_{mn} = E[c_m c_n] ∈ ℝ⁴ˣ⁴
     y = (1, ε, 0, 0) ∈ ℝ⁴
     G ∈ ℝ⁴ˣ⁴  from laplace_amplitude_matrix_he57 (replica R⁻¹)
-    V(w) = (d/(2 s0)) w² + ½ c(w)ᵀ G c(w)
+    V(w) = (d/(2 s0)) w² + c(w)ᵀ G c(w)
+
+`Q` and `c` are the same generating-function features, so the energy
+is `cᵀ G c` (not the 2×2 `½ cᵀ G c`, which exists only to turn
+`c1²` into `lambda1_point`). Frozen-v cavity: `E[cᵀ G c] = tr(G Q)`
+equals `a0/(n1 χ) [−χ'² δ vᵀ Q v + χ' tr(R⁻¹ Q)]`.
 
 State is still `x = [lJ1, lJ3, σ, μ]`; dummy residuals match `lJ1, lJ3`
 to `Q₁₁, Q₃₃`. `mean_only=true` drops the curvature residual as in
@@ -817,7 +822,7 @@ function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon
     V = w -> begin
         c1, c3, c5, c7 = hermite_point_features_he57(w, T_floor)
         c = [c1, c3, c5, c7]
-        (d / s0) * 0.5 * w^2 + 0.5 * dot(c, G * c)
+        (d / s0) * 0.5 * w^2 + dot(c, G * c)
     end
 
     dV = ForwardDiff.derivative(V, muW)
