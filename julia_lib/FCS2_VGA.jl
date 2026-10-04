@@ -15,7 +15,7 @@ export ProblemParams2, Solution2, residuals_fcn2, residuals_fcn2_advanced,
     training_amplitudes_offdiag,
     lambda1_point, hermite_point_features, hermite_point_features_he57,
     laplace_amplitude_matrix, laplace_amplitude_matrix_he57,
-    matrix_learnabilities_he57,
+    he57_training_ell, matrix_learnabilities_he57,
     SIG_SADDLE_DEFAULT
 
 # ---------------------------------------------------------
@@ -457,6 +457,41 @@ function laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=
     return (a0 / (n1 * chi)) * G
 end
 
+"""
+    he57_training_ell(Q, chi, n1, kappa, P, delta, epsilon; a0=1.0)
+
+Gaussian-averaged He57 training energy (already scaled by `a0/(n1 χ)`).
+`Q = E[c cᵀ]` is 4×4 on `(c1,c3,c5,c7)`, `y = (1, ε, 0, 0)`,
+`χ' = χ/a0`, `ρ' = κ/(a0 P)`, `R = Q + ρ' I₄`, `v = R⁻¹ y`:
+
+    ell = −χ'² δ vᵀ Q v  +  χ' · 4  +  χ' ρ' tr(Q R⁻¹ Q)
+
+The first two pieces do not depend on λ once `v` is formed (`χ'·4`
+is `χ' tr(I₄)`; the −χ'² discrepancy uses cavity `v`). The last is
+the other χ² term, `χ'² κ/(a0 P χ') η` in one mode, and depends on
+λ through `R` and `Q`. Same signs as `lT1_current` / diagnose VGA.
+"""
+function he57_training_ell(Q, chi, n1, kappa, P, delta, epsilon; a0=1.0)
+    Qm = Matrix(Q)
+    size(Qm) == (4, 4) || throw(DimensionMismatch(
+        "he57_training_ell expects a 4×4 Q, got $(size(Qm))"))
+    chi_p = chi / a0
+    ρp = kappa / (a0 * P)
+    Tq = eltype(Qm)
+    y = Tq[one(Tq), oftype(one(Tq), epsilon), zero(Tq), zero(Tq)]
+    ρ_safe = max(ρp, eps(typeof(ρp + chi_p)))
+    R = Qm + ρ_safe * I(4)
+    v = R \ y
+    # −χ'² discrepancy (cavity v)
+    disc = -(chi_p^2 * delta) * dot(v, Qm * v)
+    # χ' · 4  (χ tr(Q⁻¹ Q) at full rank; independent of λ)
+    bare = chi_p * 4
+    # other χ²: χ' ρ' tr(Q R⁻¹ Q)  ↔  χ'² κ/(a0 P χ') η λ  in 1D
+    onsager = chi_p * ρ_safe * tr(Qm * (R \ Qm))
+    ell = disc + bare + onsager
+    return a0 * ell / (n1 * chi)
+end
+
 # ---------------------------------------------------------
 # Core Residual Functions
 # ---------------------------------------------------------
@@ -789,22 +824,17 @@ end
 """
     residuals_fcn2_laplace_he57(x, ...)
 
-M=4 Laplace saddle (He1, He3, He5, He7). Gram and potential use the
-same features `c = (c1, c3, c5, c7)`, teacher `y = (1, ε, 0, 0)`:
+M=4 stationarity of the Gaussian-averaged action on
+`c = (c1, c3, c5, c7)`. He5/He7 enter `∇_{σ,μ} F` the same way as
+He1/He3: through `Q(μ,σ) = E_{N(μ,σ²)}[c cᵀ]`, not through a
+pointwise `V'(μ)`.
 
-    Q_{mn} = E[c_m c_n] ∈ ℝ⁴ˣ⁴
-    y = (1, ε, 0, 0) ∈ ℝ⁴
-    G ∈ ℝ⁴ˣ⁴  from laplace_amplitude_matrix_he57 (replica R⁻¹)
-    V(w) = (d/(2 s0)) w² + c(w)ᵀ G c(w)
+    F = (d/(2 s0))(μ²+σ²) + he57_training_ell(Q)
+    ell = −χ'² δ vᵀ Q v  +  χ' · 4  +  χ' ρ' tr(Q R⁻¹ Q)
 
-`Q` and `c` are the same generating-function features, so the energy
-is `cᵀ G c` (not the 2×2 `½ cᵀ G c`, which exists only to turn
-`c1²` into `lambda1_point`). Frozen-v cavity: `E[cᵀ G c] = tr(G Q)`
-equals `a0/(n1 χ) [−χ'² δ vᵀ Q v + χ' tr(R⁻¹ Q)]`.
-
-State is still `x = [lJ1, lJ3, σ, μ]`; dummy residuals match `lJ1, lJ3`
-to `Q₁₁, Q₃₃`. `mean_only=true` drops the curvature residual as in
-the 2×2 Laplace. Does not change `residuals_fcn2_laplace`.
+No VGA entropy. State `x = [lJ1, lJ3, σ, μ]` with dummy matches
+`lJ1, lJ3` to `Q₁₁, Q₃₃`. `mean_only=true` freezes `σ` and returns
+`(lJ1-Q₁₁, lJ3-Q₃₃, ∂_μ F)`. Does not change `residuals_fcn2_laplace`.
 """
 function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
     a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT)
@@ -818,25 +848,22 @@ function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon
     end
 
     Q = hermite_kernel_block_he57(muW, sigS, T_floor)
-    G = laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=a0)
-    V = w -> begin
-        c1, c3, c5, c7 = hermite_point_features_he57(w, T_floor)
-        c = [c1, c3, c5, c7]
-        (d / s0) * 0.5 * w^2 + dot(c, G * c)
-    end
-
-    dV = ForwardDiff.derivative(V, muW)
     rj1 = lJ1 - Q[1, 1]
     rj3 = lJ3 - Q[2, 2]
-    rmu = dV
+
+    function action(s, m)
+        prior = (d / s0) * 0.5 * (m^2 + s^2)
+        Qtr = hermite_kernel_block_he57(m, s, T_floor)
+        return prior + he57_training_ell(Qtr, chi, n1, kappa, P, delta, epsilon; a0=a0)
+    end
 
     if mean_only
+        rmu = ForwardDiff.derivative(m -> action(sigS, m), muW)
         return [rj1, rj3, rmu]
     end
 
-    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
-    rsig = sigS^2 * d2V - 1.0
-    return [rj1, rj3, rsig, rmu]
+    grads = ForwardDiff.gradient(vars -> action(vars[1], vars[2]), [sigS, muW])
+    return [rj1, rj3, grads[1], grads[2]]
 end
 
 # ---------------------------------------------------------

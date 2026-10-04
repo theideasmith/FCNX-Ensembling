@@ -88,7 +88,7 @@ function parse_cli_args()
         help = "Laplace with the linear channel only: V=prior+A₁λ₁(w) (no He1–He3 coupling)"
         action = :store_true
         "--he57"
-        help = "Laplace M=4 (He1,He3,He5,He7); y=(1,ε,0,0); cavity G uses replica (Q+ρ'I)⁻¹. Implies --laplace --matrix."
+        help = "M=4 (He1,He3,He5,He7) action on Q=E[ccᵀ]: ∇_{σ,μ} of prior + (−χ'²δ vᵀQv + χ'·4 + χ'ρ' tr(QR⁻¹Q)). Implies --laplace --matrix."
         action = :store_true
         "--vga"
         help = "Use the variational (entropy) solver instead of the default matrix Laplace saddle. Implied by --offdiag/--advanced/--regularized."
@@ -186,10 +186,12 @@ function main()
                         x_c, P, chi, d, kappa, δ_val, n1, s0, epsilon;
                         a0=a0, mean_only=laplace_mean, matrix=matrix,
                     )
-                # V''(μ) = 1/σ² can reach ~1e4 in narrow wells, so V'(μ) stalls
-                # near 1e-5 once Newton's μ step hits xtol; judge V' as the
-                # step V'/V'' = σ² V' instead.
-                laplace_mean || (r[4] *= cand.sigS^2)
+                # 2×2 Laplace: V''(μ)=1/σ² can reach ~1e4, so judge V' as
+                # the Newton step V'/V'' = σ² V'. He57 residuals are already
+                # ∇F of the averaged action — do not σ²-scale them.
+                if !laplace_mean && !he57
+                    r[4] *= cand.sigS^2
+                end
                 sqrt(sum(abs2, r)) < 1e-5 || continue
                 if best === nothing || abs(cand.muW) > abs(best.muW)
                     best = cand
