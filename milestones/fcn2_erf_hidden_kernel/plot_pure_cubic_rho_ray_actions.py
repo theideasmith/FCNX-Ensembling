@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small-multiples V(w) along a ρ-ray through the outer-well FO."""
+"""Single-panel V(w) overlay along a ρ-ray through the outer-well FO."""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +14,6 @@ DEFAULT_KEEP = [0.20, 0.15, 0.1334, 0.10]
 
 
 def local_minima(w: np.ndarray, V: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Interior local minima (strict)."""
     if w.size < 3:
         return np.array([]), np.array([])
     mask = (V[1:-1] < V[:-2]) & (V[1:-1] < V[2:])
@@ -32,9 +31,11 @@ def main() -> None:
         default=",".join(str(x) for x in DEFAULT_KEEP),
         help="comma-separated ρ values to plot",
     )
-    ap.add_argument("--wmax", type=float, default=3.5)
-    ap.add_argument("--ymin", type=float, default=-2.0)
-    ap.add_argument("--ymax", type=float, default=1.5)
+    ap.add_argument("--wmax", type=float, default=3.2)
+    # Defaults cover FO wells + barriers; pass null-like via omitting for auto
+    ap.add_argument("--ymin", type=float, default=-1.9)
+    ap.add_argument("--ymax", type=float, default=5.8)
+    ap.add_argument("--auto-ylim", action="store_true", help="derive ylim from wells/barriers")
     args = ap.parse_args()
 
     data = np.genfromtxt(args.actions, delimiter=",", names=True)
@@ -47,15 +48,41 @@ def main() -> None:
     rhos = [nearest(t) for t in targets]
 
     phase: dict[float, str] = {}
-    v_out: dict[float, float] = {}
     if args.summary and Path(args.summary).is_file():
         summary = np.genfromtxt(
             args.summary, delimiter=",", names=True, dtype=None, encoding=None
         )
         for row in np.atleast_1d(summary):
-            ρ = float(row["rho"])
-            phase[ρ] = str(row["phase"]).replace("_", " ")
-            v_out[ρ] = float(row["V_out"])
+            phase[float(row["rho"])] = str(row["phase"]).replace("_", " ")
+
+    # Collect series for limits + plot
+    series = []
+    mins: list[float] = []
+    barriers: list[float] = []
+    for ρ in rhos:
+        m = data["rho"] == ρ
+        w = data["w"][m]
+        V = data["V"][m]
+        order = np.argsort(w)
+        w, V = w[order], V[order]
+        series.append((ρ, w, V))
+        wm, Vm = local_minima(w, V)
+        in_win = np.abs(wm) <= args.wmax
+        mins.extend(Vm[in_win].tolist())
+        # local maxima = inter-well barriers (ignore prior walls: keep V < 20)
+        if w.size >= 3:
+            mask = (V[1:-1] > V[:-2]) & (V[1:-1] > V[2:])
+            idx = np.where(mask)[0] + 1
+            for wi, Vi in zip(w[idx], V[idx]):
+                if abs(wi) <= args.wmax and Vi < 20.0:
+                    barriers.append(float(Vi))
+
+    if args.auto_ylim:
+        ymin = (min(mins) - 0.25) if mins else -2.0
+        ymax = (max(barriers) + 0.4) if barriers else 1.5
+    else:
+        ymin = args.ymin
+        ymax = args.ymax
 
     logρ = np.log10(np.asarray(rhos))
     norm = mpl.colors.Normalize(vmin=float(logρ.min()), vmax=float(logρ.max()))
@@ -65,81 +92,47 @@ def main() -> None:
         Path(args.actions).name.replace("tmp_", "").replace(".csv", ".png")
     )
 
-    n = len(rhos)
-    ncols = 2
-    nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(9.0, 3.8 * nrows),
-        sharex=True,
-        sharey=True,
-        constrained_layout=True,
-    )
-    axes_flat = np.atleast_1d(axes).ravel()
-
-    for i, ρ in enumerate(rhos):
-        ax = axes_flat[i]
-        m = data["rho"] == ρ
-        w = data["w"][m]
-        V = data["V"][m]
-        order = np.argsort(w)
-        w, V = w[order], V[order]
+    fig, ax = plt.subplots(figsize=(8.0, 4.8))
+    for ρ, w, V in series:
         color = cmap(norm(np.log10(ρ)))
-
-        ax.plot(w, V, color=color, lw=2.2)
-        ax.axhline(0.0, color="0.65", lw=0.7, ls="--")
-        ax.axvline(0.0, color="0.85", lw=0.6)
-
+        key = min(phase.keys(), key=lambda x: abs(x - ρ)) if phase else None
+        ph = f" ({phase[key]})" if key is not None else ""
+        ax.plot(w, V, color=color, lw=2.0, label=rf"$\rho={ρ:.3g}${ph}")
         wm, Vm = local_minima(w, V)
-        keep = (np.abs(wm) <= args.wmax) & (Vm >= args.ymin - 0.5) & (Vm <= args.ymax + 0.5)
+        keep = (np.abs(wm) <= args.wmax) & (Vm >= ymin - 0.1) & (Vm <= ymax + 0.1)
         ax.scatter(
             wm[keep],
             Vm[keep],
-            s=28,
+            s=26,
             color=color,
             edgecolors="k",
-            linewidths=0.5,
+            linewidths=0.45,
             zorder=5,
         )
 
-        key = min(phase.keys(), key=lambda x: abs(x - ρ)) if phase else None
-        ph = phase[key] if key is not None else ""
-        vo = v_out.get(key, np.nan) if key is not None else np.nan
-        if ph == "no outer":
-            subtitle = "no outer well"
-        elif np.isfinite(vo) and vo != 0.0:
-            subtitle = f"{ph}\n$V_{{\\mathrm{{out}}}}={vo:+.2f}$"
-        else:
-            subtitle = ph
-
-        ax.set_title(rf"$\rho={ρ:.3g}$" + (f"\n{subtitle}" if subtitle else ""), fontsize=10)
-        ax.set_xlim(-args.wmax, args.wmax)
-        ax.set_ylim(args.ymin, args.ymax)
-        ax.grid(True, alpha=0.22)
-        if i // ncols == nrows - 1:
-            ax.set_xlabel(r"read-in weight $w$")
-        if i % ncols == 0:
-            ax.set_ylabel(r"action $V(w)$")
-
-    for j in range(n, len(axes_flat)):
-        axes_flat[j].set_visible(False)
+    ax.axhline(0.0, color="0.55", lw=0.8, ls="--")
+    ax.set_xlim(-args.wmax, args.wmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_xlabel(r"read-in weight $w$")
+    ax.set_ylabel(r"action $V(w)$ (raw)")
+    ax.set_title(
+        r"Pure cubic $\chi=N$, $P=10^3$, $\mathrm{sa0}=0.03$"
+        "\n"
+        r"outer-well FO along $\rho=\kappa/(\mathrm{sa0}\,P)$"
+    )
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False, fontsize=8, loc="upper right")
 
     sm = mpl.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axes_flat[:n].tolist(), pad=0.02, fraction=0.04)
+    cbar = fig.colorbar(sm, ax=ax, pad=0.02, fraction=0.045)
     cbar.set_ticks(logρ)
     cbar.set_ticklabels([f"{r:.3g}" for r in rhos])
-    cbar.ax.set_ylabel(r"$\rho=\kappa/(\mathrm{sa0}\,P)$", rotation=270, labelpad=14)
+    cbar.ax.set_ylabel(r"$\rho$", rotation=270, labelpad=12)
 
-    fig.suptitle(
-        r"Pure cubic $\chi=N$, $P=10^3$, $\mathrm{sa0}=0.03$"
-        "\n"
-        r"outer-well first-order sequence along $\rho$",
-        fontsize=12,
-    )
+    fig.tight_layout()
     fig.savefig(out, dpi=170, bbox_inches="tight")
-    print(f"saved {out}")
+    print(f"saved {out}  ylim=({ymin:.3g}, {ymax:.3g})")
 
 
 if __name__ == "__main__":
