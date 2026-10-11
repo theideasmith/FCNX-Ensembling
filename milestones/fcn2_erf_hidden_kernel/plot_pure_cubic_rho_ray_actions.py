@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-DEFAULT_KEEP = [0.20, 0.15, 0.1334, 0.10]
+DEFAULT_KEEP = [0.20, 0.18, 0.16, 0.15, 0.145, 0.14, 0.135, 0.13]
 # Steepwell α–β relation used for labeling when α is not in the CSV.
 GAMMA = 1.25
 ALPHA0 = 1.0
@@ -47,8 +47,8 @@ def main() -> None:
         help="κ at β=1 when deriving β=κ_ref/κ from a ρ-ray CSV (default: max κ in keep)",
     )
     ap.add_argument("--wmax", type=float, default=3.2)
-    ap.add_argument("--ymin", type=float, default=-1.9)
-    ap.add_argument("--ymax", type=float, default=5.8)
+    ap.add_argument("--ymin", type=float, default=-3.2)
+    ap.add_argument("--ymax", type=float, default=4.5)
     args = ap.parse_args()
 
     data = np.genfromtxt(args.actions, delimiter=",", names=True)
