@@ -612,13 +612,16 @@ function ray_F_scan_main()
     println("saved ", out)
 end
 
-"""Dump equilibrium Laplace mixture + theoretical read-in density p(w) on ℝ.
+"""Dump the explicit single-site cavity action V(w) at χ=N equilibrium.
 
-PDF on the line: center well (m=1 at 0) keeps its mass; each outer well with
-multiplicity 2 is split equally onto ±μ. Forced-π equilibrium uses π_out as the
-total outer mass (same as --ray-scan).
+This is the theoretical −log p (up to an additive constant) written by the
+matrix Laplace theory after integrating out A:
+
+    V(w) = (d/s0)(1/2) w² + (1/2) c(w)ᵀ G c(w)
+
+with c = (He1, He3) features and G from the pure-cubic teacher y=(0,ε).
 """
-function dump_pdf_main()
+function dump_action_main()
     Finv_target = parse(Float64, argval("--Finv", "200"))
     eps_task = parse(Float64, argval("--eps", "1"))
     β = parse(Float64, argval("--beta", "10"))
@@ -644,19 +647,19 @@ function dump_pdf_main()
     eq = equilibrium_at(c, P, κ)
     eq === nothing && error("no equilibrium")
     po, s = eq.po, eq.s
-    # Rebuild wells at eq Q for full multiplicity list
     G = amp(c, s.Q, P, κ)
-    ws = wells(potential(c, G))
+    Vfn = potential(c, G)
+    ws = wells(Vfn)
     out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN")
     mkpath(out_dir)
     chi_tag = chi_flag < 0 ? "N" : string(Int(chi))
     beta_tag = replace(string(β), "." => "p")
-    wells_path = joinpath(out_dir, "tmp_pure_cubic_wells_Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag).csv")
-    pdf_path = joinpath(out_dir, "tmp_pure_cubic_pdf_Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag).csv")
-    meta_path = joinpath(out_dir, "tmp_pure_cubic_meta_Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag).txt")
+    stem = "Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag)"
+    wells_path = joinpath(out_dir, "tmp_pure_cubic_wells_$(stem).csv")
+    act_path = joinpath(out_dir, "tmp_pure_cubic_action_$(stem).csv")
+    meta_path = joinpath(out_dir, "tmp_pure_cubic_meta_$(stem).txt")
     open(wells_path, "w") do io
         println(io, "role,mu,sig,V,multiplicity,mass")
-        # forced-π masses: (1-po) on innermost, po total on outermost (± split in PDF)
         for (j, w) in enumerate(ws)
             role = j == 1 ? "inner" : (j == length(ws) ? "outer" : "mid")
             mass = role == "inner" ? (1 - po) : (role == "outer" ? po : 0.0)
@@ -664,31 +667,17 @@ function dump_pdf_main()
                 role, w[1], w[2], w[3], w[4], mass)
         end
     end
-    # density on ℝ
-    wmax = max(abs(s.wout[1]) + 6 * s.wout[2], abs(s.win[1]) + 6 * s.win[2], 1.0)
-    wgrid = range(-1.2 * wmax, 1.2 * wmax; length=4001)
-    open(pdf_path, "w") do io
-        println(io, "w,p,p_inner,p_outer")
+    wmax = max(abs(s.wout[1]) + 4 * s.wout[2], abs(s.win[1]) + 4, 8.0)
+    wgrid = range(-1.15 * wmax, 1.15 * wmax; length=4001)
+    Vmin = minimum(Vfn.(wgrid))
+    open(act_path, "w") do io
+        println(io, "w,V,V_shifted,prior,data")
         for w in wgrid
-            p_in = 0.0
-            p_out = 0.0
-            for (j, well) in enumerate(ws)
-                μ, σ, _, m = well
-                role = j == 1 ? "inner" : (j == length(ws) ? "outer" : "mid")
-                mass = role == "inner" ? (1 - po) : (role == "outer" ? po : 0.0)
-                mass == 0 && continue
-                if m == 1 || abs(μ) < 1e-12
-                    dens = mass * exp(-0.5 * ((w - μ) / σ)^2) / (σ * sqrt(2π))
-                    role == "outer" ? (p_out += dens) : (p_in += dens)
-                else
-                    # split mass equally on ±μ
-                    dens = (mass / 2) * (
-                        exp(-0.5 * ((w - μ) / σ)^2) + exp(-0.5 * ((w + μ) / σ)^2)
-                    ) / (σ * sqrt(2π))
-                    role == "outer" ? (p_out += dens) : (p_in += dens)
-                end
-            end
-            @printf(io, "%.10g,%.10g,%.10g,%.10g\n", w, p_in + p_out, p_in, p_out)
+            c1, c3 = FCS2_VGA.hermite_point_features(w, c.T)
+            prior = (c.d / c.s0) * 0.5 * w^2
+            data = 0.5 * (G[1, 1] * c1^2 + 2G[1, 2] * c1 * c3 + G[2, 2] * c3^2)
+            V = prior + data
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g\n", w, V, V - Vmin, prior, data)
         end
     end
     open(meta_path, "w") do io
@@ -697,12 +686,13 @@ function dump_pdf_main()
         @printf(io, "pi_out=%.6g  L3=%.6g  dV_raw=%+.6g\n", po, s.L3, s.dV_raw)
         @printf(io, "mu_in=%.6g sig_in=%.6g V_in=%.6g\n", s.win[1], s.win[2], s.win[3])
         @printf(io, "mu_out=%.6g sig_out=%.6g V_out=%.6g\n", s.wout[1], s.wout[2], s.wout[3])
-        @printf(io, "wells=%s\npdf=%s\n", wells_path, pdf_path)
+        @printf(io, "G11=%.6g G13=%.6g G33=%.6g\n", G[1, 1], G[1, 2], G[2, 2])
+        @printf(io, "wells=%s\naction=%s\n", wells_path, act_path)
     end
-    @printf("pi_out=%.4g  mu_in=%.4g±%.4g  mu_out=±%.4g±%.4g  dV_raw=%+.4g\n",
-        po, s.win[1], s.win[2], s.wout[1], s.wout[2], s.dV_raw)
+    @printf("pi_out=%.4g  mu_in=%.4g  mu_out=±%.4g  V_in=%.4g  V_out=%.4g  dV_raw=%+.4g\n",
+        po, s.win[1], s.wout[1], s.win[3], s.wout[3], s.dV_raw)
     println("saved ", wells_path)
-    println("saved ", pdf_path)
+    println("saved ", act_path)
     println("saved ", meta_path)
 end
 
@@ -712,8 +702,8 @@ elseif "--ray-F-scan" in ARGS
     ray_F_scan_main()
 elseif "--pi-scan" in ARGS
     pi_scan_main()
-elseif "--dump-pdf" in ARGS
-    dump_pdf_main()
+elseif "--dump-action" in ARGS || "--dump-pdf" in ARGS
+    dump_action_main()
 elseif "--F-scan" in ARGS
     f_scan_main()
 elseif "--scan" in ARGS
