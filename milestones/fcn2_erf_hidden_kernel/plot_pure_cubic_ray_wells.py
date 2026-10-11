@@ -22,24 +22,27 @@ def main() -> None:
     fig, axes = plt.subplots(2, 2, figsize=(10.5, 7.2), sharex=True)
     axV, axDV, axMu, axPi = axes.ravel()
 
-    # absolute well depths at equilibrium
+    # absolute well depths at equilibrium (own scale — not crushed by π=0)
     axV.plot(beta, r["V_in"], "o-", color="C0", label=r"$V_{\mathrm{in}}$ (eq)")
     axV.plot(beta, r["V_out"], "s-", color="C3", label=r"$V_{\mathrm{out}}$ (eq)")
-    if "V_out_pi0" in r.dtype.names:
-        axV.plot(beta, r["V_out_pi0"], "s--", color="C3", alpha=0.7, label=r"$V_{\mathrm{out}}$ ($\pi=0$)")
-        axV.plot(beta, r["V_in_pi0"], "o--", color="C0", alpha=0.7, label=r"$V_{\mathrm{in}}$ ($\pi=0$)")
-    axV.set_ylabel(r"raw action $V$ at well")
-    axV.set_title("well depths along ray (more negative = deeper)")
+    axV.set_ylabel(r"raw $V$ at well (eq)")
+    axV.set_title("eq well depths (both drop; outer stays ~3 above)")
     axV.legend(frameon=False, fontsize=8)
     axV.grid(True, alpha=0.3)
 
-    # gap: negative means outer below inner
+    # gap: negative means outer below inner — eq on left axis, π=0 on right
     axDV.axhline(0.0, color="k", lw=0.8)
-    axDV.plot(beta, r["dV_raw"], "o-", color="C2", label=r"$V_{\mathrm{out}}-V_{\mathrm{in}}$ (eq)")
-    axDV.plot(beta, r["dV_raw_pi0"], "s--", color="C3", label=r"$V_{\mathrm{out}}-V_{\mathrm{in}}$ ($\pi=0$)")
-    axDV.set_ylabel(r"$dV_{\mathrm{raw}}$")
-    axDV.set_title(r"$dV<0$ ⇒ outer wells below inner")
-    axDV.legend(frameon=False, fontsize=8)
+    axDV.plot(beta, r["dV_raw"], "o-", color="C2", label=r"$dV$ (eq)")
+    axDV.set_ylabel(r"$dV_{\mathrm{raw}}$ (eq)", color="C2")
+    axDV.tick_params(axis="y", labelcolor="C2")
+    axDV2 = axDV.twinx()
+    axDV2.plot(beta, r["dV_raw_pi0"], "s--", color="C3", label=r"$dV$ ($\pi=0$)")
+    axDV2.set_ylabel(r"$dV_{\mathrm{raw}}$ ($\pi=0$)", color="C3")
+    axDV2.tick_params(axis="y", labelcolor="C3")
+    axDV.set_title(r"$dV<0$ ⇒ outer below inner (only at $\pi=0$ here)")
+    h1, l1 = axDV.get_legend_handles_labels()
+    h2, l2 = axDV2.get_legend_handles_labels()
+    axDV.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8)
     axDV.grid(True, alpha=0.3)
 
     axMu.plot(beta, r["mu_out"], "s-", color="C3", label=r"$\mu_{\mathrm{out}}$ (eq)")
