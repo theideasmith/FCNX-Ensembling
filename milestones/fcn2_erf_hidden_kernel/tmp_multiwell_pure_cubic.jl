@@ -441,7 +441,7 @@ function ray_scan_main()
     @printf("beta=1 base: d0=%g N0=%g sa0=%g kappa0=%g P0=%.2f  (steepwell exponents)\n",
         d0, n0, sa00, κ0, P0)
     io = open(out, "w")
-    println(io, "beta,alpha,d,P,N,chi,sa0,kappa,Finv,Finv3,tau,R_lin,pi_out,L3,dV_raw,V_in,V_out,mu_in,mu_out,dV_raw_pi0,dV_raw_pi1,Vout_pi1,pi_max,dF_hi,nwells")
+    println(io, "beta,alpha,d,P,N,chi,sa0,kappa,Finv,Finv3,tau,R_lin,pi_out,L3,dV_raw,V_in,V_out,mu_in,mu_out,V_in_pi0,V_out_pi0,mu_out_pi0,dV_raw_pi0,dV_raw_pi1,Vout_pi1,pi_max,dF_hi,nwells")
     for β in betas
         α = α0 * β^γ
         d = round(d0 * β^εd)
@@ -461,25 +461,29 @@ function ray_scan_main()
         po_max = isempty(gridπ) ? NaN : gridπ[end][1]
         dV0 = s0 === nothing ? NaN : s0.dV_raw
         dV1 = s1 === nothing ? NaN : s1.dV_raw
+        Vin0 = s0 === nothing ? NaN : s0.win[3]
+        Vout0 = s0 === nothing ? NaN : s0.wout[3]
+        mu0 = s0 === nothing ? NaN : s0.wout[1]
         V1 = s1 === nothing ? NaN : s1.wout[3]
         F_pi0 = s0 === nothing ? NaN : s0.F
         F_pimax = s1 === nothing ? NaN : s1.F
         dF_hi = (isfinite(F_pi0) && isfinite(F_pimax)) ? (F_pimax - F_pi0) : NaN
         if eq === nothing
-            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,%.10g,%.10g,%.10g,%.10g,%.10g,0\n",
-                β, α, d, P, N, chi, sa0, κ, Finv, Finv * eps_task^2, τ, R_lin, dV0, dV1, V1, po_max, dF_hi)
-            @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f Finv=%.3g R_lin=%.3g  no eq  dV_raw(pi0)=%.3g pi_max=%.3g dF_hi=%.3g\n",
-                β, d, chi, Finv, R_lin, dV0, po_max, dF_hi)
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,0\n",
+                β, α, d, P, N, chi, sa0, κ, Finv, Finv * eps_task^2, τ, R_lin,
+                Vin0, Vout0, mu0, dV0, dV1, V1, po_max, dF_hi)
+            @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f Finv=%.3g  no eq  V_out(pi0)=%.3g dV_raw(pi0)=%.3g\n",
+                β, d, chi, Finv, Vout0, dV0)
             continue
         end
         po, s = eq.po, eq.s
         mark = s.dV_raw < 0 ? "OUTER_HAM" : "inner_ham"
-        @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+        @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
             β, α, d, P, N, chi, sa0, κ, Finv, Finv * eps_task^2, τ, R_lin,
-            po, s.L3, s.dV_raw, s.win[3], s.wout[3], s.win[1], s.wout[1], dV0, dV1, V1,
-            po_max, dF_hi, s.nwells)
-        @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f P=%-7.1f N=%-5.0f sa0=%.4g Finv=%.3g R_lin=%.2g  pi_out=%.3g L3=%.3f dV_raw=%+.3g  pi_max=%.3g dF_hi=%+.3g  %s\n",
-            β, d, chi, P, N, sa0, Finv, R_lin, po, s.L3, s.dV_raw, po_max, dF_hi, mark)
+            po, s.L3, s.dV_raw, s.win[3], s.wout[3], s.win[1], s.wout[1],
+            Vin0, Vout0, mu0, dV0, dV1, V1, po_max, dF_hi, s.nwells)
+        @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f Finv=%.3g  pi_out=%.3g  V_in=%.4g V_out=%.4g dV=%+.3g | pi0: V_out=%.4g dV=%+.3g  %s\n",
+            β, d, chi, Finv, po, s.win[3], s.wout[3], s.dV_raw, Vout0, dV0, mark)
         flush(stdout)
     end
     close(io)
