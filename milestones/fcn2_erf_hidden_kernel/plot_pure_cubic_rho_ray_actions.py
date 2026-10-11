@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-DEFAULT_KEEP = [0.20, 0.15, 0.1334, 0.10, 0.07499, 0.04217]
+DEFAULT_KEEP = [0.20, 0.15, 0.1334, 0.10]
 
 
 def main() -> None:
@@ -23,9 +23,9 @@ def main() -> None:
         default=",".join(str(x) for x in DEFAULT_KEEP),
         help="comma-separated ρ values to plot",
     )
-    ap.add_argument("--wmax", type=float, default=7.0)
-    ap.add_argument("--ymin", type=float, default=-25.0)
-    ap.add_argument("--ymax", type=float, default=3.0)
+    ap.add_argument("--wmax", type=float, default=4.0)
+    ap.add_argument("--ymin", type=float, default=-3.0)
+    ap.add_argument("--ymax", type=float, default=2.0)
     args = ap.parse_args()
 
     data = np.genfromtxt(args.actions, delimiter=",", names=True)
