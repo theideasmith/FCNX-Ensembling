@@ -18,8 +18,11 @@ def main() -> None:
     ap.add_argument("--actions", required=True)
     ap.add_argument("--summary", default=None, help="optional summary CSV with phase")
     ap.add_argument("--out", default=None)
-    ap.add_argument("--keep", default=",".join(str(x) for x in DEFAULT_KEEP),
-                    help="comma-separated ρ values to plot")
+    ap.add_argument(
+        "--keep",
+        default=",".join(str(x) for x in DEFAULT_KEEP),
+        help="comma-separated ρ values to plot",
+    )
     ap.add_argument("--wmax", type=float, default=7.0)
     ap.add_argument("--ymin", type=float, default=-25.0)
     ap.add_argument("--ymax", type=float, default=3.0)
@@ -34,7 +37,7 @@ def main() -> None:
     targets = [float(x) for x in args.keep.split(",") if x.strip()]
     rhos = [nearest(t) for t in targets]
 
-    phase = {}
+    phase: dict[float, str] = {}
     if args.summary and Path(args.summary).is_file():
         summary = np.genfromtxt(args.summary, delimiter=",", names=True, dtype=None, encoding=None)
         for row in np.atleast_1d(summary):
