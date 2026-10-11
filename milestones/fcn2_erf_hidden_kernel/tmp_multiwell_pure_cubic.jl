@@ -1,14 +1,22 @@
 # Pure-cubic multi-well matrix Laplace (He1–He3 basis, teacher y = (0, ε)).
 #
-# Same V and mixture as multiwell_laplace.jl, but the target in G, F, and
-# learnability is y = (0, ε) instead of (1, ε). The linear channel stays in
+# Same V and mixture as multiwell_laplace.jl, but the target in G, free energy,
+# and learnability is y = (0, ε) instead of (1, ε). The linear channel stays in
 # the 2×2 kernel (Onsager / induced He1); it just has no teacher weight.
+#
+# Invariant action factor (steepwell ray):
+#     Finv = 2 P² sa0 / (π κ² d N)
+# A cubic-weighted proxy is Finv3 = ε² Finv (only the cubic channel is driven).
 #
 #   julia tmp_multiwell_pure_cubic.jl --scan --d 10 --n1 400 --chi 400 --sa0 1 \
 #       --eps 1 --Ps 50,100,200,500,1000,2000,5000,10000 --kappas 0.5
 #
-# Reports dV = V(μ_out) − V(μ_in) − log(σ_out/σ_in). Outer wells are the
-# Hamiltonian global mins when dV < 0 (and π_out → 1 under Boltzmann masses).
+#   # Sweep Finv at steepwell-like χ=1 (P solved from Finv; κ, sa0, d, N fixed):
+#   julia tmp_multiwell_pure_cubic.jl --F-scan --d 10 --n1 1000 --chi 1 --sa0 0.03 \
+#       --eps 1 --kappa 0.003 --Fs 1e2,1e3,1e4,3e4,1e5,3e5,1e6,3e6,1e7
+#
+# Reports dV_raw = V(μ_out) − V(μ_in). Outer wells are Hamiltonian global mins
+# when dV_raw < 0.
 
 include(joinpath(@__DIR__, "..", "..", "julia_lib", "FCS2_VGA.jl"))
 using .FCS2_VGA
@@ -153,12 +161,66 @@ end
 
 const PO_GRID = vcat(0.0, 10 .^ range(-5, -1, length=17), range(0.12, 1.0, length=23))
 
+"""Steepwell invariant action factor Finv = 2 P² sa0 / (π κ² d N)."""
+invariant_F(P, κ, c::Cfg) = 2 * P^2 * c.a0 / (π * κ^2 * c.d * c.n1)
+
+"""P that realizes Finv at fixed (d, N, sa0, κ)."""
+P_from_Finv(Finv, κ, c::Cfg) = κ * sqrt(π * c.d * c.n1 * Finv / (2 * c.a0))
+
 function make_cfg()
     d = parse(Float64, argval("--d", "10"))
     s0 = 1.0
     Cfg(d, parse(Float64, argval("--n1", "400")), parse(Float64, argval("--chi", "400")),
         parse(Float64, argval("--sa0", "1")), parse(Float64, argval("--eps", "1")), s0,
         1.0 + 2.0 * (d - 1.0) * s0 / d)
+end
+
+"""Lowest free-energy π_out root at fixed (P, κ). Also returns F(π=0) and F(π→1) gap."""
+function equilibrium_at(c::Cfg, P, κ; Q_warm=nothing)
+    Qprev = Q_warm === nothing ? seed_Q(c, 0.0, 0.5) : Q_warm
+    best = nothing
+    grid = Tuple{Float64,Any}[]
+    F0 = NaN
+    F1 = NaN
+    for po in PO_GRID
+        s = nothing
+        Q0s = Any[Qprev, seed_Q(c, 0.0, 0.5), seed_Q(c, 2.0, 0.3),
+            0.5 * seed_Q(c, 0.0, 0.5) + 0.5 * seed_Q(c, 2.0, 0.3)]
+        Q_warm === nothing || push!(Q0s, Q_warm)
+        for Q0 in Q0s
+            s = solve_fixed_pi(c, po, Q0, P, κ)
+            s === nothing || break
+        end
+        s === nothing && continue
+        Qprev = s.Q
+        push!(grid, (po, s))
+        (best === nothing || s.F < best[2].F) && (best = (po, s))
+        po == 0.0 && (F0 = s.F)
+        po >= 0.9 && (F1 = s.F)  # last high-π point that converged
+    end
+    mins = Tuple{Float64,Any}[]
+    if !isempty(grid) && grid[1][1] == 0.0 && (grid[1][2].nwells < 2 || grid[1][2].dV >= 0)
+        push!(mins, grid[1])
+    end
+    for j in 1:length(grid)-1
+        (pa, sa), (pb, sb) = grid[j], grid[j+1]
+        (sa.dV < 0 && sb.dV >= 0) || continue
+        lo, hi, Qs, sm = pa, pb, sa.Q, sa
+        for _ in 1:40
+            m = 0.5 * (lo + hi)
+            t = solve_fixed_pi(c, m, Qs, P, κ)
+            t === nothing && break
+            sm, Qs = t, t.Q
+            t.dV < 0 ? (lo = m) : (hi = m)
+            hi - lo < 1e-6 * (1 + hi) && break
+        end
+        push!(mins, (0.5 * (lo + hi), sm))
+    end
+    isempty(mins) && best !== nothing && push!(mins, best)
+    isempty(mins) && return nothing
+    po, s = mins[argmin([m[2].F for m in mins])]
+    ΔF_ends = (isfinite(F0) && isfinite(F1)) ? (F1 - F0) : NaN
+    (po=po, s=s, F0=F0, F1=F1, dF_outer_minus_inner=ΔF_ends, grid=grid)
 end
 
 function scan_main()
@@ -169,77 +231,82 @@ function scan_main()
     out = argval("--out", "tmp_pure_cubic_scan_d$(Int(c.d)).csv")
     eqout = replace(out, ".csv" => "_equilibrium.csv")
     eqio = open(eqout, "w")
-    println(eqio, "P,kappa,pi_out,F,f1,L3,mu_in,sig_in,V_in,mu_out,sig_out,V_out,dV,dV_raw,nwells")
+    println(eqio, "P,kappa,Finv,Finv3,pi_out,Fmf,f1,L3,mu_in,sig_in,V_in,mu_out,sig_out,V_out,dV,dV_raw,dF_ends,nwells")
     @printf("pure cubic y=(0, ε=%.4g); d=%g N=%g χ=%g sa0=%g\n", c.eps, c.d, c.n1, c.chi, c.a0)
     open(out, "w") do io
-        println(io, "P,kappa,pi_out,F,f1,L3,mu_in,sig_in,V_in,mu_out,sig_out,V_out,dV,dV_raw,nwells,Q11,Q13,Q33")
+        println(io, "P,kappa,Finv,pi_out,Fmf,f1,L3,mu_in,sig_in,V_in,mu_out,sig_out,V_out,dV,dV_raw,nwells,Q11,Q13,Q33")
         Qeq_prev = nothing
         for (P, κ) in zip(Ps, κs)
-            Qprev = seed_Q(c, 0.0, 0.5)
-            best = nothing
-            grid = Tuple{Float64,Any}[]
-            for po in PO_GRID
-                s = nothing
-                Q0s = Any[Qprev, seed_Q(c, 0.0, 0.5), seed_Q(c, 2.0, 0.3),
-                    0.5 * seed_Q(c, 0.0, 0.5) + 0.5 * seed_Q(c, 2.0, 0.3)]
-                Qeq_prev === nothing || push!(Q0s, Qeq_prev)
-                for Q0 in Q0s
-                    s = solve_fixed_pi(c, po, Q0, P, κ)
-                    s === nothing || break
-                end
-                if s === nothing
-                    @printf(io, "%.10g,%.10g,%.6g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,0,NaN,NaN,NaN\n",
-                        P, κ, po)
-                    continue
-                end
-                Qprev = s.Q
-                push!(grid, (po, s))
-                @printf(io, "%.10g,%.10g,%.6g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d,%.6g,%.6g,%.6g\n",
-                    P, κ, po, s.F, s.f1, s.L3, s.win[1], s.win[2], s.win[3],
-                    s.wout[1], s.wout[2], s.wout[3], s.dV, s.dV_raw, s.nwells,
-                    s.Q[1, 1], s.Q[1, 2], s.Q[2, 2])
-                (best === nothing || s.F < best[2].F) && (best = (po, s))
+            Finv = invariant_F(P, κ, c)
+            eq = equilibrium_at(c, P, κ; Q_warm=Qeq_prev)
+            if eq === nothing
+                @printf("d=%g P=%-7.0f Finv=%.4g nothing converged\n", c.d, P, Finv)
+                continue
             end
-            mins = Tuple{Float64,Any}[]
-            if !isempty(grid) && grid[1][1] == 0.0 && (grid[1][2].nwells < 2 || grid[1][2].dV >= 0)
-                push!(mins, grid[1])
+            po, s = eq.po, eq.s
+            Qeq_prev = s.Q
+            for (poi, si) in eq.grid
+                @printf(io, "%.10g,%.10g,%.10g,%.6g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d,%.6g,%.6g,%.6g\n",
+                    P, κ, Finv, poi, si.F, si.f1, si.L3, si.win[1], si.win[2], si.win[3],
+                    si.wout[1], si.wout[2], si.wout[3], si.dV, si.dV_raw, si.nwells,
+                    si.Q[1, 1], si.Q[1, 2], si.Q[2, 2])
             end
-            for j in 1:length(grid)-1
-                (pa, sa), (pb, sb) = grid[j], grid[j+1]
-                (sa.dV < 0 && sb.dV >= 0) || continue
-                lo, hi, Qs, sm = pa, pb, sa.Q, sa
-                for _ in 1:40
-                    m = 0.5 * (lo + hi)
-                    t = solve_fixed_pi(c, m, Qs, P, κ)
-                    t === nothing && break
-                    sm, Qs = t, t.Q
-                    t.dV < 0 ? (lo = m) : (hi = m)
-                    hi - lo < 1e-6 * (1 + hi) && break
-                end
-                push!(mins, (0.5 * (lo + hi), sm))
-            end
-            isempty(mins) && best !== nothing && push!(mins, best)
-            if !isempty(mins)
-                best = mins[argmin([m[2].F for m in mins])]
-                po, s = best
-                Qeq_prev = s.Q
-                @printf(eqio, "%.10g,%.10g,%.6g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
-                    P, κ, po, s.F, s.f1, s.L3, s.win[1], s.win[2], s.win[3],
-                    s.wout[1], s.wout[2], s.wout[3], s.dV, s.dV_raw, s.nwells)
-                flush(eqio)
-                # dV ≈ 0 at the free-energy root by construction; Hamiltonian
-                # ordering is dV_raw = V(out) − V(in). Outer is global when dV_raw < 0.
-                mark = s.dV_raw < 0 ? "OUTER_HAMILTONIAN_MIN" : "inner_hamiltonian_min"
-                @printf("d=%g P=%-7.0f π_out=%.4g  L3=%.4f f1=%.4f  in μ=%.3f V=%.4g  out μ=%.3f V=%.4g  dV_raw=%.4g  %s\n",
-                    c.d, P, po, s.L3, s.f1, s.win[1], s.win[3], s.wout[1], s.wout[3], s.dV_raw, mark)
-            else
-                @printf("d=%g P=%-7.0f nothing converged\n", c.d, P)
-            end
+            @printf(eqio, "%.10g,%.10g,%.10g,%.10g,%.6g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+                P, κ, Finv, Finv * c.eps^2, po, s.F, s.f1, s.L3, s.win[1], s.win[2], s.win[3],
+                s.wout[1], s.wout[2], s.wout[3], s.dV, s.dV_raw, eq.dF_outer_minus_inner, s.nwells)
+            flush(eqio)
+            mark = s.dV_raw < 0 ? "OUTER_HAMILTONIAN_MIN" : "inner_hamiltonian_min"
+            @printf("d=%g P=%-7.0f Finv=%.4g Finv3=%.4g π_out=%.4g  L3=%.4f  dV_raw=%.4g  ΔF(π1−π0)=%.4g  %s\n",
+                c.d, P, Finv, Finv * c.eps^2, po, s.L3, s.dV_raw, eq.dF_outer_minus_inner, mark)
             flush(stdout)
         end
     end
     close(eqio)
     println("saved ", out, " and ", eqout)
+end
+
+"""Sweep the steepwell invariant Finv at fixed (d, N, χ, sa0, κ); P = P(Finv)."""
+function f_scan_main()
+    # Steepwell-like defaults: χ=1, small sa0, cold κ (override with flags).
+    d = parse(Float64, argval("--d", "10"))
+    n1 = parse(Float64, argval("--n1", "1000"))
+    chi = parse(Float64, argval("--chi", "1"))
+    sa0 = parse(Float64, argval("--sa0", "0.03"))
+    eps = parse(Float64, argval("--eps", "1"))
+    s0 = 1.0
+    c = Cfg(d, n1, chi, sa0, eps, s0, 1.0 + 2.0 * (d - 1.0) * s0 / d)
+    κ = parse(Float64, argval("--kappa", "0.003"))
+    Fs = parse_list(argval("--Fs", "100,300,1000,3000,10000,30000,46000,1e5,3e5,1e6,3e6,1e7"))
+    out = argval("--out", "tmp_pure_cubic_Fscan_d$(Int(c.d)).csv")
+    @printf("F-scan pure cubic y=(0, ε=%.4g); d=%g N=%g χ=%g sa0=%g κ=%g\n",
+        c.eps, c.d, c.n1, c.chi, c.a0, κ)
+    @printf("Finv = 2 P² sa0 / (π κ² d N); Finv3 = ε² Finv; steepwell ray sits near Finv≈4.6e4\n")
+    open(out, "w") do io
+        println(io, "Finv,Finv3,P,kappa,pi_out,Fmf,F0,F1,dF_ends,f1,L3,mu_in,sig_in,V_in,mu_out,sig_out,V_out,dV_raw,nwells")
+        Qeq_prev = nothing
+        for Finv in Fs
+            P = P_from_Finv(Finv, κ, c)
+            eq = equilibrium_at(c, P, κ; Q_warm=Qeq_prev)
+            if eq === nothing
+                @printf(io, "%.10g,%.10g,%.10g,%.10g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,0\n",
+                    Finv, Finv * c.eps^2, P, κ)
+                @printf("Finv=%.4g P=%.1f  nothing converged\n", Finv, P)
+                continue
+            end
+            po, s = eq.po, eq.s
+            Qeq_prev = s.Q
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.6g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+                Finv, Finv * c.eps^2, P, κ, po, s.F, eq.F0, eq.F1, eq.dF_outer_minus_inner,
+                s.f1, s.L3, s.win[1], s.win[2], s.win[3], s.wout[1], s.wout[2], s.wout[3],
+                s.dV_raw, s.nwells)
+            mark = s.dV_raw < 0 ? "OUTER_HAMILTONIAN_MIN" : "inner_hamiltonian_min"
+            @printf("Finv=%.4g Finv3=%.4g P=%-8.1f π_out=%.4g L3=%.4f dV_raw=%+.4g  ΔF(π1−π0)=%+.4g  in μ=%.3f V=%.4g | out μ=%.3f V=%.4g  %s\n",
+                Finv, Finv * c.eps^2, P, po, s.L3, s.dV_raw, eq.dF_outer_minus_inner,
+                s.win[1], s.win[3], s.wout[1], s.wout[3], mark)
+            flush(stdout)
+        end
+    end
+    println("saved ", out)
 end
 
 function main()
@@ -289,4 +356,10 @@ function main()
     println("saved ", out)
 end
 
-"--scan" in ARGS ? scan_main() : main()
+if "--F-scan" in ARGS
+    f_scan_main()
+elseif "--scan" in ARGS
+    scan_main()
+else
+    main()
+end
