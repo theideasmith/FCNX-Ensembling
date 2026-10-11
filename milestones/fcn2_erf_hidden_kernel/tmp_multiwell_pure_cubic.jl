@@ -15,8 +15,14 @@
 #   julia tmp_multiwell_pure_cubic.jl --F-scan --d 10 --n1 1000 --chi 1 --sa0 0.03 \
 #       --eps 1 --kappa 0.003 --Fs 1e2,1e3,1e4,3e4,1e5,3e5,1e6,3e6,1e7
 #
+#   # Steepwell-exponent ray at fixed Finv (χ=1 default; --chi -1 ⇒ χ=N):
+#   julia tmp_multiwell_pure_cubic.jl --ray-scan --Finv 200 --eps 1 --chi -1
+#   julia tmp_multiwell_pure_cubic.jl --pi-scan --Finv 200 --beta 10 --chi -1
+#   julia tmp_multiwell_pure_cubic.jl --ray-F-scan --beta 10 --chi -1 --eps 1
+#
 # Reports dV_raw = V(μ_out) − V(μ_in). Outer wells are Hamiltonian global mins
-# when dV_raw < 0.
+# when dV_raw < 0. With χ=1, outer dies before π=O(1); with χ=N, Laplace
+# self-consistency reaches π_out ~ O(1) inside the Finv~100–300 window.
 
 include(joinpath(@__DIR__, "..", "..", "julia_lib", "FCS2_VGA.jl"))
 using .FCS2_VGA
@@ -157,6 +163,52 @@ function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
             dV_raw=wout[3] - win[3])
     end
     nothing
+end
+
+"""Walk π from 0→1 with warm Q; return densest grid of converged (po, s).
+
+When a step fails, refine between last-good and failed π (binary) so π_max is tight.
+Also try a few cold outer-heavy seeds before giving up.
+"""
+function walk_pi(c::Cfg, P, κ; pos=nothing)
+    pos === nothing && (pos = vcat(0.0, 10 .^ range(-5, -0.7; length=28),
+        range(0.25, 0.98; length=30), 0.99, 0.995, 0.999))
+    grid = Tuple{Float64,Any}[]
+    Qprev = seed_Q(c, 0.0, 0.5)
+    failed_po = nothing
+    for po in pos
+        s = nothing
+        seeds = Any[Qprev, seed_Q(c, 0.0, 0.5), seed_Q(c, 2.0, 0.3),
+            seed_Q(c, 3.0, 0.25), seed_Q(c, 4.0, 0.2),
+            (1 - po) * seed_Q(c, 0.0, 0.4) + po * seed_Q(c, 2.5, 0.25)]
+        for Q0 in seeds
+            s = solve_fixed_pi(c, po, Q0, P, κ)
+            s === nothing || break
+        end
+        if s === nothing
+            failed_po = po
+            break
+        end
+        push!(grid, (po, s))
+        Qprev = s.Q
+    end
+    # binary refine up to the failure edge
+    if failed_po !== nothing && !isempty(grid)
+        lo, hi, Qs = grid[end][1], failed_po, grid[end][2].Q
+        for _ in 1:25
+            m = 0.5 * (lo + hi)
+            t = solve_fixed_pi(c, m, Qs, P, κ)
+            if t === nothing
+                hi = m
+            else
+                lo, Qs = m, t.Q
+                push!(grid, (m, t))
+            end
+            hi - lo < 1e-5 && break
+        end
+        sort!(grid; by=first)
+    end
+    grid
 end
 
 const PO_GRID = vcat(0.0, 10 .^ range(-5, -1, length=17), range(0.12, 1.0, length=23))
@@ -356,7 +408,217 @@ function main()
     println("saved ", out)
 end
 
-if "--F-scan" in ARGS
+"""Steepwell-exponent ray at a chosen Finv (not the steepwell value 4.6e4).
+
+Same exponents as red_robin_alpha_beta_invariant_steepwell.py:
+  d~β^{1/2}, N~β^{1/4}, sa0~β^{-3/4}, α=α0 β^{5/4}, P~α^{3/4}, κ~κ0(α/β)^{3/4}
+so Finv is flat in β. Base (β=1) is retargeted so Finv = --Finv (default 200),
+which is inside the pure-cubic outer-Hamiltonian window.
+
+Also reports endpoint Hamiltonians at π=0 and π≈1 (self-consistent Q at that π),
+and the linear undistributed ratio R_lin = 2 Finv / τ.
+"""
+function ray_scan_main()
+    Finv_target = parse(Float64, argval("--Finv", "200"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    d0 = parse(Float64, argval("--d0", "5"))
+    n0 = parse(Float64, argval("--n1", "1000"))  # N0 at β=1
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    κ0 = parse(Float64, argval("--kappa0", string(1 / n0)))
+    α0 = parse(Float64, argval("--alpha0", "1"))
+    γ = parse(Float64, argval("--gamma", "1.25"))
+    # chi flag: default 1 (steepwell / sigma_a). Pass --chi -1 for classic chi=N.
+    chi_flag = parse(Float64, argval("--chi", "1"))
+    εd, ν, ω = 0.5, 0.25, 0.75
+    ρ, λ = -ω, ω
+    P0 = κ0 * sqrt(π * d0 * n0 * Finv_target / (2 * sa00))
+    betas = parse_list(argval("--betas", "1,2,3.162,10,31.623,100"))
+    chi_tag = chi_flag < 0 ? "chiN" : "chi$(chi_flag)"
+    out = argval("--out", "tmp_pure_cubic_ray_Finv$(Int(round(Finv_target)))_$(chi_tag).csv")
+    chi_label = chi_flag < 0 ? "N" : string(chi_flag)
+    @printf("ray-scan pure cubic y=(0,eps=%.4g)  target Finv=%.4g  Finv3=%.4g  chi=%s\n",
+        eps_task, Finv_target, Finv_target * eps_task^2, chi_label)
+    @printf("beta=1 base: d0=%g N0=%g sa0=%g kappa0=%g P0=%.2f  (steepwell exponents)\n",
+        d0, n0, sa00, κ0, P0)
+    io = open(out, "w")
+    println(io, "beta,alpha,d,P,N,chi,sa0,kappa,Finv,Finv3,tau,R_lin,pi_out,L3,dV_raw,V_in,V_out,mu_in,mu_out,dV_raw_pi0,dV_raw_pi1,Vout_pi1,pi_max,dF_hi,nwells")
+    for β in betas
+        α = α0 * β^γ
+        d = round(d0 * β^εd)
+        N = round(n0 * β^ν)
+        sa0 = sa00 * β^ρ
+        P = P0 * α^λ
+        κ = κ0 * (α / β)^ω
+        local chi = chi_flag < 0 ? N : chi_flag
+        c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+        Finv = invariant_F(P, κ, c)
+        τ = c.T
+        R_lin = 2 * Finv / τ
+        eq = equilibrium_at(c, P, κ)
+        gridπ = walk_pi(c, P, κ)
+        s0 = isempty(gridπ) || gridπ[1][1] != 0.0 ? nothing : gridπ[1][2]
+        s1 = isempty(gridπ) ? nothing : gridπ[end][2]
+        po_max = isempty(gridπ) ? NaN : gridπ[end][1]
+        dV0 = s0 === nothing ? NaN : s0.dV_raw
+        dV1 = s1 === nothing ? NaN : s1.dV_raw
+        V1 = s1 === nothing ? NaN : s1.wout[3]
+        F_pi0 = s0 === nothing ? NaN : s0.F
+        F_pimax = s1 === nothing ? NaN : s1.F
+        dF_hi = (isfinite(F_pi0) && isfinite(F_pimax)) ? (F_pimax - F_pi0) : NaN
+        if eq === nothing
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,%.10g,%.10g,%.10g,%.10g,%.10g,0\n",
+                β, α, d, P, N, chi, sa0, κ, Finv, Finv * eps_task^2, τ, R_lin, dV0, dV1, V1, po_max, dF_hi)
+            @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f Finv=%.3g R_lin=%.3g  no eq  dV_raw(pi0)=%.3g pi_max=%.3g dF_hi=%.3g\n",
+                β, d, chi, Finv, R_lin, dV0, po_max, dF_hi)
+            continue
+        end
+        po, s = eq.po, eq.s
+        mark = s.dV_raw < 0 ? "OUTER_HAM" : "inner_ham"
+        @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+            β, α, d, P, N, chi, sa0, κ, Finv, Finv * eps_task^2, τ, R_lin,
+            po, s.L3, s.dV_raw, s.win[3], s.wout[3], s.win[1], s.wout[1], dV0, dV1, V1,
+            po_max, dF_hi, s.nwells)
+        @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f P=%-7.1f N=%-5.0f sa0=%.4g Finv=%.3g R_lin=%.2g  pi_out=%.3g L3=%.3f dV_raw=%+.3g  pi_max=%.3g dF_hi=%+.3g  %s\n",
+            β, d, chi, P, N, sa0, Finv, R_lin, po, s.L3, s.dV_raw, po_max, dF_hi, mark)
+        flush(stdout)
+    end
+    close(io)
+    println("saved ", out)
+end
+
+"""Dump F(π), dV_raw(π) along a warm walk at one (Finv, β) or fixed (d,N,P,κ)."""
+function pi_scan_main()
+    Finv_target = parse(Float64, argval("--Finv", "200"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    β = parse(Float64, argval("--beta", "10"))
+    d0 = parse(Float64, argval("--d0", "5"))
+    n0 = parse(Float64, argval("--n1", "1000"))
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    κ0 = parse(Float64, argval("--kappa0", string(1 / n0)))
+    α0 = parse(Float64, argval("--alpha0", "1"))
+    γ = parse(Float64, argval("--gamma", "1.25"))
+    χ = parse(Float64, argval("--chi", "1"))
+    εd, ν, ω = 0.5, 0.25, 0.75
+    ρ, λ = -ω, ω
+    P0 = κ0 * sqrt(π * d0 * n0 * Finv_target / (2 * sa00))
+    α = α0 * β^γ
+    d = round(d0 * β^εd)
+    N = round(n0 * β^ν)
+    sa0 = sa00 * β^ρ
+    P = P0 * α^λ
+    κ = κ0 * (α / β)^ω
+    # χ=N classic option: set --chi equal to N via --chi -1
+    chi = χ < 0 ? N : χ
+    c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    Finv = invariant_F(P, κ, c)
+    R_lin = 2 * Finv / c.T
+    out = argval("--out", "tmp_pure_cubic_pi_Finv$(Int(round(Finv_target)))_beta$(β).csv")
+    @printf("π-scan pure cubic y=(0,ε=%.4g) β=%.4g d=%g N=%g χ=%g sa0=%.4g P=%.2f κ=%.4g Finv=%.4g R_lin=%.3g\n",
+        eps_task, β, d, N, chi, sa0, P, κ, Finv, R_lin)
+    grid = walk_pi(c, P, κ)
+    local Fref = isempty(grid) ? 0.0 : grid[1][2].F
+    io = open(out, "w")
+    println(io, "pi_out,Fmf,dF_from0,dV_raw,dV,V_in,V_out,mu_in,mu_out,sig_in,sig_out,f1,L3,nwells,Q11,Q13,Q33")
+    for (po, s) in grid
+        dF = s.F - Fref
+        @printf(io, "%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d,%.6g,%.6g,%.6g\n",
+            po, s.F, dF, s.dV_raw, s.dV, s.win[3], s.wout[3],
+            s.win[1], s.wout[1], s.win[2], s.wout[2], s.f1, s.L3, s.nwells,
+            s.Q[1, 1], s.Q[1, 2], s.Q[2, 2])
+        @printf("π=%-8.5g  ΔF=%+.5g  dV_raw=%+.4g  dV=%+.4g  μ_out=%.3f L3=%.3f nwells=%d\n",
+            po, dF, s.dV_raw, s.dV, s.wout[1], s.L3, s.nwells)
+    end
+    close(io)
+    if !isempty(grid)
+        best = grid[argmin([g[2].F for g in grid])]
+        cross = nothing
+        for j in 1:length(grid)-1
+            (pa, sa), (pb, sb) = grid[j], grid[j+1]
+            (sa.dV < 0 && sb.dV >= 0) || continue
+            cross = (0.5 * (pa + pb), sa, sb)
+            break
+        end
+        @printf("min_F at π_out=%.4g  ΔF=%.4g  dV_raw=%+.4g  π_max_converged=%.4g\n",
+            best[1], best[2].F - Fref, best[2].dV_raw, grid[end][1])
+        if cross !== nothing
+            @printf("Laplace dV-cross near π≈%.4g  (dV lo=%+.3g hi=%+.3g)\n",
+                cross[1], cross[2].dV, cross[3].dV)
+        else
+            dVend = grid[end][2].dV
+            @printf("no dV-cross on walk; last π=%.4g dV=%+.4g (outer %s)\n",
+                grid[end][1], dVend, dVend < 0 ? "still deeper" : "shallower/gone")
+        end
+    else
+        println("no π points converged")
+    end
+    println("saved ", out)
+end
+
+"""Dense Finv sweep at fixed β on the steepwell ray; hunt max π_out and OUTER_HAM."""
+function ray_F_scan_main()
+    eps_task = parse(Float64, argval("--eps", "1"))
+    β = parse(Float64, argval("--beta", "10"))
+    d0 = parse(Float64, argval("--d0", "5"))
+    n0 = parse(Float64, argval("--n1", "1000"))
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    κ0 = parse(Float64, argval("--kappa0", string(1 / n0)))
+    α0 = parse(Float64, argval("--alpha0", "1"))
+    γ = parse(Float64, argval("--gamma", "1.25"))
+    χ = parse(Float64, argval("--chi", "1"))
+    Fs = parse_list(argval("--Fs", "50,80,100,120,150,180,200,250,300,400,600,800,1000,2000,5000,10000,46000"))
+    εd, ν, ω = 0.5, 0.25, 0.75
+    ρ, λ = -ω, ω
+    α = α0 * β^γ
+    d = round(d0 * β^εd)
+    N = round(n0 * β^ν)
+    sa0 = sa00 * β^ρ
+    κ = κ0 * (α / β)^ω
+    chi = χ < 0 ? N : χ
+    c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    out = argval("--out", "tmp_pure_cubic_rayF_beta$(β)_eps$(eps_task).csv")
+    @printf("ray-F-scan pure cubic y=(0,ε=%.4g) β=%.4g d=%g N=%g χ=%g sa0=%.4g κ=%.4g\n",
+        eps_task, β, d, N, chi, sa0, κ)
+    open(out, "w") do io
+        println(io, "Finv,Finv3,P,R_lin,pi_out,L3,dV_raw,V_in,V_out,mu_in,mu_out,pi_max,dF_hi,dV_raw_pi0,dV_raw_pimax,nwells")
+        for Finv_t in Fs
+            P0 = κ0 * sqrt(π * d0 * n0 * Finv_t / (2 * sa00))
+            P = P0 * α^λ
+            Finv = invariant_F(P, κ, c)
+            R_lin = 2 * Finv / c.T
+            eq = equilibrium_at(c, P, κ)
+            gridπ = walk_pi(c, P, κ)
+            s0 = isempty(gridπ) || gridπ[1][1] != 0.0 ? nothing : gridπ[1][2]
+            s1 = isempty(gridπ) ? nothing : gridπ[end][2]
+            po_max = isempty(gridπ) ? NaN : gridπ[end][1]
+            dV0 = s0 === nothing ? NaN : s0.dV_raw
+            dV1 = s1 === nothing ? NaN : s1.dV_raw
+            dF_hi = (s0 !== nothing && s1 !== nothing) ? (s1.F - s0.F) : NaN
+            if eq === nothing
+                @printf(io, "%.10g,%.10g,%.10g,%.10g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,%.10g,%.10g,%.10g,%.10g,0\n",
+                    Finv, Finv * eps_task^2, P, R_lin, po_max, dF_hi, dV0, dV1)
+                @printf("Finv=%.4g  no eq  π_max=%.3g dV0=%.3g dF_hi=%.3g\n", Finv, po_max, dV0, dF_hi)
+                continue
+            end
+            po, s = eq.po, eq.s
+            mark = s.dV_raw < 0 ? "OUTER_HAM" : "inner_ham"
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+                Finv, Finv * eps_task^2, P, R_lin, po, s.L3, s.dV_raw, s.win[3], s.wout[3],
+                s.win[1], s.wout[1], po_max, dF_hi, dV0, dV1, s.nwells)
+            @printf("Finv=%.4g Finv3=%.4g P=%-7.1f π_out=%.3g L3=%.3f dV_raw=%+.3g π_max=%.3g ΔF_hi=%+.3g  %s\n",
+                Finv, Finv * eps_task^2, P, po, s.L3, s.dV_raw, po_max, dF_hi, mark)
+            flush(stdout)
+        end
+    end
+    println("saved ", out)
+end
+
+if "--ray-scan" in ARGS
+    ray_scan_main()
+elseif "--ray-F-scan" in ARGS
+    ray_F_scan_main()
+elseif "--pi-scan" in ARGS
+    pi_scan_main()
+elseif "--F-scan" in ARGS
     f_scan_main()
 elseif "--scan" in ARGS
     scan_main()
