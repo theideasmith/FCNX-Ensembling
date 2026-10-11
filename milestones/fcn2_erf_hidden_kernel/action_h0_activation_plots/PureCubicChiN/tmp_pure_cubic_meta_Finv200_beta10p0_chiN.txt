@@ -1,0 +1,8 @@
+pure cubic y=(0,eps=1)  chi=1778  beta=10
+d=16 N=1778 sa0=0.00533484 P=62.6613 kappa=0.00153993 Finv=197.673
+pi_out=0.329395  L3=0.593495  dV_raw=+3.1919
+mu_in=0.676926 sig_in=0.00550488 V_in=-4380.5
+mu_out=9.38086 sig_out=0.128746 V_out=-4377.31
+G11=-128113 G13=-432437 G33=-1.45966e+06
+wells=action_h0_activation_plots/PureCubicChiN/tmp_pure_cubic_wells_Finv200_beta10p0_chiN.csv
+action=action_h0_activation_plots/PureCubicChiN/tmp_pure_cubic_action_Finv200_beta10p0_chiN.csv
