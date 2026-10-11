@@ -612,12 +612,108 @@ function ray_F_scan_main()
     println("saved ", out)
 end
 
+"""Dump equilibrium Laplace mixture + theoretical read-in density p(w) on ℝ.
+
+PDF on the line: center well (m=1 at 0) keeps its mass; each outer well with
+multiplicity 2 is split equally onto ±μ. Forced-π equilibrium uses π_out as the
+total outer mass (same as --ray-scan).
+"""
+function dump_pdf_main()
+    Finv_target = parse(Float64, argval("--Finv", "200"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    β = parse(Float64, argval("--beta", "10"))
+    d0 = parse(Float64, argval("--d0", "5"))
+    n0 = parse(Float64, argval("--n1", "1000"))
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    κ0 = parse(Float64, argval("--kappa0", string(1 / n0)))
+    α0 = parse(Float64, argval("--alpha0", "1"))
+    γ = parse(Float64, argval("--gamma", "1.25"))
+    chi_flag = parse(Float64, argval("--chi", "-1"))  # default classic χ=N
+    εd, ν, ω = 0.5, 0.25, 0.75
+    ρ, λ = -ω, ω
+    P0 = κ0 * sqrt(π * d0 * n0 * Finv_target / (2 * sa00))
+    α = α0 * β^γ
+    d = round(d0 * β^εd)
+    N = round(n0 * β^ν)
+    sa0 = sa00 * β^ρ
+    P = P0 * α^λ
+    κ = κ0 * (α / β)^ω
+    chi = chi_flag < 0 ? N : chi_flag
+    c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    Finv = invariant_F(P, κ, c)
+    eq = equilibrium_at(c, P, κ)
+    eq === nothing && error("no equilibrium")
+    po, s = eq.po, eq.s
+    # Rebuild wells at eq Q for full multiplicity list
+    G = amp(c, s.Q, P, κ)
+    ws = wells(potential(c, G))
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN")
+    mkpath(out_dir)
+    chi_tag = chi_flag < 0 ? "N" : string(Int(chi))
+    beta_tag = replace(string(β), "." => "p")
+    wells_path = joinpath(out_dir, "tmp_pure_cubic_wells_Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag).csv")
+    pdf_path = joinpath(out_dir, "tmp_pure_cubic_pdf_Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag).csv")
+    meta_path = joinpath(out_dir, "tmp_pure_cubic_meta_Finv$(Int(round(Finv_target)))_beta$(beta_tag)_chi$(chi_tag).txt")
+    open(wells_path, "w") do io
+        println(io, "role,mu,sig,V,multiplicity,mass")
+        # forced-π masses: (1-po) on innermost, po total on outermost (± split in PDF)
+        for (j, w) in enumerate(ws)
+            role = j == 1 ? "inner" : (j == length(ws) ? "outer" : "mid")
+            mass = role == "inner" ? (1 - po) : (role == "outer" ? po : 0.0)
+            @printf(io, "%s,%.10g,%.10g,%.10g,%d,%.10g\n",
+                role, w[1], w[2], w[3], w[4], mass)
+        end
+    end
+    # density on ℝ
+    wmax = max(abs(s.wout[1]) + 6 * s.wout[2], abs(s.win[1]) + 6 * s.win[2], 1.0)
+    wgrid = range(-1.2 * wmax, 1.2 * wmax; length=4001)
+    open(pdf_path, "w") do io
+        println(io, "w,p,p_inner,p_outer")
+        for w in wgrid
+            p_in = 0.0
+            p_out = 0.0
+            for (j, well) in enumerate(ws)
+                μ, σ, _, m = well
+                role = j == 1 ? "inner" : (j == length(ws) ? "outer" : "mid")
+                mass = role == "inner" ? (1 - po) : (role == "outer" ? po : 0.0)
+                mass == 0 && continue
+                if m == 1 || abs(μ) < 1e-12
+                    dens = mass * exp(-0.5 * ((w - μ) / σ)^2) / (σ * sqrt(2π))
+                    role == "outer" ? (p_out += dens) : (p_in += dens)
+                else
+                    # split mass equally on ±μ
+                    dens = (mass / 2) * (
+                        exp(-0.5 * ((w - μ) / σ)^2) + exp(-0.5 * ((w + μ) / σ)^2)
+                    ) / (σ * sqrt(2π))
+                    role == "outer" ? (p_out += dens) : (p_in += dens)
+                end
+            end
+            @printf(io, "%.10g,%.10g,%.10g,%.10g\n", w, p_in + p_out, p_in, p_out)
+        end
+    end
+    open(meta_path, "w") do io
+        @printf(io, "pure cubic y=(0,eps=%.4g)  chi=%g  beta=%.4g\n", eps_task, chi, β)
+        @printf(io, "d=%g N=%g sa0=%.6g P=%.6g kappa=%.6g Finv=%.6g\n", d, N, sa0, P, κ, Finv)
+        @printf(io, "pi_out=%.6g  L3=%.6g  dV_raw=%+.6g\n", po, s.L3, s.dV_raw)
+        @printf(io, "mu_in=%.6g sig_in=%.6g V_in=%.6g\n", s.win[1], s.win[2], s.win[3])
+        @printf(io, "mu_out=%.6g sig_out=%.6g V_out=%.6g\n", s.wout[1], s.wout[2], s.wout[3])
+        @printf(io, "wells=%s\npdf=%s\n", wells_path, pdf_path)
+    end
+    @printf("pi_out=%.4g  mu_in=%.4g±%.4g  mu_out=±%.4g±%.4g  dV_raw=%+.4g\n",
+        po, s.win[1], s.win[2], s.wout[1], s.wout[2], s.dV_raw)
+    println("saved ", wells_path)
+    println("saved ", pdf_path)
+    println("saved ", meta_path)
+end
+
 if "--ray-scan" in ARGS
     ray_scan_main()
 elseif "--ray-F-scan" in ARGS
     ray_F_scan_main()
 elseif "--pi-scan" in ARGS
     pi_scan_main()
+elseif "--dump-pdf" in ARGS
+    dump_pdf_main()
 elseif "--F-scan" in ARGS
     f_scan_main()
 elseif "--scan" in ARGS
