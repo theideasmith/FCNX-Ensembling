@@ -667,16 +667,23 @@ function dump_action_main()
                 role, w[1], w[2], w[3], w[4], mass)
         end
     end
-    wmax = max(abs(s.wout[1]) + 4 * s.wout[2], abs(s.win[1]) + 4, 8.0)
-    wgrid = range(-1.15 * wmax, 1.15 * wmax; length=4001)
-    Vmin = minimum(Vfn.(wgrid))
+    # Extend past the outer wells until the prior walls are visible (V back above 0
+    # and still rising). Default half-width ~ max(3|μ_out|, 40); override with --wmax.
+    wmax = parse(Float64, argval("--wmax", "nan"))
+    if !isfinite(wmax)
+        wmax = max(3.0 * abs(s.wout[1]), 40.0)
+    end
+    wgrid = range(-wmax, wmax; length=8001)
+    vals = [begin
+        c1, c3 = FCS2_VGA.hermite_point_features(w, c.T)
+        prior = (c.d / c.s0) * 0.5 * w^2
+        data = 0.5 * (G[1, 1] * c1^2 + 2G[1, 2] * c1 * c3 + G[2, 2] * c3^2)
+        (w, prior + data, prior, data)
+    end for w in wgrid]
+    Vmin = minimum(t -> t[2], vals)
     open(act_path, "w") do io
         println(io, "w,V,V_shifted,prior,data")
-        for w in wgrid
-            c1, c3 = FCS2_VGA.hermite_point_features(w, c.T)
-            prior = (c.d / c.s0) * 0.5 * w^2
-            data = 0.5 * (G[1, 1] * c1^2 + 2G[1, 2] * c1 * c3 + G[2, 2] * c3^2)
-            V = prior + data
+        for (w, V, prior, data) in vals
             @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g\n", w, V, V - Vmin, prior, data)
         end
     end
