@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the explicit cavity action V(w) = -log p (+ const) from --dump-action."""
+"""Plot the explicit cavity action V(w) = -log p from --dump-action (raw, unshifted)."""
 from __future__ import annotations
 
 import argparse
@@ -19,7 +19,7 @@ def main() -> None:
 
     act = np.genfromtxt(args.action, delimiter=",", names=True)
     w = act["w"]
-    V = act["V_shifted"]  # V - min V; same shape as -log p up to a constant
+    V = act["V"]  # raw action = -log p (+ global Z const only; not min-shifted)
 
     wells = None
     if args.wells and Path(args.wells).is_file():
@@ -33,32 +33,32 @@ def main() -> None:
         Path(args.action).name.replace("tmp_pure_cubic_action_", "pure_cubic_action_").replace(".csv", ".png")
     )
 
-    fig, ax = plt.subplots(figsize=(7.4, 4.4))
-    ax.plot(w, V, color="k", lw=1.8, label=r"$V(w)-\min V$")
+    fig, ax = plt.subplots(figsize=(8.0, 4.8))
+    ax.plot(w, V, color="k", lw=1.8, label=r"$V(w)=-\log p$ (theory)")
 
     if wells is not None:
-        V0 = float(np.min(act["V"]))
         for row in np.atleast_1d(wells):
             mu = float(row["mu"])
-            Vw = float(row["V"]) - V0
+            Vw = float(row["V"])
             role = str(row["role"])
             mass = float(row["mass"])
             col = "C3" if role == "outer" else "C0"
             xs = [mu, -mu] if abs(mu) > 1e-12 else [mu]
             for x in xs:
-                ax.axvline(x, color=col, ls="--", lw=1.0, alpha=0.75)
+                ax.axvline(x, color=col, ls="--", lw=1.0, alpha=0.7)
                 ax.scatter([x], [Vw], color=col, zorder=5, s=40)
             ax.annotate(
-                f"{role}: π={mass:.3f}\nV={float(row['V']):.1f}",
+                f"{role}: π={mass:.3f}\nV={Vw:.2f}",
                 xy=(mu, Vw),
-                xytext=(10, 22 if role == "outer" else -28),
+                xytext=(12, 30 if role == "outer" else 30),
                 textcoords="offset points",
                 fontsize=8,
                 color=col,
+                arrowprops=dict(arrowstyle="-", color=col, lw=0.8),
             )
 
     ax.set_xlabel(r"read-in weight $w$ (teacher axis)")
-    ax.set_ylabel(r"action $V(w)-\min V$   (= $-\log p$ + const)")
+    ax.set_ylabel(r"action $V(w)$  (= $-\log p$)")
     title = r"Pure-cubic matrix Laplace action $V(w)$, $\chi=N$"
     if meta_lines:
         title += "\n" + meta_lines[0]
@@ -66,18 +66,14 @@ def main() -> None:
             title += "\n" + meta_lines[2]
     ax.set_title(title, fontsize=10)
     ax.legend(frameon=False, loc="upper right", fontsize=9)
-    ax.set_xlim(w[0], w[-1])
-    if wells is not None:
-        V0 = float(np.min(act["V"]))
-        Vm = [float(r["V"]) - V0 for r in np.atleast_1d(wells)]
-        # show barrier between wells without letting far walls dominate
-        mid = 0.5 * (abs(float(np.atleast_1d(wells)[0]["mu"])) + abs(float(np.atleast_1d(wells)[-1]["mu"])))
-        mask = np.abs(w) <= mid + 1.5
-        local_max = float(np.max(V[mask])) if np.any(mask) else float(np.percentile(V, 80))
-        ax.set_ylim(-2.0, max(local_max * 1.15, max(Vm) + 20.0))
+    ax.set_xlim(float(w[0]), float(w[-1]))
+    # full raw range — no min-subtraction, nothing clipped
+    pad = 0.04 * (float(V.max()) - float(V.min()) + 1.0)
+    ax.set_ylim(float(V.min()) - pad, float(V.max()) + pad)
     fig.tight_layout()
     fig.savefig(out, dpi=160)
     print(f"saved {out}")
+    print(f"raw V range [{V.min():.4g}, {V.max():.4g}]")
 
 
 if __name__ == "__main__":
