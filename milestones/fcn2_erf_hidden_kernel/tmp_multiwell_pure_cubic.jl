@@ -707,12 +707,78 @@ function dump_action_main()
     println("saved ", meta_path)
 end
 
+"""Dump raw V(w) at the χ-equilibrium for every β on the steepwell ray.
+
+Writes a long CSV: beta,w,V,prior,data,pi_out,mu_in,mu_out,V_in,V_out,dV_raw
+for overlay plots colored by β.
+"""
+function dump_ray_actions_main()
+    Finv_target = parse(Float64, argval("--Finv", "200"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    d0 = parse(Float64, argval("--d0", "5"))
+    n0 = parse(Float64, argval("--n1", "1000"))
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    κ0 = parse(Float64, argval("--kappa0", string(1 / n0)))
+    α0 = parse(Float64, argval("--alpha0", "1"))
+    γ = parse(Float64, argval("--gamma", "1.25"))
+    chi_flag = parse(Float64, argval("--chi", "-1"))
+    wmax = parse(Float64, argval("--wmax", "40"))
+    ngrid = parse(Int, argval("--ngrid", "2001"))
+    betas = parse_list(argval("--betas", "1,2,3.162,10,31.623,100"))
+    εd, ν, ω = 0.5, 0.25, 0.75
+    ρ, λ = -ω, ω
+    P0 = κ0 * sqrt(π * d0 * n0 * Finv_target / (2 * sa00))
+    chi_tag = chi_flag < 0 ? "chiN" : "chi$(Int(chi_flag))"
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN")
+    mkpath(out_dir)
+    out = argval("--out", joinpath(out_dir, "tmp_pure_cubic_ray_actions_Finv$(Int(round(Finv_target)))_$(chi_tag).csv"))
+    @printf("ray-actions pure cubic y=(0,eps=%.4g) Finv=%.4g chi=%s  |w|<=%.3g\n",
+        eps_task, Finv_target, chi_flag < 0 ? "N" : string(chi_flag), wmax)
+    io = open(out, "w")
+    println(io, "beta,alpha,d,P,N,chi,sa0,kappa,Finv,pi_out,mu_in,mu_out,V_in,V_out,dV_raw,w,V,prior,data")
+    wgrid = range(-wmax, wmax; length=ngrid)
+    for β in betas
+        α = α0 * β^γ
+        d = round(d0 * β^εd)
+        N = round(n0 * β^ν)
+        sa0 = sa00 * β^ρ
+        P = P0 * α^λ
+        κ = κ0 * (α / β)^ω
+        chi = chi_flag < 0 ? N : chi_flag
+        c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+        Finv = invariant_F(P, κ, c)
+        eq = equilibrium_at(c, P, κ)
+        if eq === nothing
+            @printf("beta=%.4g  no equilibrium — skip\n", β)
+            continue
+        end
+        po, s = eq.po, eq.s
+        G = amp(c, s.Q, P, κ)
+        for w in wgrid
+            c1, c3 = FCS2_VGA.hermite_point_features(w, c.T)
+            prior = (c.d / c.s0) * 0.5 * w^2
+            data = 0.5 * (G[1, 1] * c1^2 + 2G[1, 2] * c1 * c3 + G[2, 2] * c3^2)
+            V = prior + data
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%.10g,%.10g,%.10g\n",
+                β, α, d, P, N, chi, sa0, κ, Finv, po, s.win[1], s.wout[1],
+                s.win[3], s.wout[3], s.dV_raw, w, V, prior, data)
+        end
+        @printf("beta=%-7.3f d=%-3.0f chi=%-5.0f Finv=%.3g pi_out=%.3g V_in=%.4g V_out=%.4g dV=%+.3g\n",
+            β, d, chi, Finv, po, s.win[3], s.wout[3], s.dV_raw)
+        flush(stdout)
+    end
+    close(io)
+    println("saved ", out)
+end
+
 if "--ray-scan" in ARGS
     ray_scan_main()
 elseif "--ray-F-scan" in ARGS
     ray_F_scan_main()
 elseif "--pi-scan" in ARGS
     pi_scan_main()
+elseif "--dump-ray-actions" in ARGS
+    dump_ray_actions_main()
 elseif "--dump-action" in ARGS || "--dump-pdf" in ARGS
     dump_action_main()
 elseif "--F-scan" in ARGS
