@@ -1476,7 +1476,139 @@ function theory_ray_main()
     end
 end
 
-if "--rho-branch-scan" in ARGS
+"""Deep ρ continuation toward L3 → 1 (warm π-neighborhood + free solve).
+
+Starts at the first ρ with a full `equilibrium_at`, then continues the basin with
+`continue_pi_min` (no full π-walk each step). Every `--reeq-every` steps (and at
+the end) re-runs `equilibrium_at` to check the global min has not jumped.
+"""
+function rho_deep_main()
+    d = parse(Float64, argval("--d", "16"))
+    n1 = parse(Float64, argval("--n1", "200"))
+    P = parse(Float64, argval("--P", "1000"))
+    sa0 = parse(Float64, argval("--sa0", "0.03"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    rhos = sort(parse_list(argval("--rhos",
+        "0.07,0.06,0.05,0.04,0.03,0.025,0.02,0.015,0.012,0.01,0.008,0.006,0.005,0.004,0.003,0.0025,0.002,0.0015,0.001,0.0007,0.0005,0.0003,0.0002,0.0001,5e-5,2e-5,1e-5")); rev=true)
+    reeq_every = parse(Int, argval("--reeq-every", "4"))
+    seed_pi = parse(Float64, argval("--seed-pi", "0.17"))  # post-FO high-π basin
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/fo_rho_deep_l3")
+    mkpath(out_dir)
+    out = argval("--out", joinpath(out_dir, "summary_deep_equilibrium.csv"))
+    c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    @printf("ρ-deep continuation  d=%g N=χ=%g P=%g sa0=%g ε=%g  seed-π=%g  %d ρ points\n",
+        d, n1, P, sa0, eps_task, seed_pi, length(rhos))
+    io = open(out, "w")
+    println(io, "rho,kappa,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,source,lam33_implied")
+    br = nothing  # (po, s)
+    for (k, ρ) in enumerate(rhos)
+        κ = ρ * sa0 * P
+        src = "continue"
+        at_edge = false
+        if br === nothing
+            # Seed the post-FO high-π basin directly (global min at ρ≲0.075).
+            seed = try
+                continue_pi_min(c, P, κ, seed_pi, seed_Q(c, 2.3, 0.2); window=0.08)
+            catch err
+                @printf("  ρ=%.4g  seed continue threw %s\n", ρ, err)
+                nothing
+            end
+            if seed === nothing
+                eq = try
+                    equilibrium_at(c, P, κ)
+                catch err
+                    @printf("  ρ=%.4g  equilibrium_at threw %s\n", ρ, err)
+                    nothing
+                end
+                if eq === nothing
+                    @printf("  ρ=%.4g  no seed equilibrium\n", ρ)
+                    continue
+                end
+                br = (po=eq.po, s=eq.s)
+                at_edge = eq.at_edge
+                src = "seed-" * string(eq.source)
+            else
+                br = (po=seed.po, s=seed.s)
+                src = "seed-pi"
+            end
+        elseif reeq_every > 0 && mod(k - 1, reeq_every) == 0
+            eq = try
+                equilibrium_at(c, P, κ; Q_warm=br.s.Q)
+            catch err
+                @printf("  ρ=%.4g  equilibrium_at threw %s\n", ρ, err)
+                nothing
+            end
+            if eq !== nothing && abs(eq.po - br.po) <= 0.10
+                br = (po=eq.po, s=eq.s)
+                at_edge = eq.at_edge
+                src = string(eq.source)
+            elseif eq !== nothing && eq.s.F < br.s.F - 1.0
+                # global jumped to a different basin — still record it
+                br = (po=eq.po, s=eq.s)
+                at_edge = eq.at_edge
+                src = "jump-" * string(eq.source)
+            end
+        end
+        if src == "continue"
+            nxt = try
+                continue_pi_min(c, P, κ, br.po, br.s.Q; window=0.05,
+                    win=br.s.win, wout=br.s.wout)
+            catch err
+                @printf("  ρ=%.4g  continue threw %s\n", ρ, err)
+                nothing
+            end
+            # free-solve competitor (may jump basins — keep only if π stays close)
+            best = nxt
+            try
+                for cand in free_solve_candidates(c, P, κ; Q_warm=br.s.Q)
+                    abs(cand.po - br.po) > 0.08 && continue
+                    if best === nothing || cand.s.F < best.F
+                        best = (po=cand.po, s=cand.s, at_edge=false, F=cand.s.F, F0=NaN, dF=NaN)
+                        src = "free"
+                    end
+                end
+            catch err
+                @printf("  ρ=%.4g  free_solve threw %s\n", ρ, err)
+            end
+            if best === nothing
+                @printf("  ρ=%.4g  branch died (π was %.4g)\n", ρ, br.po)
+                # try full re-seed
+                eq = try
+                    equilibrium_at(c, P, κ)
+                catch
+                    nothing
+                end
+                eq === nothing && continue
+                br = (po=eq.po, s=eq.s)
+                at_edge = eq.at_edge
+                src = "reseed-" * string(eq.source)
+            else
+                br = (po=best.po, s=best.s)
+                at_edge = best.at_edge
+                src == "continue" || nothing
+            end
+        end
+        s = br.s
+        Vout = s.nwells < 2 ? NaN : s.wout[3]
+        muout = s.nwells < 2 ? NaN : s.wout[1]
+        sigout = s.nwells < 2 ? NaN : s.wout[2]
+        dV = s.nwells < 2 ? NaN : s.dV_raw
+        lam = (s.L3 < 1 && s.L3 > 0) ? (s.L3 * ρ / (1 - s.L3)) : NaN
+        @printf(io, "%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%s,%.6g\n",
+            ρ, κ, br.po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F,
+            s.nwells, at_edge ? 1 : 0, src, lam)
+        flush(io)
+        @printf("  ρ=%-8.4g  π=%-7.4g  L3=%-7.4g  λ≈%-7.4g  V_out=%+-8.3g  n=%d  [%s]%s\n",
+            ρ, br.po, s.L3, lam, Vout, s.nwells, src, at_edge ? " EDGE" : "")
+        flush(stdout)
+    end
+    close(io)
+    println("saved ", out)
+end
+
+if "--rho-deep" in ARGS
+    rho_deep_main()
+elseif "--rho-branch-scan" in ARGS
     rho_branch_scan_main()
 elseif "--rho-pi-scan" in ARGS
     rho_pi_scan_main()
