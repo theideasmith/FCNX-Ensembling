@@ -35,8 +35,9 @@ struct Cfg
     d::Float64; n1::Float64; chi::Float64; a0::Float64; eps::Float64; s0::Float64; T::Float64
 end
 
-"""Teacher in the He1–He3 block: linear off, cubic = ε."""
-teacher_y(c::Cfg) = [0.0, c.eps]
+"""Teacher (He1, He3). Default pure cubic; `--he1 1` is the matrix-Laplace teacher (1, ε)."""
+const TEACHER_HE1 = Ref(0.0)
+teacher_y(c::Cfg) = [TEACHER_HE1[], c.eps]
 
 """Same formula as FCS2_VGA.laplace_amplitude_matrix, but y = (0, ε)."""
 function amp(c::Cfg, Q, P, κ)
@@ -102,8 +103,19 @@ function free_energy(c::Cfg, Q, G, logZ1, P, κ)
     c.n1 * (-logZ1 - 0.5 * tr(G * Q)) + 0.5χp * dot(y, (Q + ρp * I) \ y) + 0.5 * logdet(Q)
 end
 
-"""Returns (f1, L3). f1 is induced He1 (teacher has none); L3 = f3/ε."""
+"""Returns (f1, L3). f1 is induced He1 (teacher has none); L3 = f3/ε.
+
+χ=N path: readout prior a0/(n1 χ) rescales the ridge to ρ' = κ/(a0 P).
+"""
 function learnabilities(c::Cfg, Q, P, κ)
+    ρp = κ / (c.a0 * P)
+    y = teacher_y(c)
+    f = Q * ((Q + ρp * I) \ y)
+    f[1], f[2] / c.eps
+end
+
+"""NNGP (χ=1). Ridge is κ/(a0 P): a0 is not replaced by a0/N, and κ is not multiplied by N."""
+function learnabilities_nngp(c::Cfg, Q, P, κ)
     ρp = κ / (c.a0 * P)
     y = teacher_y(c)
     f = Q * ((Q + ρp * I) \ y)
@@ -156,7 +168,11 @@ function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
         y = teacher_y(c)
         e = sum(πs[k] * (sel[k][3] - log(sel[k][4] * sel[k][2] * sqrt(2pi))) for k in eachindex(sel))
         s = sum(p * log(p) for p in πs if p > 0)
-        F = c.n1 * (e + s - 0.5 * tr(G * Q)) + 0.5χp * dot(y, (Q + ρp * I) \ y) + 0.5 * logdet(Q)
+        ev = eigvals(Symmetric(Q))
+        scale = max(1.0, maximum(abs.(ev)))
+        minimum(ev) < -1e-8 * scale && return nothing
+        ev = max.(ev, 1e-14 * scale)
+        F = c.n1 * (e + s - 0.5 * tr(G * Q)) + 0.5χp * dot(y, (Q + ρp * I) \ y) + 0.5 * sum(log.(ev))
         f1, L3 = learnabilities(c, Q, P, κ)
         dV = wout[3] - win[3] - log(wout[2] / win[2])
         return (Q=Q, F=F, win=win, wout=wout, f1=f1, L3=L3, dV=dV, nwells=length(ws),
@@ -227,52 +243,62 @@ function make_cfg()
         1.0 + 2.0 * (d - 1.0) * s0 / d)
 end
 
-"""Lowest free-energy π_out root at fixed (P, κ). Also returns F(π=0) and F(π→1) gap."""
+"""Global free-energy minimum over π_out at fixed (P, κ).
+
+Uses a warm π-walk (`walk_pi`) and selects argmin_π F(π). This is the variational
+equilibrium of the two-well ansatz — π_out is not held fixed at the reported point.
+
+Returns `at_edge=true` when the minimizer is the last converged π (solver wall),
+so that point is not a trusted interior minimum.
+"""
 function equilibrium_at(c::Cfg, P, κ; Q_warm=nothing)
-    Qprev = Q_warm === nothing ? seed_Q(c, 0.0, 0.5) : Q_warm
-    best = nothing
-    grid = Tuple{Float64,Any}[]
-    F0 = NaN
-    F1 = NaN
-    for po in PO_GRID
-        s = nothing
-        Q0s = Any[Qprev, seed_Q(c, 0.0, 0.5), seed_Q(c, 2.0, 0.3),
-            0.5 * seed_Q(c, 0.0, 0.5) + 0.5 * seed_Q(c, 2.0, 0.3)]
-        Q_warm === nothing || push!(Q0s, Q_warm)
+    grid = collect(walk_pi(c, P, κ))
+    # Guarantee a π=0 trial even if the walk failed immediately.
+    if isempty(grid) || grid[1][1] > 0.0
+        s0 = nothing
+        Q0s = Any[Q_warm === nothing ? seed_Q(c, 0.0, 0.5) : Q_warm,
+            seed_Q(c, 0.0, 0.5), seed_Q(c, 0.0, 0.3)]
         for Q0 in Q0s
-            s = solve_fixed_pi(c, po, Q0, P, κ)
-            s === nothing || break
+            s0 = solve_fixed_pi(c, 0.0, Q0, P, κ)
+            s0 === nothing || break
         end
-        s === nothing && continue
-        Qprev = s.Q
-        push!(grid, (po, s))
-        (best === nothing || s.F < best[2].F) && (best = (po, s))
-        po == 0.0 && (F0 = s.F)
-        po >= 0.9 && (F1 = s.F)  # last high-π point that converged
+        s0 !== nothing && pushfirst!(grid, (0.0, s0))
     end
-    mins = Tuple{Float64,Any}[]
-    if !isempty(grid) && grid[1][1] == 0.0 && (grid[1][2].nwells < 2 || grid[1][2].dV >= 0)
-        push!(mins, grid[1])
-    end
-    for j in 1:length(grid)-1
-        (pa, sa), (pb, sb) = grid[j], grid[j+1]
-        (sa.dV < 0 && sb.dV >= 0) || continue
-        lo, hi, Qs, sm = pa, pb, sa.Q, sa
-        for _ in 1:40
-            m = 0.5 * (lo + hi)
-            t = solve_fixed_pi(c, m, Qs, P, κ)
-            t === nothing && break
-            sm, Qs = t, t.Q
-            t.dV < 0 ? (lo = m) : (hi = m)
-            hi - lo < 1e-6 * (1 + hi) && break
+    isempty(grid) && return nothing
+
+    # Interior refine: golden-section-ish binary search around the discrete min
+    # when it is not on the walk edge.
+    Fs = [g[2].F for g in grid]
+    jbest = argmin(Fs)
+    if jbest > 1 && jbest < length(grid)
+        lo, hi = grid[jbest - 1][1], grid[jbest + 1][1]
+        Qs = grid[jbest][2].Q
+        sm = grid[jbest][2]
+        for _ in 1:25
+            m1 = lo + (hi - lo) / 3
+            m2 = hi - (hi - lo) / 3
+            t1 = solve_fixed_pi(c, m1, Qs, P, κ)
+            t2 = solve_fixed_pi(c, m2, Qs, P, κ)
+            (t1 === nothing || t2 === nothing) && break
+            if t1.F < t2.F
+                hi, sm, Qs = m2, t1, t1.Q
+            else
+                lo, sm, Qs = m1, t2, t2.Q
+            end
+            hi - lo < 1e-5 && break
         end
-        push!(mins, (0.5 * (lo + hi), sm))
+        # replace discrete min with refined point
+        grid[jbest] = (0.5 * (lo + hi), sm)
+        Fs[jbest] = sm.F
+        jbest = argmin(Fs)
     end
-    isempty(mins) && best !== nothing && push!(mins, best)
-    isempty(mins) && return nothing
-    po, s = mins[argmin([m[2].F for m in mins])]
+
+    po, s = grid[jbest]
+    at_edge = (jbest == length(grid) && length(grid) > 1)
+    F0 = grid[1][1] == 0.0 ? grid[1][2].F : NaN
+    F1 = grid[end][2].F
     ΔF_ends = (isfinite(F0) && isfinite(F1)) ? (F1 - F0) : NaN
-    (po=po, s=s, F0=F0, F1=F1, dF_outer_minus_inner=ΔF_ends, grid=grid)
+    (po=po, s=s, F0=F0, F1=F1, dF_outer_minus_inner=ΔF_ends, grid=grid, at_edge=at_edge)
 end
 
 function scan_main()
@@ -771,7 +797,421 @@ function dump_ray_actions_main()
     println("saved ", out)
 end
 
-if "--ray-scan" in ARGS
+"""Steepwell-ray point at a chosen d, with Finv held at Finv_target.
+
+Same exponents as ray_scan_main:
+  d = 5 √β,  N ~ β^{1/4},  sa0 ~ β^{-3/4},  α_steep = β^{5/4},
+  P_ray = P0 α_steep^{3/4},  κ = κ0 (α_steep/β)^{3/4},  χ = N.
+P0 is chosen so Finv(P_ray) = Finv_target.
+"""
+function ray_at_d(d_target::Float64, Finv_target::Float64)
+    d0, n0, sa00 = 5.0, 1000.0, 0.03
+    κ0, α0, γ = 1.0 / n0, 1.0, 1.25
+    εd, ν, ω = 0.5, 0.25, 0.75
+    ρ, λ = -ω, ω
+    β = (d_target / d0)^(1 / εd)
+    αs = α0 * β^γ
+    d = round(d0 * β^εd)
+    N = round(n0 * β^ν)
+    sa0 = sa00 * β^ρ
+    P0 = κ0 * sqrt(π * d0 * n0 * Finv_target / (2 * sa00))
+    P = P0 * αs^λ
+    κ = κ0 * (αs / β)^ω
+    (beta=β, alpha_steep=αs, d=d, N=N, sa0=sa0, kappa=κ, P_ray=P, P0=P0)
+end
+
+"""At each d on the Finv-flat ray, dump the equilibrium action V(w) and sweep
+matrix learnability L3 against α defined by P = d^α.
+
+χ = N, teacher y = (0, ε). (N, sa0, κ) stay on the ray; only P moves with α.
+"""
+function d_alpha_scan_main()
+    Finv_target = parse(Float64, argval("--Finv", "200"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    d_one = argval("--d", "")
+    ds = isempty(d_one) ? parse_list(argval("--ds", "20,32,50,80,125,200")) : [parse(Float64, d_one)]
+    alphas = parse_list(argval("--alphas", join(string.(range(0.8, 2.6; step=0.05)), ",")))
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/dscale_20_200")
+    mkpath(out_dir)
+    wmax_fixed = parse(Float64, argval("--wmax", "30"))
+    ngrid = parse(Int, argval("--ngrid", "1601"))
+    for d_target in ds
+        rp = ray_at_d(d_target, Finv_target)
+        d, N, sa0, κ = rp.d, rp.N, rp.sa0, rp.kappa
+        chi = N
+        tag = "d$(Int(d))"
+        act_path = joinpath(out_dir, "tmp_pure_cubic_action_$(tag).csv")
+        learn_path = joinpath(out_dir, "tmp_pure_cubic_learn_$(tag).csv")
+        @printf("\n=== d=%g  β=%.4g  N=%g  sa0=%.4g  κ=%.4g  P_ray=%.4g  α_ray=%.4f ===\n",
+            d, rp.beta, N, sa0, κ, rp.P_ray, log(rp.P_ray) / log(d))
+        # Equilibrium action at the Finv-flat point (the plotted theory).
+        c_ray = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+        eq_ray = equilibrium_at(c_ray, rp.P_ray, κ)
+        if eq_ray === nothing
+            @printf("d=%g  no ray equilibrium — skip\n", d)
+            continue
+        end
+        po, s = eq_ray.po, eq_ray.s
+        G = amp(c_ray, s.Q, rp.P_ray, κ)
+        Finv = invariant_F(rp.P_ray, κ, c_ray)
+        wgrid = range(-wmax_fixed, wmax_fixed; length=ngrid)
+        open(act_path, "w") do io
+            println(io, "d,beta,N,chi,sa0,kappa,P,alpha,Finv,pi_out,L3,mu_in,mu_out,V_in,V_out,dV_raw,w,V,prior,data")
+            αP = log(rp.P_ray) / log(d)
+            for w in wgrid
+                c1, c3 = FCS2_VGA.hermite_point_features(w, c_ray.T)
+                prior = (c_ray.d / c_ray.s0) * 0.5 * w^2
+                data = 0.5 * (G[1, 1] * c1^2 + 2G[1, 2] * c1 * c3 + G[2, 2] * c3^2)
+                @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%.10g,%.10g,%.10g\n",
+                    d, rp.beta, N, chi, sa0, κ, rp.P_ray, αP, Finv, po, s.L3,
+                    s.win[1], s.wout[1], s.win[3], s.wout[3], s.dV_raw,
+                    w, prior + data, prior, data)
+            end
+        end
+        @printf("action  Finv=%.4g  π_out=%.4g  L3=%.4f  μ_in=%.3f  μ_out=%.3f  dV_raw=%+.4g\n",
+            Finv, po, s.L3, s.win[1], s.wout[1], s.dV_raw)
+        println("saved ", act_path)
+        if "--actions-only" in ARGS
+            continue
+        end
+        # Learnability vs α, P = d^α. Include the ray sample size exactly.
+        P_of = Dict{Float64,Float64}()
+        for α in alphas
+            P_of[float(α)] = d^α
+        end
+        α_ray = log(rp.P_ray) / log(d)
+        P_of[α_ray] = rp.P_ray
+        αs = sort(collect(keys(P_of)))
+        Qwarm = s.Q
+        open(learn_path, "w") do io
+            println(io, "d,N,sa0,kappa,alpha,P,Finv,pi_out,L3,f1,mu_in,mu_out,V_in,V_out,dV_raw,nwells,ray")
+            for α in αs
+                P = P_of[α]
+                c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+                eq = try
+                    equilibrium_at(c, P, κ; Q_warm=Qwarm)
+                catch err
+                    @printf("  α=%.3f  P=%.4g  failed: %s\n", α, P, err)
+                    nothing
+                end
+                ray_flag = abs(P - rp.P_ray) / rp.P_ray < 1e-9 ? 1 : 0
+                if eq === nothing
+                    @printf(io, "%.10g,%.10g,%.10g,%.10g,%.6g,%.10g,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,0,%d\n",
+                        d, N, sa0, κ, α, P, ray_flag)
+                    @printf("  α=%.3f  P=%.4g  no equilibrium\n", α, P)
+                    continue
+                end
+                spo, ss = eq.po, eq.s
+                Qwarm = ss.Q
+                Finvα = invariant_F(P, κ, c)
+                @printf(io, "%.10g,%.10g,%.10g,%.10g,%.6g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d,%d\n",
+                    d, N, sa0, κ, α, P, Finvα, spo, ss.L3, ss.f1,
+                    ss.win[1], ss.wout[1], ss.win[3], ss.wout[3], ss.dV_raw, ss.nwells, ray_flag)
+                @printf("  α=%.3f  P=%-10.4g  Finv=%-8.3g  L3=%.4f  π_out=%.3f  dV_raw=%+.3g%s\n",
+                    α, P, Finvα, ss.L3, spo, ss.dV_raw, ray_flag == 1 ? "  [ray]" : "")
+                flush(io)
+                flush(stdout)
+            end
+        end
+        println("saved ", act_path)
+        println("saved ", learn_path)
+    end
+end
+
+"""Central-node pure-cubic action along the ρ-ray (P, sa0 fixed; κ = ρ sa0 P).
+
+Both χ=N and the NNGP use ridge ρ' = κ/(sa0 P). The NNGP does not replace sa0 by
+sa0/N and does not multiply κ by N. P_eff = 1/ρ' and α from d^α = P_eff.
+"""
+function rho_learn_main()
+    d = parse(Float64, argval("--d", "16"))
+    P = parse(Float64, argval("--P", "1000"))
+    sa0 = parse(Float64, argval("--sa0", "0.03"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    n1 = parse(Float64, argval("--n1", "200"))
+    chi_flag = parse(Float64, argval("--chi", string(n1)))
+    chi = chi_flag < 0 ? n1 : chi_flag
+    # NNGP: χ=1, prior kernel. Ridge κ/(sa0 P), with no N on κ and no N on sa0.
+    nngp = "--nngp" in ARGS || chi == 1
+    σ_default = nngp ? 1 / sqrt(d) : 0.5
+    σk = parse(Float64, argval("--sigma", string(σ_default)))
+    self_c = "--self-consistent" in ARGS && !nngp
+    rhos = parse_list(argval("--rhos", join(string.(exp.(range(log(1e-6), log(10.0); length=140))), ",")))
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/rho_ray_learn")
+    mkpath(out_dir)
+    c = Cfg(d, n1, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    if "--match" in ARGS
+        # Compare shifted V(w) to the saved ρ-ray at two ridges.
+        ref = argval("--ref", "action_h0_activation_plots/PureCubicChiN/tmp_pure_cubic_rho_ray_actions.csv")
+        for ρ in (0.15, 0.10)
+            κ = ρ * sa0 * P
+            s = solve_fixed_pi(c, 0.0, seed_Q(c, 0.0, 0.5), P, κ)
+            s === nothing && (@printf("match ρ=%.3g no solution\n", ρ); continue)
+            G = amp(c, s.Q, P, κ)
+            Vfn = potential(c, G)
+            V0 = Vfn(0.0)
+            @printf("match N=%g ρ=%.3g  μ_out=%.3f ΔV=%+.3f sig=%.3f G=[%.4g %.4g; %.4g %.4g]\n",
+                n1, ρ, s.wout[1], s.wout[3] - s.win[3], s.win[2], G[1,1], G[1,2], G[2,1], G[2,2])
+            for σ in (0.25, 0.5, 0.7, 0.9, 1.1, 1.4)
+                Gf = amp(c, seed_Q(c, 0.0, σ), P, κ)
+                Vf = potential(c, Gf)
+                z = Vf(0.0)
+                @printf("  frozen σ=%.3f  V(1.52)=%+.3f V(2.06)=%+.3f V(2.43)=%+.3f  G=[%.4g %.4g; %.4g %.4g]\n",
+                    σ, Vf(1.52) - z, Vf(2.06) - z, Vf(2.43) - z, Gf[1,1], Gf[1,2], Gf[2,1], Gf[2,2])
+            end
+        end
+        println("ref file ", ref)
+        return
+    end
+    chi_tag = nngp ? "nngp" : (chi == n1 ? "chiN" : "chi$(chi)")
+    mode_tag = self_c ? "selfconsistent" : "frozen"
+    out = joinpath(out_dir, "tmp_pure_cubic_rho_learn_d$(Int(d))_$(chi_tag)_$(mode_tag).csv")
+    Q = seed_Q(c, 0.0, σk)
+    @printf("ρ-ray learnability  d=%g N=%g χ=%g P=%g sa0=%g ε=%g  %s σ=%g\n",
+        d, n1, chi, P, sa0, eps_task, nngp ? "NNGP prior" : (self_c ? "self-consistent from" : "frozen"), σk)
+    if nngp
+        @printf("NNGP ridge ρ'=κ/(sa0 P)  (no ×N on κ, no /N on sa0);  P_eff=1/ρ';  α = log(P_eff)/log(d)\n")
+    else
+        @printf("ridge ρ'=κ/(sa0 P);  P_eff=1/ρ';  α = log(P_eff)/log(d)\n")
+    end
+    @printf("Q0 = [%.5g %.5g; %.5g %.5g]\n", Q[1,1], Q[1,2], Q[2,1], Q[2,2])
+    io = open(out, "w")
+    println(io, "rho,kappa,P,sa0,d,N,chi,sigma,P_eff,alpha,L3,f1,mu_out,V_out,dV_raw,nwells")
+    Qwarm = Q
+    for ρ in sort(rhos; rev=true)
+        κ = ρ * sa0 * P
+        if self_c
+            s = solve_fixed_pi(c, 0.0, Qwarm, P, κ)
+            if s === nothing
+                s = solve_fixed_pi(c, 0.0, seed_Q(c, 0.0, σk), P, κ)
+            end
+            if s === nothing
+                @printf("  ρ=%.4g  no central-node solution\n", ρ)
+                continue
+            end
+            Qwarm = s.Q
+            Qρ, σ_here = s.Q, s.win[2]
+            f1, L3 = s.f1, s.L3
+        else
+            Qρ, σ_here = Q, σk
+            f1, L3 = nngp ? learnabilities_nngp(c, Qρ, P, κ) : learnabilities(c, Qρ, P, κ)
+        end
+        # Well geometry only where the ρ-ray figure lives. At tiny ρ the
+        # potential is huge and the crossing is already known from that figure.
+        mu_out, V_out, dV, nwells = 0.0, 0.0, NaN, 0
+        if 0.05 <= ρ <= 0.4 && !self_c && !nngp
+            G = amp(c, Qρ, P, κ)
+            Vfn = potential(c, G)
+            V0 = Vfn(0.0)
+            ws = wells(Vfn)
+            nwells = length(ws)
+            if nwells >= 2
+                mu_out = ws[end][1]
+                V_out = ws[end][3] - V0
+                dV = V_out
+            end
+        end
+        Peff = 1.0 / ρ
+        α = log(Peff) / log(d)
+        @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+            ρ, κ, P, sa0, d, n1, chi, σ_here, Peff, α, L3, f1, mu_out, V_out, dV, nwells)
+        if self_c || ρ < 3e-4 || abs(log(ρ / 0.14)) < 0.15
+            @printf("  ρ=%.4g  P_eff=%.3g  α=%.3f  L3=%.4f  σ=%.4f\n", ρ, Peff, α, L3, σ_here)
+        end
+        flush(io)
+    end
+    close(io)
+    println("saved ", out)
+end
+
+"""Raw V(w) along the ρ-ray (d, N, P, sa0 fixed; κ = ρ sa0 P; χ = N), from the solver itself.
+
+Two self-consistent solutions per ρ, each written to its own long CSV:
+  center       solve_fixed_pi at π_out = 0: Q is built from the central well of its own V.
+  equilibrium  equilibrium_at: π_out at the lowest mean-field free energy.
+V(0) = 0 for both (prior and He1/He3 features vanish at w = 0), so V is unshifted.
+"""
+function rho_ray_actions_main()
+    d = parse(Float64, argval("--d", "16"))
+    n1 = parse(Float64, argval("--n1", "200"))
+    P = parse(Float64, argval("--P", "1000"))
+    sa0 = parse(Float64, argval("--sa0", "0.03"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    wmax = parse(Float64, argval("--wmax", "12"))
+    ngrid = parse(Int, argval("--ngrid", "4001"))
+    rhos = sort(parse_list(argval("--rhos",
+        "0.3,0.26,0.22,0.2,0.18,0.17,0.16,0.15,0.145,0.14,0.135,0.13,0.125,0.12,0.11,0.1,0.09,0.08,0.07,0.06,0.05")); rev=true)
+    modes = split(argval("--modes", "equilibrium"), ",")
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN")
+    mkpath(out_dir)
+    c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    wgrid = range(-wmax, wmax; length=ngrid)
+    header = "rho,kappa,P,sa0,d,N,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,w,V"
+    phase(s) = s.nwells < 2 ? "no_outer" : (s.dV_raw > 0 ? "inner_deeper" : "outer_deeper")
+    @printf("ρ-ray actions (solver)  d=%g N=χ=%g P=%g sa0=%g ε=%g  y=(0,ε)  modes=%s\n",
+        d, n1, P, sa0, eps_task, join(modes, ","))
+    for mode in modes
+        mode in ("center", "equilibrium") || error("unknown mode $mode")
+        act_path = joinpath(out_dir, "tmp_pure_cubic_rho_ray_actions_$(mode).csv")
+        sum_path = joinpath(out_dir, "tmp_pure_cubic_rho_ray_summary_$(mode).csv")
+        io, sio = open(act_path, "w"), open(sum_path, "w")
+        println(io, header)
+        println(sio, "rho,kappa,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,phase")
+        Qwarm = seed_Q(c, 0.0, 0.5)
+        for ρ in rhos
+            κ = ρ * sa0 * P
+            local po, s, at_edge, dF0
+            at_edge = false
+            dF0 = NaN
+            if mode == "center"
+                s = nothing
+                for Q0 in (Qwarm, seed_Q(c, 0.0, 0.5), seed_Q(c, 0.0, 0.3))
+                    s = solve_fixed_pi(c, 0.0, Q0, P, κ)
+                    s === nothing || break
+                end
+                po = 0.0
+            else
+                eq = equilibrium_at(c, P, κ; Q_warm=Qwarm)
+                s = eq === nothing ? nothing : eq.s
+                po = eq === nothing ? NaN : eq.po
+                at_edge = eq === nothing ? false : eq.at_edge
+                dF0 = (eq !== nothing && isfinite(eq.F0)) ? (eq.s.F - eq.F0) : NaN
+            end
+            if s === nothing
+                @printf("  %-11s ρ=%-6.4g κ=%-6.4g  no solution\n", mode, ρ, κ)
+                continue
+            end
+            Qwarm = s.Q
+            G = amp(c, s.Q, P, κ)
+            Vfn = potential(c, G)
+            Vout = s.nwells < 2 ? NaN : s.wout[3]
+            muout = s.nwells < 2 ? NaN : s.wout[1]
+            sigout = s.nwells < 2 ? NaN : s.wout[2]
+            dV = s.nwells < 2 ? NaN : s.dV_raw
+            edge_i = at_edge ? 1 : 0
+            meta = @sprintf("%.10g,%.10g,%.10g,%.10g,%g,%g,%g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d",
+                ρ, κ, P, sa0, d, n1, n1, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i)
+            for w in wgrid
+                @printf(io, "%s,%.10g,%.10g\n", meta, w, Vfn(w))
+            end
+            @printf(sio, "%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%s\n",
+                ρ, κ, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i, phase(s))
+            flush(io); flush(sio)
+            edge_tag = at_edge ? " EDGE" : ""
+            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  %s%s\n",
+                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, phase(s), edge_tag)
+            flush(stdout)
+        end
+        close(io); close(sio)
+        println("saved ", act_path, " and ", sum_path)
+    end
+end
+
+"""F(π_out) along a warm π walk at each ρ of the ρ-ray (same Cfg as --rho-ray-actions).
+
+A first-order transition shows up as two separated local minima of F(π) exchanging order.
+"""
+function rho_pi_scan_main()
+    d = parse(Float64, argval("--d", "16"))
+    n1 = parse(Float64, argval("--n1", "200"))
+    P = parse(Float64, argval("--P", "1000"))
+    sa0 = parse(Float64, argval("--sa0", "0.03"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    rhos = sort(parse_list(argval("--rhos", "0.15,0.147,0.145,0.14,0.13,0.12,0.1,0.09,0.08,0.06")); rev=true)
+    out = argval("--out", "action_h0_activation_plots/PureCubicChiN/tmp_pure_cubic_rho_pi_scan.csv")
+    c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    io = open(out, "w")
+    println(io, "rho,kappa,pi_out,F,dF_from0,dV_raw,dV,V_in,V_out,mu_in,mu_out,sig_in,sig_out,L3,nwells")
+    for ρ in rhos
+        κ = ρ * sa0 * P
+        grid = walk_pi(c, P, κ)
+        isempty(grid) && (@printf("ρ=%.4g  no π points\n", ρ); continue)
+        F0 = grid[1][2].F
+        Fs = [g[2].F for g in grid]
+        mins = [j for j in eachindex(Fs) if (j == 1 || Fs[j] <= Fs[j-1]) && (j == length(Fs) || Fs[j] <= Fs[j+1])]
+        for (po, s) in grid
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%d\n",
+                ρ, κ, po, s.F, s.F - F0, s.dV_raw, s.dV, s.win[3], s.wout[3],
+                s.win[1], s.wout[1], s.win[2], s.wout[2], s.L3, s.nwells)
+        end
+        flush(io)
+        @printf("ρ=%-6.4g  π walk to %.4g (%d pts)  local minima of F(π): %s\n", ρ, grid[end][1], length(grid),
+            join([@sprintf("π=%.4g ΔF=%+.4g", grid[j][1], Fs[j] - F0) for j in mins], " | "))
+        flush(stdout)
+    end
+    close(io)
+    println("saved ", out)
+end
+
+"""Self-consistent multiwell equilibrium along the steepwell ray.
+
+d = d0 β^{1/2}, N = N0 β^{1/4}, sa0 = sa00 β^{-3/4}, α = β^{5/4},
+P = P0 α^{3/4}, κ = κ0 (α/β)^{3/4}. χ = N and χ = 1 both use this ray
+and the Laplace amplitude (ridge κ/(sa0 P), no extra factor of N on κ or sa0).
+σ is whatever the equilibrium wells come out to be.
+"""
+function theory_ray_main()
+    TEACHER_HE1[] = parse(Float64, argval("--he1", "1"))
+    eps_task = parse(Float64, argval("--eps", "0.1"))
+    d0 = parse(Float64, argval("--d0", "5"))
+    n0 = parse(Float64, argval("--n0", "1000"))
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    κ0 = parse(Float64, argval("--kappa0", string(1 / n0)))
+    P0 = parse(Float64, argval("--P0", "160"))
+    γ = parse(Float64, argval("--gamma", "1.25"))
+    εd, ν, ω = 0.5, 0.25, 0.75
+    betas = parse_list(argval("--betas", "1,1.6,2.5,4,6.3,10,16,25,40,63,100"))
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/theory_ray")
+    mkpath(out_dir)
+    he1 = TEACHER_HE1[]
+    @printf("theory ray  y=(%.4g, %.4g)  d0=%g N0=%g sa00=%g κ0=%g P0=%g\n",
+        he1, eps_task, d0, n0, sa00, κ0, P0)
+    for (tag, chi_of) in (("chiN", N -> N), ("chi1", _ -> 1.0))
+        out = joinpath(out_dir, "tmp_theory_ray_he$(he1)_eps$(eps_task)_$(tag).csv")
+        io = open(out, "w")
+        println(io, "beta,d,d_over_d0,N,chi,sa0,kappa,P,pi_out,L1,L3,mu_in,sig_in,mu_out,sig_out,nwells,Q11,Q13,Q33,F")
+        Qwarm = nothing
+        for β in betas
+            α = β^γ
+            d = d0 * β^εd
+            N = n0 * β^ν
+            sa0 = sa00 * β^(-ω)
+            P = P0 * α^ω
+            κ = κ0 * (α / β)^ω
+            chi = chi_of(N)
+            c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+            eq = equilibrium_at(c, P, κ; Q_warm=Qwarm)
+            if eq === nothing
+                @printf("  %s β=%.3g  no equilibrium\n", tag, β)
+                continue
+            end
+            Qwarm = eq.s.Q
+            s = eq.s
+            @printf(io, "%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%d,%.8g,%.8g,%.8g,%.8g\n",
+                β, d, d / d0, N, chi, sa0, κ, P, eq.po, s.f1, s.L3,
+                s.win[1], s.win[2], s.wout[1], s.wout[2], s.nwells,
+                s.Q[1, 1], s.Q[1, 2], s.Q[2, 2], s.F)
+            flush(io)
+            @printf("  %s β=%-6.3g d=%-6.3g d/d0=%-6.3g σ_in=%.3f σ_out=%.3f n=%d π=%.3f L1=%.3f L3=%.3f\n",
+                tag, β, d, d / d0, s.win[2], s.wout[2], s.nwells, eq.po, s.f1, s.L3)
+            flush(stdout)
+        end
+        close(io)
+        println("saved ", out)
+    end
+end
+
+if "--rho-pi-scan" in ARGS
+    rho_pi_scan_main()
+elseif "--rho-ray-actions" in ARGS
+    rho_ray_actions_main()
+elseif "--theory-ray" in ARGS
+    theory_ray_main()
+elseif "--rho-learn" in ARGS
+    rho_learn_main()
+elseif "--d-alpha-scan" in ARGS
+    d_alpha_scan_main()
+elseif "--ray-scan" in ARGS
     ray_scan_main()
 elseif "--ray-F-scan" in ARGS
     ray_F_scan_main()
