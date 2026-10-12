@@ -65,23 +65,38 @@ const WGRID = range(0.0, 40.0, length=16001)
 function wells(V)
     d1 = w -> ForwardDiff.derivative(V, w)
     d2 = w -> ForwardDiff.derivative(d1, w)
-    v = V.(WGRID)
+    v = try
+        V.(WGRID)
+    catch
+        return Tuple{Float64,Float64,Float64,Int}[]
+    end
+    any(x -> !isfinite(x), v) && return Tuple{Float64,Float64,Float64,Int}[]
     out = Tuple{Float64,Float64,Float64,Int}[]
-    if v[1] < v[2] && d2(0.0) > 0
-        push!(out, (0.0, 1 / sqrt(d2(0.0)), v[1], 1))
+    if v[1] < v[2]
+        h0 = try; d2(0.0); catch; NaN; end
+        if isfinite(h0) && h0 > 0
+            push!(out, (0.0, 1 / sqrt(h0), v[1], 1))
+        end
     end
     for j in 2:length(WGRID)-1
         (v[j] < v[j-1] && v[j] <= v[j+1]) || continue
         w = WGRID[j]
         for _ in 1:30
-            h = d2(w)
-            h > 0 || break
-            w -= d1(w) / h
+            h = try; d2(w); catch; NaN; end
+            (isfinite(h) && h > 0) || break
+            g = try; d1(w); catch; NaN; end
+            isfinite(g) || break
+            w -= g / h
         end
-        h = d2(w)
-        (h > 0 && w > 0 && abs(w - WGRID[j]) < 0.05) || (w = WGRID[j]; h = d2(w))
-        h > 0 || continue
-        push!(out, (w, 1 / sqrt(h), V(w), 2))
+        h = try; d2(w); catch; NaN; end
+        if !(isfinite(h) && h > 0 && w > 0 && abs(w - WGRID[j]) < 0.05)
+            w = WGRID[j]
+            h = try; d2(w); catch; NaN; end
+        end
+        (isfinite(h) && h > 0) || continue
+        Vm = try; V(w); catch; NaN; end
+        isfinite(Vm) || continue
+        push!(out, (w, 1 / sqrt(h), Vm, 2))
     end
     out
 end
@@ -1218,6 +1233,191 @@ function rho_pi_scan_main()
     println("saved ", out)
 end
 
+"""Continue one F(π) local minimum by warm fixed-π search near `piprev`.
+
+Does not re-walk the full π axis (that re-discovers other basins and jumps).
+Builds F(π) on a neighborhood grid, takes the local min of F nearest to
+`piprev` (not the global argmin in the window — that jumps basins at FO),
+then ternary-refines.
+"""
+function continue_pi_min(c::Cfg, P, κ, piprev, Qprev; window=0.04, ngrid=25,
+        win=nothing, wout=nothing)
+    lo = max(0.0, piprev - window)
+    hi = min(0.99, piprev + window)
+    hi <= lo && return nothing
+    pos = collect(range(lo, hi; length=ngrid))
+    Fs = fill(Inf, length(pos))
+    Ss = Vector{Any}(undef, length(pos))
+    for (i, po) in enumerate(pos)
+        t = try_fixed_pi(c, po, Qprev, P, κ; win=win, wout=wout)
+        t === nothing && continue
+        Fs[i] = t.F
+        Ss[i] = t
+    end
+    # local minima on the neighborhood grid
+    locs = Int[]
+    for i in eachindex(Fs)
+        isfinite(Fs[i]) || continue
+        left = (i == 1) || !(isfinite(Fs[i - 1]) && Fs[i - 1] < Fs[i])
+        right = (i == length(Fs)) || !(isfinite(Fs[i + 1]) && Fs[i + 1] < Fs[i])
+        left && right && push!(locs, i)
+    end
+    # fallback: any finite point closest to piprev
+    isempty(locs) && (locs = findall(isfinite, Fs))
+    isempty(locs) && return nothing
+    j = locs[argmin(abs.(pos[locs] .- piprev))]
+    # ternary refine in a cell around j
+    a = j == 1 ? lo : 0.5 * (pos[j - 1] + pos[j])
+    b = j == length(pos) ? hi : 0.5 * (pos[j] + pos[j + 1])
+    sm = Ss[j]
+    Qs = sm.Q
+    for _ in 1:20
+        b - a < 1e-5 && break
+        m1 = a + (b - a) / 3
+        m2 = b - (b - a) / 3
+        t1 = try_fixed_pi(c, m1, Qs, P, κ; win=sm.win, wout=sm.wout)
+        t2 = try_fixed_pi(c, m2, Qs, P, κ; win=sm.win, wout=sm.wout)
+        if t1 === nothing && t2 === nothing
+            break
+        elseif t1 === nothing
+            a, sm, Qs = m1, t2, t2.Q
+        elseif t2 === nothing
+            b, sm, Qs = m2, t1, t1.Q
+        elseif t1.F < t2.F
+            b, sm, Qs = m2, t1, t1.Q
+        else
+            a, sm, Qs = m1, t2, t2.Q
+        end
+    end
+    po = 0.5 * (a + b)
+    (po=po, s=sm, at_edge=false, F=sm.F, F0=NaN, dF=NaN)
+end
+
+"""Local minima of F(π) on a π-walk grid (non-edge preferred)."""
+function walk_local_mins(grid)
+    isempty(grid) && return NamedTuple[]
+    Fs = [g[2].F for g in grid]
+    out = NamedTuple[]
+    for j in eachindex(Fs)
+        left = (j == 1) || Fs[j] <= Fs[j - 1]
+        right = (j == length(Fs)) || Fs[j] <= Fs[j + 1]
+        left && right || continue
+        at_edge = (j == length(grid) && length(grid) > 1)
+        push!(out, (po=grid[j][1], s=grid[j][2], at_edge=at_edge, F=Fs[j]))
+    end
+    out
+end
+
+"""Continuous F(π) branches vs ρ via warm π-neighborhood continuation.
+
+Global argmin F jumps at the FO; each metastable basin is tracked separately so
+L3 / V / π stay continuous along a branch. A second branch is spawned only when
+a walk local-min sits Δπ ≥ `sep` from every continued branch.
+"""
+function rho_branch_scan_main()
+    d = parse(Float64, argval("--d", "16"))
+    n1 = parse(Float64, argval("--n1", "200"))
+    P = parse(Float64, argval("--P", "1000"))
+    sa0 = parse(Float64, argval("--sa0", "0.03"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    rhos = sort(parse_list(argval("--rhos",
+        "0.16,0.155,0.15,0.145,0.14,0.135,0.13,0.125,0.12,0.115,0.11,0.105,0.1,0.095,0.09,0.085,0.082,0.08,0.078,0.076,0.075,0.07,0.065,0.06")); rev=true)
+    sep = parse(Float64, argval("--sep", "0.03"))
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/fo_rho_ray_fmin")
+    mkpath(out_dir)
+    out = argval("--out", joinpath(out_dir, "branch_local_mins.csv"))
+    c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    @printf("ρ-branch continuation  d=%g N=χ=%g P=%g sa0=%g ε=%g  sep=%.3g\n",
+        d, n1, P, sa0, eps_task, sep)
+
+    # Live branches: (id, po, s). id is stable across ρ for CSV labeling.
+    branches = NamedTuple[]
+    next_id = 1
+    io = open(out, "w")
+    println(io, "rho,kappa,branch,pi_out,F,dF_from0,dV_raw,V_in,V_out,mu_out,L3,nwells,at_edge,is_global")
+    for ρ in rhos
+        κ = ρ * sa0 * P
+        # F0 from π=0 for ΔF reporting
+        s0 = try_fixed_pi(c, 0.0, seed_Q(c, 0.0, 0.5), P, κ)
+        F0 = s0 === nothing ? NaN : s0.F
+
+        continued = NamedTuple[]
+        if isempty(branches)
+            # Seed from free solves + walk local mins at the first ρ.
+            seeds = NamedTuple[]
+            for cand in free_solve_candidates(c, P, κ)
+                push!(seeds, (po=cand.po, s=cand.s, at_edge=false, F=cand.s.F))
+            end
+            grid = walk_pi(c, P, κ)
+            append!(seeds, walk_local_mins(grid))
+            # Keep distinct basins (by π), lowest F first. Prefer non-edge, but
+            # accept an edge seed when it is the only basin that converged.
+            sort!(seeds; by=x -> (x.at_edge ? 1 : 0, x.F))
+            for sd in seeds
+                any(abs(sd.po - br.po) < sep for br in continued) && continue
+                push!(continued, (id=next_id, po=sd.po, s=sd.s, at_edge=sd.at_edge, F=sd.F))
+                next_id += 1
+            end
+        else
+            for br in branches
+                nxt = continue_pi_min(c, P, κ, br.po, br.s.Q; window=0.05,
+                    win=br.s.win, wout=br.s.wout)
+                nxt === nothing && continue
+                push!(continued, (id=br.id, po=nxt.po, s=nxt.s, at_edge=false, F=nxt.F))
+            end
+            # Discover new basins from a fresh walk (FO birth of a second min).
+            # Full walks are expensive: always near the FO window, otherwise every
+            # other ρ step is enough to catch a new local min.
+            do_walk = (ρ <= 0.10) || (mod(round(Int, ρ * 1000), 10) == 0)
+            if do_walk
+                grid = walk_pi(c, P, κ)
+                for sd in walk_local_mins(grid)
+                    sd.at_edge && continue
+                    any(abs(sd.po - br.po) < sep for br in continued) && continue
+                    Fref = isempty(continued) ? Inf : minimum(br.F for br in continued)
+                    sd.F > Fref + 50.0 && continue
+                    push!(continued, (id=next_id, po=sd.po, s=sd.s, at_edge=false, F=sd.F))
+                    next_id += 1
+                end
+            end
+        end
+
+        # Dedup: if two continued branches collapsed, keep lower F / older id.
+        sort!(continued; by=x -> (x.F, x.id))
+        kept = NamedTuple[]
+        for br in continued
+            any(abs(br.po - k.po) < sep for k in kept) && continue
+            push!(kept, br)
+        end
+        # Label by π order for readability: branch_1 = lowest π, etc. but keep
+        # stable numeric id in the CSV `branch` field as "b<id>".
+        sort!(kept; by=x -> x.po)
+        branches = kept
+
+        Fglob = isempty(branches) ? Inf : minimum(br.F for br in branches)
+        parts = String[]
+        for (k, br) in enumerate(branches)
+            s = br.s
+            Vout = s.nwells < 2 ? NaN : s.wout[3]
+            muout = s.nwells < 2 ? NaN : s.wout[1]
+            dV = s.nwells < 2 ? NaN : s.dV_raw
+            dF = isfinite(F0) ? br.F - F0 : NaN
+            is_global = br.F <= Fglob + 1e-9
+            name = "b$(br.id)"
+            @printf(io, "%.10g,%.10g,%s,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%d,%d,%d\n",
+                ρ, κ, name, br.po, br.F, dF, dV, s.win[3], Vout, muout, s.L3, s.nwells,
+                br.at_edge ? 1 : 0, is_global ? 1 : 0)
+            push!(parts, @sprintf("%s:π=%.4g ΔF=%+.4g L3=%.4g%s", name, br.po, dF, s.L3,
+                is_global ? " *" : ""))
+        end
+        flush(io)
+        @printf("ρ=%-6.4g  %s\n", ρ, isempty(parts) ? "none" : join(parts, " | "))
+        flush(stdout)
+    end
+    close(io)
+    println("saved ", out)
+end
+
 """Self-consistent multiwell equilibrium along the steepwell ray.
 
 d = d0 β^{1/2}, N = N0 β^{1/4}, sa0 = sa00 β^{-3/4}, α = β^{5/4},
@@ -1276,7 +1476,9 @@ function theory_ray_main()
     end
 end
 
-if "--rho-pi-scan" in ARGS
+if "--rho-branch-scan" in ARGS
+    rho_branch_scan_main()
+elseif "--rho-pi-scan" in ARGS
     rho_pi_scan_main()
 elseif "--rho-ray-actions" in ARGS
     rho_ray_actions_main()
