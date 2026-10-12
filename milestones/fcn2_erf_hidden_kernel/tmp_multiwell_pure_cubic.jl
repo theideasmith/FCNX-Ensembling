@@ -181,10 +181,33 @@ function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
     nothing
 end
 
+"""Try fixed-π solve with several seeds / damping schedules."""
+function try_fixed_pi(c::Cfg, po, Qprev, P, κ; win=nothing, wout=nothing)
+    seeds = Any[Qprev, seed_Q(c, 0.0, 0.5), seed_Q(c, 2.0, 0.3),
+        seed_Q(c, 3.0, 0.25), seed_Q(c, 4.0, 0.2),
+        (1 - po) * seed_Q(c, 0.0, 0.4) + po * seed_Q(c, 2.5, 0.25)]
+    if win !== nothing && wout !== nothing
+        push!(seeds, (1 - po) * seed_Q(c, win[1], win[2]) + po * seed_Q(c, wout[1], wout[2]))
+        push!(seeds, (1 - po) * seed_Q(c, win[1], win[2]) +
+            po * seed_Q(c, wout[1], max(wout[2], 0.12)))
+    end
+    for Q0 in seeds
+        for (η, iters) in ((0.3, 3000), (0.15, 6000), (0.05, 8000), (0.02, 10000))
+            s = solve_fixed_pi(c, po, Q0, P, κ; iters=iters, η=η, tol=1e-9)
+            s === nothing || return s
+        end
+    end
+    nothing
+end
+
 """Walk π from 0→1 with warm Q; return densest grid of converged (po, s).
 
-When a step fails, refine between last-good and failed π (binary) so π_max is tight.
-Also try a few cold outer-heavy seeds before giving up.
+Hardening vs early death:
+1. binary refine between last-good and first-fail;
+2. adaptive microsteps (Δπ ↓ to 2e-4) with slow damping from the last well
+   locations — recovers cases where a coarse grid step overshoots;
+3. stops when the outer well annihilates under forced π (σ blows / well merges),
+   which is a real boundary of the two-well ansatz, not a seed bug.
 """
 function walk_pi(c::Cfg, P, κ; pos=nothing)
     pos === nothing && (pos = vcat(0.0, 10 .^ range(-5, -0.7; length=28),
@@ -193,14 +216,9 @@ function walk_pi(c::Cfg, P, κ; pos=nothing)
     Qprev = seed_Q(c, 0.0, 0.5)
     failed_po = nothing
     for po in pos
-        s = nothing
-        seeds = Any[Qprev, seed_Q(c, 0.0, 0.5), seed_Q(c, 2.0, 0.3),
-            seed_Q(c, 3.0, 0.25), seed_Q(c, 4.0, 0.2),
-            (1 - po) * seed_Q(c, 0.0, 0.4) + po * seed_Q(c, 2.5, 0.25)]
-        for Q0 in seeds
-            s = solve_fixed_pi(c, po, Q0, P, κ)
-            s === nothing || break
-        end
+        win = isempty(grid) ? nothing : grid[end][2].win
+        wout = isempty(grid) ? nothing : grid[end][2].wout
+        s = try_fixed_pi(c, po, Qprev, P, κ; win=win, wout=wout)
         if s === nothing
             failed_po = po
             break
@@ -211,9 +229,9 @@ function walk_pi(c::Cfg, P, κ; pos=nothing)
     # binary refine up to the failure edge
     if failed_po !== nothing && !isempty(grid)
         lo, hi, Qs = grid[end][1], failed_po, grid[end][2].Q
-        for _ in 1:25
+        for _ in 1:30
             m = 0.5 * (lo + hi)
-            t = solve_fixed_pi(c, m, Qs, P, κ)
+            t = try_fixed_pi(c, m, Qs, P, κ; win=grid[end][2].win, wout=grid[end][2].wout)
             if t === nothing
                 hi = m
             else
@@ -221,6 +239,28 @@ function walk_pi(c::Cfg, P, κ; pos=nothing)
                 push!(grid, (m, t))
             end
             hi - lo < 1e-5 && break
+        end
+        sort!(grid; by=first)
+    end
+    # Adaptive microstep continuation past a coarse-grid death.
+    if !isempty(grid)
+        Qs = grid[end][2].Q
+        pocur = grid[end][1]
+        Δ = 0.01
+        stagnant = 0
+        while pocur < 0.99 && stagnant < 3 && Δ >= 2e-4
+            ponext = min(pocur + Δ, 0.99)
+            t = try_fixed_pi(c, ponext, Qs, P, κ;
+                win=grid[end][2].win, wout=grid[end][2].wout)
+            if t === nothing
+                Δ *= 0.4
+                stagnant += 1
+                continue
+            end
+            push!(grid, (ponext, t))
+            Qs, pocur = t.Q, ponext
+            stagnant = 0
+            Δ = min(Δ * 1.25, 0.02)
         end
         sort!(grid; by=first)
     end
@@ -243,31 +283,46 @@ function make_cfg()
         1.0 + 2.0 * (d - 1.0) * s0 / d)
 end
 
+"""Free mixture Laplace solve (π from well masses, not forced)."""
+function free_solve_candidates(c::Cfg, P, κ; Q_warm=nothing)
+    out = NamedTuple[]
+    seeds = Any[]
+    Q_warm === nothing || push!(seeds, Q_warm)
+    for (μ, σ) in ((0.0, 0.5), (0.0, 0.3), (1.5, 0.3), (2.0, 0.3), (2.5, 0.25), (3.0, 0.2))
+        push!(seeds, seed_Q(c, μ, σ))
+        for mix in (0.05, 0.1, 0.2, 0.4)
+            push!(seeds, (1 - mix) * seed_Q(c, 0.0, 0.4) + mix * seed_Q(c, μ, σ))
+        end
+    end
+    for Q0 in seeds
+        s = solve(c, Q0, P, κ; iters=6000, η=0.15, tol=1e-9)
+        s === nothing && continue
+        isempty(s.ws) && continue
+        # Re-evaluate as fixed-π at the mixture's outer mass so F lives on the same
+        # ansatz as the π-walk (outer = last well weight).
+        po = length(s.π) >= 2 ? float(s.π[end]) : 0.0
+        t = try_fixed_pi(c, po, s.Q, P, κ; win=s.ws[1], wout=s.ws[end])
+        t === nothing && continue
+        push!(out, (po=po, s=t, source=:free))
+    end
+    out
+end
+
 """Global free-energy minimum over π_out at fixed (P, κ).
 
-Uses a warm π-walk (`walk_pi`) and selects argmin_π F(π). This is the variational
-equilibrium of the two-well ansatz — π_out is not held fixed at the reported point.
-
-Returns `at_edge=true` when the minimizer is the last converged π (solver wall),
-so that point is not a trusted interior minimum.
+Uses a warm π-walk (`walk_pi`) and selects argmin_π F(π). Also competes free
+mixture solves (self-consistent π). Returns `at_edge=true` when the minimizer
+is the last converged constrained-π point and no better free solve exists.
 """
 function equilibrium_at(c::Cfg, P, κ; Q_warm=nothing)
     grid = collect(walk_pi(c, P, κ))
     # Guarantee a π=0 trial even if the walk failed immediately.
     if isempty(grid) || grid[1][1] > 0.0
-        s0 = nothing
-        Q0s = Any[Q_warm === nothing ? seed_Q(c, 0.0, 0.5) : Q_warm,
-            seed_Q(c, 0.0, 0.5), seed_Q(c, 0.0, 0.3)]
-        for Q0 in Q0s
-            s0 = solve_fixed_pi(c, 0.0, Q0, P, κ)
-            s0 === nothing || break
-        end
+        s0 = try_fixed_pi(c, 0.0, Q_warm === nothing ? seed_Q(c, 0.0, 0.5) : Q_warm, P, κ)
         s0 !== nothing && pushfirst!(grid, (0.0, s0))
     end
     isempty(grid) && return nothing
 
-    # Interior refine: golden-section-ish binary search around the discrete min
-    # when it is not on the walk edge.
     Fs = [g[2].F for g in grid]
     jbest = argmin(Fs)
     if jbest > 1 && jbest < length(grid)
@@ -277,8 +332,8 @@ function equilibrium_at(c::Cfg, P, κ; Q_warm=nothing)
         for _ in 1:25
             m1 = lo + (hi - lo) / 3
             m2 = hi - (hi - lo) / 3
-            t1 = solve_fixed_pi(c, m1, Qs, P, κ)
-            t2 = solve_fixed_pi(c, m2, Qs, P, κ)
+            t1 = try_fixed_pi(c, m1, Qs, P, κ; win=sm.win, wout=sm.wout)
+            t2 = try_fixed_pi(c, m2, Qs, P, κ; win=sm.win, wout=sm.wout)
             (t1 === nothing || t2 === nothing) && break
             if t1.F < t2.F
                 hi, sm, Qs = m2, t1, t1.Q
@@ -287,7 +342,6 @@ function equilibrium_at(c::Cfg, P, κ; Q_warm=nothing)
             end
             hi - lo < 1e-5 && break
         end
-        # replace discrete min with refined point
         grid[jbest] = (0.5 * (lo + hi), sm)
         Fs[jbest] = sm.F
         jbest = argmin(Fs)
@@ -295,10 +349,29 @@ function equilibrium_at(c::Cfg, P, κ; Q_warm=nothing)
 
     po, s = grid[jbest]
     at_edge = (jbest == length(grid) && length(grid) > 1)
+    source = :walk
+
+    # Free mixture candidates — especially useful when the constrained walk dies
+    # because forced-π annihilates the outer well while F is still falling.
+    for cand in free_solve_candidates(c, P, κ; Q_warm=(Q_warm === nothing ? s.Q : Q_warm))
+        if cand.s.F < s.F - 1e-6
+            po, s = cand.po, cand.s
+            at_edge = false
+            source = :free
+        elseif at_edge && abs(cand.s.F - s.F) < 1e-3 * max(abs(s.F), 1.0)
+            # Prefer a true self-consistent free solve over an edge artifact
+            # with essentially the same F.
+            po, s = cand.po, cand.s
+            at_edge = false
+            source = :free
+        end
+    end
+
     F0 = grid[1][1] == 0.0 ? grid[1][2].F : NaN
     F1 = grid[end][2].F
     ΔF_ends = (isfinite(F0) && isfinite(F1)) ? (F1 - F0) : NaN
-    (po=po, s=s, F0=F0, F1=F1, dF_outer_minus_inner=ΔF_ends, grid=grid, at_edge=at_edge)
+    (po=po, s=s, F0=F0, F1=F1, dF_outer_minus_inner=ΔF_ends, grid=grid,
+        at_edge=at_edge, source=source)
 end
 
 function scan_main()
@@ -1060,9 +1133,10 @@ function rho_ray_actions_main()
         Qwarm = seed_Q(c, 0.0, 0.5)
         for ρ in rhos
             κ = ρ * sa0 * P
-            local po, s, at_edge, dF0
+            local po, s, at_edge, dF0, src
             at_edge = false
             dF0 = NaN
+            src = "center"
             if mode == "center"
                 s = nothing
                 for Q0 in (Qwarm, seed_Q(c, 0.0, 0.5), seed_Q(c, 0.0, 0.3))
@@ -1076,6 +1150,7 @@ function rho_ray_actions_main()
                 po = eq === nothing ? NaN : eq.po
                 at_edge = eq === nothing ? false : eq.at_edge
                 dF0 = (eq !== nothing && isfinite(eq.F0)) ? (eq.s.F - eq.F0) : NaN
+                src = eq === nothing ? "none" : string(eq.source)
             end
             if s === nothing
                 @printf("  %-11s ρ=%-6.4g κ=%-6.4g  no solution\n", mode, ρ, κ)
@@ -1098,8 +1173,8 @@ function rho_ray_actions_main()
                 ρ, κ, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i, phase(s))
             flush(io); flush(sio)
             edge_tag = at_edge ? " EDGE" : ""
-            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  %s%s\n",
-                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, phase(s), edge_tag)
+            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  %s%s [%s]\n",
+                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, phase(s), edge_tag, src)
             flush(stdout)
         end
         close(io); close(sio)
