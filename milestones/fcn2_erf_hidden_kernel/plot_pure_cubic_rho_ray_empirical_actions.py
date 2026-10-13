@@ -3,12 +3,16 @@
 
 Loads teacher-axis read-in weights W0[..., 0] from each run:
   - pool A_snapshots/ when present (posterior), else model.pt / checkpoint.pt
-Plots -log p(w) histograms overlaid, colored by ρ = κ/(sa0 P) (viridis).
+Plots -log p(w) histograms overlaid, colored by ρ = κ/(sa0 P) (viridis),
+with χ=N cavity theory V(w) as thin dashed curves (same colors).
+
+Theory CSVs default to the FO-window + deep-ρ equilibrium dumps; each
+empirical ρ picks the nearest available theory ρ. Theory is shifted so its
+min on the plot window matches the empirical action min (additive gauge).
 
 Example::
 
     python plot_pure_cubic_rho_ray_empirical_actions.py
-    python plot_pure_cubic_rho_ray_empirical_actions.py --replot   # after more training
 """
 from __future__ import annotations
 
@@ -27,6 +31,12 @@ DEFAULT_SWEEP = HERE / (
     "_d16_N200_P1000_chiN_sa00.03_eps1_he10"
     "_lr0.01_ep60M_sched2_3_5"
 )
+DEFAULT_THEORY = [
+    HERE
+    / "action_h0_activation_plots/PureCubicChiN/tmp_pure_cubic_rho_ray_actions_equilibrium.csv",
+    HERE
+    / "action_h0_activation_plots/PureCubicChiN/fo_rho_deep_l3/tmp_pure_cubic_rho_ray_actions_equilibrium.csv",
+]
 DIR_RE = re.compile(
     r"purecubic_rho(?P<rho>[\d.eE+-]+)_d(?P<d>\d+)_P(?P<P>\d+)_N(?P<N>\d+)"
     r"_chi(?P<chi>[\d.]+)_sa0(?P<sa0>[\d.]+)_kappa(?P<kappa>[\d.]+)_seed(?P<seed>\d+)$"
@@ -54,7 +64,6 @@ def load_w0_target(model_dir: Path) -> tuple[np.ndarray, str]:
     snap_dir = model_dir / "A_snapshots"
     snaps = sorted(snap_dir.glob("epoch_*.pt")) if snap_dir.is_dir() else []
     if snaps:
-        # second half of the snapshot window (equilibrated posterior)
         use = snaps[len(snaps) // 2 :]
         chunks = []
         for p in use:
@@ -67,13 +76,19 @@ def load_w0_target(model_dir: Path) -> tuple[np.ndarray, str]:
         if not ckpt.is_file():
             continue
         obj = torch.load(ckpt, map_location="cpu", weights_only=False)
-        state = obj["model_state_dict"] if isinstance(obj, dict) and "model_state_dict" in obj else obj
+        state = (
+            obj["model_state_dict"]
+            if isinstance(obj, dict) and "model_state_dict" in obj
+            else obj
+        )
         w0 = state["W0"][..., 0].detach().cpu().numpy().reshape(-1)
         return w0, name
     raise FileNotFoundError(f"no W0 in {model_dir}")
 
 
-def action_curve(values: np.ndarray, bins: int = 60, min_samples: int = 3, eps: float = 1e-9):
+def action_curve(
+    values: np.ndarray, bins: int = 60, min_samples: int = 3, eps: float = 1e-9
+):
     values = np.asarray(values, float).reshape(-1)
     values = values[np.isfinite(values)]
     if values.size == 0:
@@ -86,6 +101,36 @@ def action_curve(values: np.ndarray, bins: int = 60, min_samples: int = 3, eps: 
     return centers, action
 
 
+def load_theory_catalog(paths: list[Path]) -> dict[float, tuple[np.ndarray, np.ndarray]]:
+    """ρ → (w, V) from one or more long action CSVs (later files override)."""
+    catalog: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+    for path in paths:
+        if not path.is_file():
+            print(f"theory skip (missing): {path}")
+            continue
+        data = np.genfromtxt(path, delimiter=",", names=True)
+        for rho in np.unique(data["rho"]):
+            m = data["rho"] == rho
+            w = np.asarray(data["w"][m], float)
+            V = np.asarray(data["V"][m], float)
+            o = np.argsort(w)
+            catalog[float(rho)] = (w[o], V[o])
+        print(f"theory loaded {path.name}: {len(np.unique(data['rho']))} ρ curves")
+    return catalog
+
+
+def nearest_theory(
+    catalog: dict[float, tuple[np.ndarray, np.ndarray]], rho: float
+) -> tuple[float, np.ndarray, np.ndarray] | None:
+    if not catalog:
+        return None
+    keys = np.asarray(sorted(catalog.keys()), float)
+    j = int(np.argmin(np.abs(keys - rho)))
+    r = float(keys[j])
+    w, V = catalog[r]
+    return r, w, V
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sweep", type=Path, default=DEFAULT_SWEEP)
@@ -94,6 +139,13 @@ def main() -> None:
         type=Path,
         default=None,
         help="default: <sweep>/plots/empirical_weight_actions_vs_rho.png",
+    )
+    ap.add_argument(
+        "--theory",
+        type=Path,
+        nargs="*",
+        default=DEFAULT_THEORY,
+        help="cavity V(w) CSVs (FO + deep). Empty disables theory overlay.",
     )
     ap.add_argument("--bins", type=int, default=60)
     ap.add_argument("--wmax", type=float, default=None, help="x-axis half-width (auto if omit)")
@@ -121,6 +173,8 @@ def main() -> None:
     if not runs:
         raise SystemExit(f"no purecubic_rho* runs with W0 under {models}")
 
+    catalog = load_theory_catalog(list(args.theory)) if args.theory else {}
+
     runs.sort(key=lambda r: -r["rho"])  # high → low (yellow → purple)
     rhos = np.asarray([r["rho"] for r in runs], float)
     c_plot = np.log10(np.clip(rhos, 1e-30, None))
@@ -133,6 +187,7 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(8.0, 4.8))
     xmax_auto = 0.0
     ymin_auto, ymax_auto = np.inf, -np.inf
+    theory_labeled = False
     for r, c in zip(runs, c_plot):
         centers, action = action_curve(r["w0"], bins=args.bins)
         mask = np.isfinite(action)
@@ -142,16 +197,54 @@ def main() -> None:
             action[mask],
             color=color,
             lw=2.0,
-            label=rf"$\rho={r['rho']:.3g}$ ({r['src']})",
+            label=rf"$\rho={r['rho']:.3g}$ emp ({r['src']})",
         )
         if mask.any():
             xmax_auto = max(xmax_auto, float(np.max(np.abs(centers[mask]))))
             ymin_auto = min(ymin_auto, float(np.nanmin(action[mask])))
             ymax_auto = max(ymax_auto, float(np.nanpercentile(action[mask], 98)))
-        print(
-            f"  ρ={r['rho']:.4g}  κ={r['kappa']:.4g}  n={r['w0'].size}  "
-            f"src={r['src']}  var(w0)={r['w0'].var():.4g}"
-        )
+
+        th = nearest_theory(catalog, r["rho"])
+        if th is not None and mask.any():
+            rho_th, w_th, V_th = th
+            # provisional wmax for shift; refined after loop via xlim
+            wmax_guess = (
+                float(args.wmax)
+                if args.wmax is not None
+                else max(1.05 * xmax_auto, 0.8)
+            )
+            in_win = np.abs(w_th) <= wmax_guess
+            if not np.any(in_win):
+                in_win = np.ones_like(w_th, dtype=bool)
+            emp_min = float(np.nanmin(action[mask]))
+            V_win = V_th[in_win]
+            if np.any(np.isfinite(V_win)):
+                V_shift = V_th - float(np.nanmin(V_win)) + emp_min
+                lbl = None
+                if not theory_labeled:
+                    lbl = r"theory $V(w)$ (dashed, shifted)"
+                    theory_labeled = True
+                ax.plot(
+                    w_th,
+                    V_shift,
+                    color=color,
+                    lw=1.15,
+                    ls="--",
+                    alpha=0.95,
+                    label=lbl,
+                    zorder=2,
+                )
+                print(
+                    f"  ρ={r['rho']:.4g}  emp={r['src']}  "
+                    f"theory ρ={rho_th:.4g}  (Δρ={rho_th - r['rho']:+.4g})"
+                )
+            else:
+                print(f"  ρ={r['rho']:.4g}  emp={r['src']}  theory empty window")
+        else:
+            print(
+                f"  ρ={r['rho']:.4g}  κ={r['kappa']:.4g}  n={r['w0'].size}  "
+                f"src={r['src']}  var(w0)={r['w0'].var():.4g}"
+            )
 
     wmax = float(args.wmax) if args.wmax is not None else max(1.05 * xmax_auto, 0.8)
     ax.set_xlim(-wmax, wmax)
@@ -160,15 +253,15 @@ def main() -> None:
         ax.set_ylim(ymin_auto - pad, ymax_auto + pad)
     ax.axhline(0.0, color="0.55", lw=0.8, ls="--")
     ax.set_xlabel(r"read-in weight $w_0$ (teacher axis)")
-    ax.set_ylabel(r"empirical action $-\log p(w_0)$")
+    ax.set_ylabel(r"action (emp $-\log p$; theory $V$ shifted)")
     ax.set_title(
-        r"Pure cubic $\chi=N$ ρ-ray: empirical $W_0$ actions"
+        r"Pure cubic $\chi=N$ ρ-ray: empirical $W_0$ + theory $V(w)$"
         "\n"
         r"$d=16$, $N=200$, $P=10^3$, $\mathrm{sa0}=0.03$, $\varepsilon=1$, $\mathrm{he1}=0$; "
         r"color = $\rho$ (viridis)"
     )
     ax.grid(True, alpha=0.25)
-    ax.legend(frameon=False, fontsize=8, loc="upper right")
+    ax.legend(frameon=False, fontsize=7.5, loc="upper right")
 
     sm = mpl.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
