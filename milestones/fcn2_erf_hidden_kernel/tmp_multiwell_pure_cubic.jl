@@ -1488,30 +1488,49 @@ function rho_deep_main()
     P = parse(Float64, argval("--P", "1000"))
     sa0 = parse(Float64, argval("--sa0", "0.03"))
     eps_task = parse(Float64, argval("--eps", "1"))
+    # χ = N (default) vs χ = 1 (NNGP: ridge κ/(sa0 P) with no N on κ/sa0).
+    chi_flag = parse(Float64, argval("--chi", string(n1)))
+    chi = chi_flag < 0 ? n1 : chi_flag
     rhos = sort(parse_list(argval("--rhos",
         "0.07,0.06,0.05,0.04,0.03,0.025,0.02,0.015,0.012,0.01,0.008,0.006,0.005,0.004,0.003,0.0025,0.002,0.0015,0.001,0.0007,0.0005,0.0003,0.0002,0.0001,5e-5,2e-5,1e-5")); rev=true)
     reeq_every = parse(Int, argval("--reeq-every", "4"))
-    seed_pi = parse(Float64, argval("--seed-pi", "0.17"))  # post-FO high-π basin
+    # χ=N FO winner sits at high π; χ=1 usually has no large-π basin — seed at 0.
+    seed_pi = parse(Float64, argval("--seed-pi", chi == n1 ? "0.17" : "0.0"))
     out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/fo_rho_deep_l3")
     mkpath(out_dir)
-    out = argval("--out", joinpath(out_dir, "summary_deep_equilibrium.csv"))
-    c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
-    @printf("ρ-deep continuation  d=%g N=χ=%g P=%g sa0=%g ε=%g  seed-π=%g  %d ρ points\n",
-        d, n1, P, sa0, eps_task, seed_pi, length(rhos))
+    out_default = chi == n1 ? "summary_deep_equilibrium.csv" : "summary_deep_chi$(chi).csv"
+    out = argval("--out", joinpath(out_dir, out_default))
+    c = Cfg(d, n1, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+    @printf("ρ-deep continuation  d=%g N=%g χ=%g P=%g sa0=%g ε=%g  seed-π=%g  %d ρ points\n",
+        d, n1, chi, P, sa0, eps_task, seed_pi, length(rhos))
+    @printf("  ridge ρ'=κ/(sa0 P)%s\n", chi == 1 ? "  [NNGP: no N on κ/sa0]" : "")
     io = open(out, "w")
-    println(io, "rho,kappa,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,source,lam33_implied")
+    println(io, "rho,kappa,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,source,lam33_implied")
     br = nothing  # (po, s)
     for (k, ρ) in enumerate(rhos)
         κ = ρ * sa0 * P
         src = "continue"
         at_edge = false
         if br === nothing
-            # Seed the post-FO high-π basin directly (global min at ρ≲0.075).
-            seed = try
-                continue_pi_min(c, P, κ, seed_pi, seed_Q(c, 2.3, 0.2); window=0.08)
-            catch err
-                @printf("  ρ=%.4g  seed continue threw %s\n", ρ, err)
-                nothing
+            seed = nothing
+            if seed_pi > 0
+                seed = try
+                    continue_pi_min(c, P, κ, seed_pi, seed_Q(c, 2.3, 0.2); window=0.08)
+                catch err
+                    @printf("  ρ=%.4g  seed continue threw %s\n", ρ, err)
+                    nothing
+                end
+            else
+                # χ=1 / center seed: π = 0 fixed-π, then free mixture
+                s0 = try_fixed_pi(c, 0.0, seed_Q(c, 0.0, 1 / sqrt(d)), P, κ)
+                if s0 !== nothing
+                    seed = (po=0.0, s=s0, at_edge=false, F=s0.F, F0=NaN, dF=NaN)
+                end
+                if seed === nothing
+                    for cand in free_solve_candidates(c, P, κ)
+                        (seed === nothing || cand.s.F < seed.F) && (seed = (po=cand.po, s=cand.s, at_edge=false, F=cand.s.F, F0=NaN, dF=NaN))
+                    end
+                end
             end
             if seed === nothing
                 eq = try
@@ -1529,7 +1548,7 @@ function rho_deep_main()
                 src = "seed-" * string(eq.source)
             else
                 br = (po=seed.po, s=seed.s)
-                src = "seed-pi"
+                src = seed_pi > 0 ? "seed-pi" : "seed-center"
             end
         elseif reeq_every > 0 && mod(k - 1, reeq_every) == 0
             eq = try
@@ -1594,8 +1613,8 @@ function rho_deep_main()
         sigout = s.nwells < 2 ? NaN : s.wout[2]
         dV = s.nwells < 2 ? NaN : s.dV_raw
         lam = (s.L3 < 1 && s.L3 > 0) ? (s.L3 * ρ / (1 - s.L3)) : NaN
-        @printf(io, "%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%s,%.6g\n",
-            ρ, κ, br.po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F,
+        @printf(io, "%.10g,%.10g,%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%s,%.6g\n",
+            ρ, κ, chi, br.po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F,
             s.nwells, at_edge ? 1 : 0, src, lam)
         flush(io)
         @printf("  ρ=%-8.4g  π=%-7.4g  L3=%-7.4g  λ≈%-7.4g  V_out=%+-8.3g  n=%d  [%s]%s\n",
