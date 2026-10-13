@@ -81,12 +81,18 @@ SNAPSHOT_WINDOW = 20_000_000
 SNAPSHOT_A_INTERVAL = 500_000
 SNAPSHOT_A_BURNIN = EPOCHS - SNAPSHOT_WINDOW
 
-DEVICE = "cuda:0"
-MAX_PARALLEL_JOBS = 2  # leave room; do not crowd steepwell / other jobs
-MAX_PARALLEL_BY_DEVICE = {"cuda:0": 2, "cuda:1": 1}
+# PyTorch: cuda:0 = 4090, cuda:1 = 4080 (nvidia-smi indices are flipped).
+DEVICES = ["cuda:0", "cuda:1"]
+MAX_PARALLEL_BY_DEVICE = {"cuda:0": 2, "cuda:1": 2}  # 2–2 split across lab GPUs
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, "train_fcn2_erf_sigma_a.py")
+# Prefer the machine ml_env (same as steepwell_invariant trains).
+PYTHON = (
+    "/home/akiva/miniconda3/envs/ml_env/bin/python"
+    if os.path.isfile("/home/akiva/miniconda3/envs/ml_env/bin/python")
+    else sys.executable
+)
 
 SWEEP_DIR = os.path.join(
     SCRIPT_DIR,
@@ -129,10 +135,10 @@ def run_dir_name(params: dict, seed: int) -> str:
     )
 
 
-def make_cmd(params: dict, seed: int) -> list[str]:
+def make_cmd(params: dict, seed: int, device: str) -> list[str]:
     run_name = run_dir_name(params, seed)
     return [
-        sys.executable,
+        PYTHON,
         "-u",
         TRAIN_SCRIPT,
         "--d",
@@ -148,7 +154,7 @@ def make_cmd(params: dict, seed: int) -> list[str]:
         "--lr",
         str(BASE_LR),
         "--device",
-        DEVICE,
+        device,
         "--epochs",
         str(EPOCHS),
         "--log-interval",
@@ -209,7 +215,23 @@ def print_table() -> list[dict]:
 
 
 def device_cap(device: str) -> int:
-    return int(MAX_PARALLEL_BY_DEVICE.get(device, MAX_PARALLEL_JOBS))
+    return int(MAX_PARALLEL_BY_DEVICE.get(device, 1))
+
+
+def running_on(running: list[dict], device: str) -> int:
+    return sum(
+        1 for j in running if j.get("device") == device and j["proc"].poll() is None
+    )
+
+
+def pick_device(running: list[dict]) -> str | None:
+    """Prefer the GPU with the most free slots (2–2 capacity)."""
+    best, best_free = None, -1
+    for dev in DEVICES:
+        free = device_cap(dev) - running_on(running, dev)
+        if free > best_free:
+            best, best_free = dev, free
+    return best if best_free > 0 else None
 
 
 def launch_all(grid: list[dict]) -> None:
@@ -224,27 +246,42 @@ def launch_all(grid: list[dict]) -> None:
         order.append(pending.popleft() if take_hi else pending.pop())
         take_hi = not take_hi
 
+    print(
+        f"  devices: {DEVICES}  caps={MAX_PARALLEL_BY_DEVICE}  "
+        f"python={PYTHON}"
+    )
+    print(
+        "  red-robin order: "
+        + ", ".join(f"ρ={p['rho']:.4g}" for p in order)
+    )
+
     running: list[dict] = []
-    for params in order:
-        for seed in SEEDS:
-            while sum(1 for j in running if j["proc"].poll() is None) >= device_cap(DEVICE):
-                time.sleep(30)
-                running = [j for j in running if j["proc"].poll() is None]
-            cmd = make_cmd(params, seed)
-            log_path = os.path.join(LOG_BASE_DIR, run_dir_name(params, seed) + ".log")
-            with open(log_path, "a", encoding="utf-8") as log_f:
-                log_f.write(
-                    f"\n===== launch {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n"
-                )
-                log_f.write(" ".join(cmd) + "\n")
-                log_f.flush()
-                proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT)
-            running.append({"proc": proc, "params": params, "seed": seed})
-            print(
-                f"Launched ρ={params['rho']:.4g} κ={params['kappa']:.4g} "
-                f"seed={seed} -> {log_path}"
+    queue = deque((p, s) for p in order for s in SEEDS)
+    while queue:
+        running = [j for j in running if j["proc"].poll() is None]
+        device = pick_device(running)
+        if device is None:
+            time.sleep(30)
+            continue
+        params, seed = queue.popleft()
+        cmd = make_cmd(params, seed, device)
+        log_path = os.path.join(LOG_BASE_DIR, run_dir_name(params, seed) + ".log")
+        with open(log_path, "a", encoding="utf-8") as log_f:
+            log_f.write(
+                f"\n===== launch {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"device={device} =====\n"
             )
-            time.sleep(0.5)
+            log_f.write(" ".join(cmd) + "\n")
+            log_f.flush()
+            proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT)
+        running.append(
+            {"proc": proc, "params": params, "seed": seed, "device": device}
+        )
+        print(
+            f"Launched ρ={params['rho']:.4g} κ={params['kappa']:.4g} "
+            f"device={device} seed={seed} -> {log_path}"
+        )
+        time.sleep(0.5)
     print("All jobs submitted; waiting for completion...")
     for j in running:
         j["proc"].wait()
@@ -263,7 +300,10 @@ def main() -> None:
     if args.launch:
         launch_all(grid)
     else:
-        print("\nDry-run only. Pass --launch to start trains on", DEVICE)
+        print(
+            "\nDry-run only. Pass --launch to start trains "
+            f"({MAX_PARALLEL_BY_DEVICE} on {DEVICES})."
+        )
 
 
 if __name__ == "__main__":
