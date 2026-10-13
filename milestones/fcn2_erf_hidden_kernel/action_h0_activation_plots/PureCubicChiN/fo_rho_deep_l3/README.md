@@ -16,3 +16,4 @@
 
 - `L3_deep_vs_rho.png` — L₃ / well depth / π_out vs ρ (χ=N + NNGP overlay)
 - `actions_V_vs_w.png` — raw cavity action V(w) on the χ=N deep branch, curves colored by ρ (viridis). Outer wells drift out to |w|≈8 as ρ→10⁻⁵ while both wells deepen to V≈−2500.
+- `actions_V_vs_w_amalgam.png` — FO-window + deep actions amalgamated (same viridis ρ scale). Top: FO / catch-up window; bottom: deep continuation. Sequence: soft open (ρ≈0.10) → outer FO (ρ≈0.09–0.08) → center catch-up (ρ≈0.076) → joint deepening.
