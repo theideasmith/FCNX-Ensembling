@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Empirical W0 action overlay on the same raw V(w) scale as the theory amalgam.
+"""Empirical W0 −log p vs density-normalized cavity theory −log π.
 
 Loads teacher-axis read-in weights W0[..., 0] from each run:
   - pool A_snapshots/ when present (posterior), else model.pt / checkpoint.pt
 
-Theory is the same cavity CSVs / raw V(w) as
-`action_h0_activation_plots/PureCubicChiN/fo_rho_deep_l3/actions_V_vs_w_amalgam.png`
-(FO CSV for high ρ, deep CSV for low ρ; no additive shift of theory).
+Empirical action is −log of a *normalized* histogram density (gauge fixed).
+Theory CSVs store raw cavity V (defined up to an additive constant). For overlay
+we convert each curve to the density-normalized action
 
-Empirical −log p is shifted onto that raw gauge (emp min → theory min on the
-plot window) so well depths are comparable. Two stacked panels share the
-amalgam axis limits: FO window (−25…8) and deep continuation.
+    −log π(w) = V(w) + log ∫ e^{−V} dw
+
+(same convention as emp). Emp is not shifted.
+
+Theory CSV selection matches the amalgam (FO CSV for high ρ, deep for low ρ).
 
 Example::
 
@@ -94,6 +96,7 @@ def load_w0_target(model_dir: Path) -> tuple[np.ndarray, str]:
 def action_curve(
     values: np.ndarray, bins: int = 60, min_samples: int = 3, eps: float = 1e-9
 ):
+    """Density-normalized −log p from a 1d sample (histogram density)."""
     values = np.asarray(values, float).reshape(-1)
     values = values[np.isfinite(values)]
     if values.size == 0:
@@ -104,6 +107,16 @@ def action_curve(
     mask = counts >= min_samples
     action = np.where(mask, -np.log(dens + eps), np.nan)
     return centers, action
+
+
+def density_normalized_action(w: np.ndarray, V: np.ndarray) -> np.ndarray:
+    """−log π with π ∝ e^{−V} and ∫ π = 1 (trapezoid on the given grid)."""
+    w = np.asarray(w, float)
+    V = np.asarray(V, float)
+    Vn = V - np.nanmin(V)
+    # −log π = Vn + log ∫ e^{−Vn} dw
+    logZ = float(np.log(np.trapezoid(np.exp(-Vn), w)))
+    return Vn + logZ
 
 
 def load_actions(path: Path) -> np.ndarray | None:
@@ -151,7 +164,6 @@ def pick_theory(
     ):
         w, V = curve_at(fo, f_near)
         return f_near, w, V, "fo"
-    # fallback: absolute nearest across available
     cands = []
     if f_near is not None:
         cands.append(("fo", f_near, fo))
@@ -174,22 +186,9 @@ def main() -> None:
     ap.add_argument("--fo", type=Path, default=DEFAULT_FO)
     ap.add_argument("--deep", type=Path, default=DEFAULT_DEEP)
     ap.add_argument("--bins", type=int, default=60)
-    # Match amalgam defaults so overlays are visually comparable.
     ap.add_argument("--wmax", type=float, default=11.0)
-    ap.add_argument("--fo-ymin", type=float, default=-25.0)
-    ap.add_argument("--fo-ymax", type=float, default=8.0)
-    ap.add_argument(
-        "--fo-rho-min",
-        type=float,
-        default=0.055,
-        help="FO panel: only curves with ρ ≥ this (same cut as amalgam)",
-    )
-    ap.add_argument(
-        "--deep-rho-max",
-        type=float,
-        default=0.12,
-        help="deep panel: only curves with ρ ≤ this (same cut as amalgam)",
-    )
+    ap.add_argument("--ymin", type=float, default=None)
+    ap.add_argument("--ymax", type=float, default=None)
     args = ap.parse_args()
 
     models = args.sweep / "models"
@@ -217,7 +216,7 @@ def main() -> None:
     fo = load_actions(args.fo)
     deep = load_actions(args.deep)
 
-    runs.sort(key=lambda r: -r["rho"])  # high → low (yellow → purple)
+    runs.sort(key=lambda r: -r["rho"])
     rhos = np.asarray([r["rho"] for r in runs], float)
     c_plot = np.log10(np.clip(rhos, 1e-30, None))
     norm = mpl.colors.Normalize(vmin=float(c_plot.min()), vmax=float(c_plot.max()))
@@ -226,134 +225,90 @@ def main() -> None:
     out = args.out or (args.sweep / "plots" / "empirical_weight_actions_vs_rho.png")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Precompute emp curves + raw theory (amalgam gauge).
-    prepared = []
-    deep_vmins = []
+    fig, ax = plt.subplots(figsize=(8.4, 5.2))
+    wmax = float(args.wmax)
+    ymin_auto, ymax_auto = np.inf, -np.inf
+    theory_labeled = False
+
     for r, c in zip(runs, c_plot):
         centers, action = action_curve(r["w0"], bins=args.bins)
         mask = np.isfinite(action)
+        color = cmap(norm(c))
+        ax.plot(
+            centers[mask],
+            action[mask],
+            color=color,
+            lw=2.0,
+            label=rf"$\rho={r['rho']:.3g}$ emp ({r['src']})",
+            zorder=3,
+        )
+        if mask.any():
+            ymin_auto = min(ymin_auto, float(np.nanmin(action[mask])))
+            ymax_auto = max(ymax_auto, float(np.nanpercentile(action[mask], 98)))
+
         th = pick_theory(fo, deep, r["rho"])
-        entry = {
-            "run": r,
-            "c": c,
-            "centers": centers,
-            "action": action,
-            "mask": mask,
-            "th": th,
-        }
-        if th is not None:
-            rho_th, w_th, V_th, src_th = th
-            in_win = np.abs(w_th) <= args.wmax
-            if not np.any(in_win):
-                in_win = np.ones_like(w_th, dtype=bool)
-            V_min = float(np.nanmin(V_th[in_win]))
-            entry["V_min"] = V_min
-            entry["w_th"] = w_th
-            entry["V_th"] = V_th
-            entry["rho_th"] = rho_th
-            entry["src_th"] = src_th
-            if r["rho"] <= args.deep_rho_max:
-                deep_vmins.append(V_min)
-            print(
-                f"  ρ={r['rho']:.4g}  emp={r['src']}  "
-                f"theory ρ={rho_th:.4g} ({src_th})  "
-                f"Vmin={V_min:.4g}  (Δρ={rho_th - r['rho']:+.4g})"
-            )
-        else:
+        if th is None:
             print(f"  ρ={r['rho']:.4g}  emp={r['src']}  no theory")
-        prepared.append(entry)
+            continue
+        rho_th, w_th, V_th, src_th = th
+        in_win = np.abs(w_th) <= wmax
+        if not np.any(in_win):
+            in_win = np.ones_like(w_th, dtype=bool)
+        w_use, V_use = w_th[in_win], V_th[in_win]
+        V_norm = density_normalized_action(w_use, V_use)
+        lbl = None
+        if not theory_labeled:
+            lbl = r"theory $-\log\pi$ (dashed; $V$ density-normalized)"
+            theory_labeled = True
+        ax.plot(
+            w_use,
+            V_norm,
+            color=color,
+            lw=1.15,
+            ls="--",
+            alpha=0.95,
+            label=lbl,
+            zorder=2,
+        )
+        ymin_auto = min(ymin_auto, float(np.nanmin(V_norm)))
+        # walls of outer wells, not barrier blow-up
+        ymax_auto = max(ymax_auto, float(np.nanmin(V_norm)) + 6.0)
+        print(
+            f"  ρ={r['rho']:.4g}  emp={r['src']}  "
+            f"theory ρ={rho_th:.4g} ({src_th})  "
+            f"−logπ min={float(np.nanmin(V_norm)):.4g}  "
+            f"(Δρ={rho_th - r['rho']:+.4g})"
+        )
 
-    fig, axes = plt.subplots(
-        2,
-        1,
-        figsize=(8.2, 8.6),
-        sharex=True,
-        gridspec_kw={"height_ratios": [1.05, 1.0]},
-    )
-    wmax = float(args.wmax)
-    emp_labeled = False
-    theory_labeled = False
-
-    for ax, panel in zip(axes, ("fo", "deep")):
-        for e in prepared:
-            r = e["run"]
-            if panel == "fo" and r["rho"] < args.fo_rho_min:
-                continue
-            if panel == "deep" and r["rho"] > args.deep_rho_max:
-                continue
-
-            color = cmap(norm(e["c"]))
-            mask = e["mask"]
-            if e["th"] is not None and mask.any():
-                # Emp onto raw theory gauge (theory unshifted = amalgam).
-                emp_min = float(np.nanmin(e["action"][mask]))
-                emp_plot = e["action"] - emp_min + e["V_min"]
-                lbl_e = None
-                if not emp_labeled:
-                    lbl_e = rf"emp $-\log p$ (shifted $\to$ theory gauge)"
-                    emp_labeled = True
-                ax.plot(
-                    e["centers"][mask],
-                    emp_plot[mask],
-                    color=color,
-                    lw=2.0,
-                    label=lbl_e,
-                    zorder=3,
-                )
-                lbl_t = None
-                if not theory_labeled:
-                    lbl_t = r"theory $V(w)$ raw (dashed; same as amalgam)"
-                    theory_labeled = True
-                ax.plot(
-                    e["w_th"],
-                    e["V_th"],
-                    color=color,
-                    lw=1.15,
-                    ls="--",
-                    alpha=0.95,
-                    label=lbl_t,
-                    zorder=2,
-                )
-            elif mask.any():
-                ax.plot(
-                    e["centers"][mask],
-                    e["action"][mask],
-                    color=color,
-                    lw=2.0,
-                    zorder=3,
-                )
-
-        ax.axhline(0.0, color="0.55", lw=0.8, ls="--")
-        ax.grid(True, alpha=0.25)
-        ax.set_xlim(-wmax, wmax)
-
-    axes[0].set_ylim(args.fo_ymin, args.fo_ymax)
-    if deep_vmins:
-        ymin = min(deep_vmins)
-        pad = 0.04 * abs(ymin)
-        axes[1].set_ylim(ymin - pad, 30.0)
-    else:
-        axes[1].set_ylim(-50.0, 30.0)
-
-    axes[0].set_title(
-        r"Pure cubic $\chi=N$ ρ-ray: empirical $W_0$ on amalgam theory scale"
+    ax.set_xlim(-wmax, wmax)
+    y0 = float(args.ymin) if args.ymin is not None else float(ymin_auto)
+    y1 = float(args.ymax) if args.ymax is not None else float(ymax_auto)
+    pad = 0.08 * (y1 - y0 + 1e-9)
+    if args.ymin is None:
+        y0 -= pad
+    if args.ymax is None:
+        y1 += pad
+    ax.set_ylim(y0, y1)
+    ax.axhline(0.0, color="0.55", lw=0.8, ls="--")
+    ax.set_xlabel(r"read-in weight $w_0$ (teacher axis)")
+    ax.set_ylabel(r"action $-\log p$ / $-\log\pi$ (density-normalized)")
+    ax.set_title(
+        r"Pure cubic $\chi=N$ ρ-ray: emp $-\log p$ vs theory $-\log\pi$"
         "\n"
         r"$d=16$, $N=200$, $P=10^3$, $\mathrm{sa0}=0.03$, $\varepsilon=1$, $\mathrm{he1}=0$; "
         r"color = $\rho$ (viridis)"
     )
-    axes[0].set_ylabel(r"$V(w)$  (FO / catch-up window)")
-    axes[1].set_ylabel(r"$V(w)$  (deep continuation)")
-    axes[1].set_xlabel(r"read-in weight $w_0$ (teacher axis)")
-    axes[0].legend(frameon=False, fontsize=8.0, loc="upper right")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False, fontsize=7.5, loc="upper right")
 
-    # Per-ρ color legend via colorbar (same style as amalgam).
     sm = mpl.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axes, pad=0.02, fraction=0.035)
+    cbar = fig.colorbar(sm, ax=ax, pad=0.02, fraction=0.045)
     cbar.set_ticks(c_plot)
     cbar.set_ticklabels([f"{r['rho']:.3g}" for r in runs])
     cbar.ax.set_ylabel(r"$\rho=\kappa/(\mathrm{sa0}\,P)$", rotation=270, labelpad=14)
 
+    fig.tight_layout()
     fig.savefig(out, dpi=170, bbox_inches="tight")
     print(f"saved {out}")
 
