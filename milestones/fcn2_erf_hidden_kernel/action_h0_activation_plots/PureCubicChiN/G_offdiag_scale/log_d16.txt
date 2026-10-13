@@ -1,0 +1,12 @@
+G off-diagonal scale diag  anchor d=16 N=200 P=1000 sa0=0.03 ε=1  χ=N
+  hold ρ and Finv via steepwell exponents; seed-π=0.17
+  ρ=0.15    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.133  |G13|/Ggeom=1.133  |G13|/|G11|=51.006  |G13|/|G33|=0.025  sig_in=0.253 (diag 0.253, ratio 1.000)  L3=0.007  π=0.046
+  ρ=0.12    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.006  |G13|/Ggeom=1.006  |G13|/|G11|=14.407  |G13|/|G33|=0.070  sig_in=0.298 (diag 0.298, ratio 1.000)  L3=0.022  π=0.109
+  ρ=0.1     d=16   N=200   P=1000.0   sa0=0.03      rG=-1.000  |G13|/Ggeom=1.000  |G13|/|G11|=9.010  |G13|/|G33|=0.111  sig_in=0.955 (diag NaN, ratio NaN)  L3=0.046  π=0.127
+  ρ=0.09    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.000  |G13|/Ggeom=1.000  |G13|/|G11|=9.933  |G13|/|G33|=0.101  sig_in=0.738 (diag NaN, ratio NaN)  L3=0.043  π=0.090
+  ρ=0.08    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.001  |G13|/Ggeom=1.001  |G13|/|G11|=8.209  |G13|/|G33|=0.122  sig_in=0.202 (diag NaN, ratio NaN)  L3=0.047  π=0.126
+  ρ=0.07    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.000  |G13|/Ggeom=1.000  |G13|/|G11|=6.617  |G13|/|G33|=0.151  sig_in=0.131 (diag NaN, ratio NaN)  L3=0.064  π=0.177
+  ρ=0.05    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.000  |G13|/Ggeom=1.000  |G13|/|G11|=5.216  |G13|/|G33|=0.192  sig_in=0.080 (diag NaN, ratio NaN)  L3=0.103  π=0.231
+  ρ=0.03    d=16   N=200   P=1000.0   sa0=0.03      rG=-1.000  |G13|/Ggeom=1.000  |G13|/|G11|=4.430  |G13|/|G33|=0.226  sig_in=0.048 (diag NaN, ratio NaN)  L3=0.171  π=0.250
+  ρ=0.015   d=16   N=200   P=1000.0   sa0=0.03      rG=-1.000  |G13|/Ggeom=1.000  |G13|/|G11|=4.008  |G13|/|G33|=0.249  sig_in=0.027 (diag NaN, ratio NaN)  L3=0.294  π=0.250
+saved action_h0_activation_plots/PureCubicChiN/G_offdiag_scale/G_offdiag_vs_d.csv

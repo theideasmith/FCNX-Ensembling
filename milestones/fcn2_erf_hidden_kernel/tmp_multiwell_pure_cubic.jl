@@ -1649,6 +1649,144 @@ function rho_deep_main()
     println("saved ", out)
 end
 
+"""Proportionally scale the experimental ρ-ray anchor (d0,N0,sa00,P0) with steepwell exponents.
+
+Holds ρ = κ/(sa0 P) and Finv ∝ 1/(sa0 d N) fixed:
+  β = (d/d0)²,  N ∝ β^{1/4},  sa0 ∝ β^{-3/4},  α = β^{5/4},
+  P ∝ α^{3/4},  κ ∝ (α/β)^{3/4}.
+"""
+function scale_rho_ray_anchor(d_target; d0=16.0, N0=200.0, sa00=0.03, P0=1000.0, ρ=0.08)
+    β = (d_target / d0)^2
+    d = round(d0 * sqrt(β))          # = round(d_target)
+    N = round(N0 * β^0.25)
+    sa0 = sa00 * β^(-0.75)
+    α = β^1.25
+    P = P0 * α^0.75
+    κ0 = ρ * sa00 * P0
+    κ = κ0 * (α / β)^0.75
+    (beta=β, d=d, N=N, sa0=sa0, P=P, kappa=κ, rho=κ / (sa0 * P), alpha=α)
+end
+
+"""Curvature σ = 1/√V''(μ) with full G vs G13=0 (central/inner-mode width)."""
+function width_full_vs_diag(c::Cfg, G, μ)
+    d2 = (V, w) -> ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), w)
+    Vf = potential(c, G)
+    Gd = [G[1, 1] 0.0; 0.0 G[2, 2]]
+    Vd = potential(c, Gd)
+    hf = try; d2(Vf, μ); catch; NaN; end
+    hd = try; d2(Vd, μ); catch; NaN; end
+    σf = (isfinite(hf) && hf > 0) ? 1 / sqrt(hf) : NaN
+    σd = (isfinite(hd) && hd > 0) ? 1 / sqrt(hd) : NaN
+    σf, σd
+end
+
+"""Diagnose G11/G13/G33 on the experimental ρ-ray, then scale d→O(100) holding ρ,Finv.
+
+  julia tmp_multiwell_pure_cubic.jl --G-scale
+  julia tmp_multiwell_pure_cubic.jl --G-scale --ds 16,32,64,128,256,512 \\
+      --rhos 0.15,0.08,0.03,0.015 --seed-pi 0.17
+"""
+function g_scale_diag_main()
+    d0 = parse(Float64, argval("--d0", "16"))
+    N0 = parse(Float64, argval("--n1", "200"))
+    P0 = parse(Float64, argval("--P", "1000"))
+    sa00 = parse(Float64, argval("--sa0", "0.03"))
+    eps_task = parse(Float64, argval("--eps", "1"))
+    seed_pi = parse(Float64, argval("--seed-pi", "0.17"))
+    rhos = parse_list(argval("--rhos", "0.15,0.12,0.10,0.09,0.08,0.07,0.05,0.03,0.015"))
+    ds = parse_list(argval("--ds", "16,32,64,128,256,512"))
+    out_dir = argval("--outdir", "action_h0_activation_plots/PureCubicChiN/G_offdiag_scale")
+    mkpath(out_dir)
+    out = joinpath(out_dir, "G_offdiag_vs_d.csv")
+    @printf("G off-diagonal scale diag  anchor d=%g N=%g P=%g sa0=%g ε=%g  χ=N\n",
+        d0, N0, P0, sa00, eps_task)
+    @printf("  hold ρ and Finv via steepwell exponents; seed-π=%g\n", seed_pi)
+    io = open(out, "w")
+    println(io, "d,N,chi,P,sa0,kappa,rho,Finv,beta,pi_out,L3,f1,mu_in,sig_in,mu_out,sig_out,dV_raw," *
+        "G11,G13,G33,rG,absG13_over_G11,absG13_over_G33,Q11,Q13,Q33,rQ," *
+        "sig_in_full,sig_in_diag,width_ratio,nwells,source")
+    for ρ in sort(rhos; rev=true)
+        br = nothing
+        for d_target in sort(ds)
+            sp = scale_rho_ray_anchor(d_target; d0=d0, N0=N0, sa00=sa00, P0=P0, ρ=ρ)
+            d, N, sa0, P, κ = sp.d, sp.N, sp.sa0, sp.P, sp.kappa
+            chi = N
+            c = Cfg(d, N, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
+            Finv = invariant_F(P, κ, c)
+            ρ_eff = κ / (sa0 * P)
+            src = "continue"
+            if br === nothing || abs(d - d0) < 1e-9
+                # (re)seed at each ρ on the anchor d, then continue in d
+                seed = nothing
+                if seed_pi > 0 && ρ <= 0.10
+                    seed = try
+                        continue_pi_min(c, P, κ, seed_pi, seed_Q(c, 2.3, 0.2); window=0.08)
+                    catch
+                        nothing
+                    end
+                end
+                if seed === nothing
+                    eq = try
+                        equilibrium_at(c, P, κ)
+                    catch
+                        nothing
+                    end
+                    if eq === nothing
+                        @printf("  ρ=%.4g d=%g  no equilibrium\n", ρ, d)
+                        continue
+                    end
+                    br = (po=eq.po, s=eq.s)
+                    src = "eq-" * string(eq.source)
+                else
+                    br = (po=seed.po, s=seed.s)
+                    src = "seed-pi"
+                end
+            else
+                # warm-start from previous d at same ρ
+                eq = try
+                    equilibrium_at(c, P, κ; Q_warm=br.s.Q)
+                catch
+                    nothing
+                end
+                if eq === nothing
+                    s = try_fixed_pi(c, br.po, br.s.Q, P, κ)
+                    if s === nothing
+                        @printf("  ρ=%.4g d=%g  continue failed\n", ρ, d)
+                        continue
+                    end
+                    br = (po=br.po, s=s)
+                    src = "fixed-pi-warm"
+                else
+                    br = (po=eq.po, s=eq.s)
+                    src = "eq-warm"
+                end
+            end
+            s = br.s
+            G = amp(c, s.Q, P, κ)
+            Q = s.Q
+            G11, G13, G33 = G[1, 1], G[1, 2], G[2, 2]
+            Q11, Q13, Q33 = Q[1, 1], Q[1, 2], Q[2, 2]
+            rG = G13 / sqrt(abs(G11 * G33) + 1e-30)
+            rQ = Q13 / sqrt(abs(Q11 * Q33) + 1e-30)
+            σf, σd = width_full_vs_diag(c, G, s.win[1])
+            wr = (isfinite(σf) && isfinite(σd) && σd > 0) ? σf / σd : NaN
+            println(io, join((
+                d, N, chi, P, sa0, κ, ρ_eff, Finv, sp.beta, br.po, s.L3, s.f1,
+                s.win[1], s.win[2], s.wout[1], s.wout[2], s.dV_raw,
+                G11, G13, G33, rG, abs(G13) / (abs(G11) + 1e-30), abs(G13) / (abs(G33) + 1e-30),
+                Q11, Q13, Q33, rQ, σf, σd, wr, s.nwells, src), ","))
+            flush(io)
+            @printf("  ρ=%-7.4g d=%-4.0f N=%-5.0f P=%-8.1f sa0=%-8.3g  rG=%+.3f  |G13|/Ggeom=%.3f  |G13|/|G11|=%.3f  |G13|/|G33|=%.3f  sig_in=%.3f (diag %.3f, ratio %.3f)  L3=%.3f  π=%.3f\n",
+                ρ_eff, d, N, P, sa0, rG, abs(rG), abs(G13) / (abs(G11) + 1e-30),
+                abs(G13) / (abs(G33) + 1e-30), s.win[2], σd, wr, s.L3, br.po)
+            flush(stdout)
+        end
+        br = nothing  # reset basin when ρ changes
+    end
+    close(io)
+    println("saved ", out)
+end
+
 if "--rho-deep" in ARGS
     rho_deep_main()
 elseif "--rho-branch-scan" in ARGS
@@ -1661,6 +1799,8 @@ elseif "--theory-ray" in ARGS
     theory_ray_main()
 elseif "--rho-learn" in ARGS
     rho_learn_main()
+elseif "--G-scale" in ARGS
+    g_scale_diag_main()
 elseif "--d-alpha-scan" in ARGS
     d_alpha_scan_main()
 elseif "--ray-scan" in ARGS
