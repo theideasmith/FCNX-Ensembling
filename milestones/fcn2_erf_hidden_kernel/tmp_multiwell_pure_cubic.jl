@@ -1500,12 +1500,24 @@ function rho_deep_main()
     mkpath(out_dir)
     out_default = chi == n1 ? "summary_deep_equilibrium.csv" : "summary_deep_chi$(chi).csv"
     out = argval("--out", joinpath(out_dir, out_default))
+    dump_actions = "--dump-actions" in ARGS
+    wmax = parse(Float64, argval("--wmax", "5"))
+    ngrid = parse(Int, argval("--ngrid", "2001"))
+    act_path = argval("--actions-out", joinpath(out_dir, "tmp_pure_cubic_rho_ray_actions_equilibrium.csv"))
     c = Cfg(d, n1, chi, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
     @printf("ρ-deep continuation  d=%g N=%g χ=%g P=%g sa0=%g ε=%g  seed-π=%g  %d ρ points\n",
         d, n1, chi, P, sa0, eps_task, seed_pi, length(rhos))
     @printf("  ridge ρ'=κ/(sa0 P)%s\n", chi == 1 ? "  [NNGP: no N on κ/sa0]" : "")
+    dump_actions && @printf("  dumping V(w) → %s  (|w|≤%g, %d pts)\n", act_path, wmax, ngrid)
     io = open(out, "w")
     println(io, "rho,kappa,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,source,lam33_implied")
+    aio = nothing
+    wgrid = nothing
+    if dump_actions
+        aio = open(act_path, "w")
+        println(aio, "rho,kappa,P,sa0,d,N,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,w,V")
+        wgrid = range(-wmax, wmax; length=ngrid)
+    end
     br = nothing  # (po, s)
     for (k, ρ) in enumerate(rhos)
         κ = ρ * sa0 * P
@@ -1617,11 +1629,23 @@ function rho_deep_main()
             ρ, κ, chi, br.po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F,
             s.nwells, at_edge ? 1 : 0, src, lam)
         flush(io)
+        if aio !== nothing
+            edge_i = at_edge ? 1 : 0
+            G = amp(c, s.Q, P, κ)
+            Vfn = potential(c, G)
+            meta = @sprintf("%.10g,%.10g,%.10g,%.10g,%g,%g,%g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d",
+                ρ, κ, P, sa0, d, n1, chi, br.po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i)
+            for w in wgrid
+                @printf(aio, "%s,%.10g,%.10g\n", meta, w, Vfn(w))
+            end
+            flush(aio)
+        end
         @printf("  ρ=%-8.4g  π=%-7.4g  L3=%-7.4g  λ≈%-7.4g  V_out=%+-8.3g  n=%d  [%s]%s\n",
             ρ, br.po, s.L3, lam, Vout, s.nwells, src, at_edge ? " EDGE" : "")
         flush(stdout)
     end
     close(io)
+    aio !== nothing && (close(aio); println("saved ", act_path))
     println("saved ", out)
 end
 

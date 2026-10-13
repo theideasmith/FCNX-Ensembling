@@ -12,6 +12,7 @@
 - **NNGP** — prior-kernel learnability at χ=1 amplitude (`summary_deep_nngp_frozen.csv`). Same ridge; no N-scaling. L₃ → 0.99 at ρ=10⁻⁵.
 - **χ=1 self-consistent** (optional) — center/unimodal basin stays at tiny L₃ (no FO high-π condensate).
 
-## Figure
+## Figures
 
-`L3_deep_vs_rho.png`
+- `L3_deep_vs_rho.png` — L₃ / well depth / π_out vs ρ (χ=N + NNGP overlay)
+- `actions_V_vs_w.png` — raw cavity action V(w) on the χ=N deep branch, curves colored by ρ (viridis). Outer wells drift out to |w|≈8 as ρ→10⁻⁵ while both wells deepen to V≈−2500.

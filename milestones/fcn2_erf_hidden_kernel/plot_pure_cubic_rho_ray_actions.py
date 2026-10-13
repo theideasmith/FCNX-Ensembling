@@ -46,9 +46,30 @@ def main() -> None:
         default=None,
         help="κ at β=1 when deriving β=κ_ref/κ from a ρ-ray CSV (default: max κ in keep)",
     )
+    ap.add_argument("--subtitle", default="outer-well FO")
     ap.add_argument("--wmax", type=float, default=3.2)
     ap.add_argument("--ymin", type=float, default=-3.2)
     ap.add_argument("--ymax", type=float, default=4.5)
+    ap.add_argument(
+        "--auto-ylim",
+        action="store_true",
+        help="set y-limits from plotted V (with padding); ignores --ymin/--ymax",
+    )
+    ap.add_argument(
+        "--log-color",
+        action="store_true",
+        help="log10-normalize color values (useful for deep ρ spanning decades)",
+    )
+    ap.add_argument(
+        "--no-legend",
+        action="store_true",
+        help="colorbar only (cleaner when many ρ curves)",
+    )
+    ap.add_argument(
+        "--keep-all",
+        action="store_true",
+        help="plot every unique ρ in the CSV (ignores --keep)",
+    )
     args = ap.parse_args()
 
     data = np.genfromtxt(args.actions, delimiter=",", names=True)
@@ -62,12 +83,17 @@ def main() -> None:
     # Select curves ----------------------------------------------------------
     if has_rho:
         all_rhos = np.unique(data["rho"])
+        all_rhos = all_rhos[np.isfinite(all_rhos)]
+        all_rhos.sort()
 
         def nearest_rho(target: float) -> float:
             return float(all_rhos[np.argmin(np.abs(all_rhos - target))])
 
-        targets = [float(x) for x in args.keep.split(",") if x.strip()]
-        keys_rho = [nearest_rho(t) for t in targets]
+        if args.keep_all:
+            keys_rho = [float(ρ) for ρ in all_rhos[::-1]]  # high → low
+        else:
+            targets = [float(x) for x in args.keep.split(",") if x.strip()]
+            keys_rho = [nearest_rho(t) for t in targets]
         # one representative row per ρ for meta
         meta = []
         for ρ in keys_rho:
@@ -117,19 +143,21 @@ def main() -> None:
             args.summary, delimiter=",", names=True, dtype=None, encoding=None
         )
         for row in np.atleast_1d(summary):
-            if "rho" in summary.dtype.names:
+            if "rho" in summary.dtype.names and "phase" in summary.dtype.names:
                 phase[float(row["rho"])] = str(row["phase"]).replace("_", " ")
-            elif "beta" in summary.dtype.names:
+            elif "beta" in summary.dtype.names and "phase" in summary.dtype.names:
                 phase[float(row["beta"])] = str(row["phase"]).replace("_", " ")
 
     color_vals = np.asarray([m[args.color_by] for m in meta], dtype=float)
-    # log scale for β/α (ray-like); linear for ρ
-    if args.color_by in ("beta", "alpha"):
-        c_plot = np.log10(color_vals)
-        cbar_label = rf"$\{args.color_by}$"
+    use_log_color = args.log_color or args.color_by in ("beta", "alpha")
+    if use_log_color:
+        c_plot = np.log10(np.clip(color_vals, 1e-30, None))
     else:
         c_plot = color_vals
+    if args.color_by == "rho":
         cbar_label = r"$\rho=\kappa/(\mathrm{sa0}\,P)$"
+    else:
+        cbar_label = rf"$\{args.color_by}$"
     norm = mpl.colors.Normalize(vmin=float(c_plot.min()), vmax=float(c_plot.max()))
     cmap = plt.get_cmap("viridis")
 
@@ -138,6 +166,7 @@ def main() -> None:
     )
 
     fig, ax = plt.subplots(figsize=(8.0, 4.8))
+    V_all = []
     for m, c in zip(meta, c_plot):
         w = data["w"][m["mask"]]
         V = data["V"][m["mask"]]
@@ -159,11 +188,17 @@ def main() -> None:
         else:
             label = rf"$\rho={m['rho']:.3g}${ph}"
         ax.plot(w, V, color=color, lw=2.0, label=label)
+        V_all.append(V)
         wm, Vm = local_minima(w, V)
-        keep = (np.abs(wm) <= args.wmax) & (Vm >= args.ymin - 0.1) & (Vm <= args.ymax + 0.1)
+        if args.auto_ylim:
+            ylo = float(np.nanmin(V)) - 0.1
+            yhi = float(np.nanmax(V)) + 0.1
+        else:
+            ylo, yhi = args.ymin, args.ymax
+        keep_pts = (np.abs(wm) <= args.wmax) & (Vm >= ylo - 0.1) & (Vm <= yhi + 0.1)
         ax.scatter(
-            wm[keep],
-            Vm[keep],
+            wm[keep_pts],
+            Vm[keep_pts],
             s=26,
             color=color,
             edgecolors="k",
@@ -173,28 +208,37 @@ def main() -> None:
 
     ax.axhline(0.0, color="0.55", lw=0.8, ls="--")
     ax.set_xlim(-args.wmax, args.wmax)
-    ax.set_ylim(args.ymin, args.ymax)
+    if args.auto_ylim and V_all:
+        stacked = np.concatenate(V_all)
+        finite = stacked[np.isfinite(stacked)]
+        pad = 0.04 * (finite.max() - finite.min() + 1e-9)
+        ax.set_ylim(float(finite.min()) - pad, float(min(finite.max(), 20.0)) + pad)
+    else:
+        ax.set_ylim(args.ymin, args.ymax)
     ax.set_xlabel(r"read-in weight $w$")
     ax.set_ylabel(r"action $V(w)$ (raw)")
     ax.set_title(
         r"Pure cubic $\chi=N$, $P=10^3$, $\mathrm{sa0}=0.03$"
         "\n"
-        + rf"outer-well FO; color = $\{args.color_by}$ (viridis)"
+        + rf"{args.subtitle}; color = $\{args.color_by}$ (viridis)"
     )
     ax.grid(True, alpha=0.25)
-    ax.legend(frameon=False, fontsize=8, loc="upper right")
+    if not args.no_legend:
+        ax.legend(frameon=False, fontsize=8, loc="upper right")
 
     sm = mpl.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, pad=0.02, fraction=0.045)
-    cbar.set_ticks(c_plot)
+    n_tick = min(len(meta), 9)
+    tick_idx = np.unique(np.round(np.linspace(0, len(meta) - 1, n_tick)).astype(int))
+    cbar.set_ticks(c_plot[tick_idx])
     if args.color_by == "beta":
-        cbar.set_ticklabels([f"{m['beta']:.3g}" for m in meta])
+        cbar.set_ticklabels([f"{meta[i]['beta']:.3g}" for i in tick_idx])
     elif args.color_by == "alpha":
-        cbar.set_ticklabels([f"{m['alpha']:.3g}" for m in meta])
+        cbar.set_ticklabels([f"{meta[i]['alpha']:.3g}" for i in tick_idx])
     else:
-        cbar.set_ticklabels([f"{m['rho']:.3g}" for m in meta])
-    cbar.ax.set_ylabel(cbar_label, rotation=270, labelpad=12)
+        cbar.set_ticklabels([f"{meta[i]['rho']:.3g}" for i in tick_idx])
+    cbar.ax.set_ylabel(cbar_label, rotation=270, labelpad=14)
 
     fig.tight_layout()
     fig.savefig(out, dpi=170, bbox_inches="tight")
