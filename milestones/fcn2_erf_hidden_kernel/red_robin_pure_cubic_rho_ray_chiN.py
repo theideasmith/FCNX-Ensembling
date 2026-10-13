@@ -58,22 +58,16 @@ S0 = 1.0
 TASK_EPS = 1.0
 HE1 = 0.0  # pure cubic y=(0,ε)
 
-# ρ = κ/(sa0 P) ladder through the FO → catch-up → deep sequence
+# Four regimes from nonlearnable → L3≈0.3 (χ=N equilibrium theory):
+#   ρ=0.15  L3≈0.007  pre-FO, center well, nonlearnable
+#   ρ=0.08  L3≈0.040  outer FO deep, center still flat
+#   ρ=0.03  L3≈0.17   post catch-up, wells deepening
+#   ρ=0.015 L3≈0.30   cubic learnable target
 RHOS = [
     0.15,
-    0.12,
-    0.10,
-    0.095,
-    0.09,
-    0.085,
     0.08,
-    0.076,
-    0.07,
-    0.05,
-    0.02,
-    0.01,
-    0.005,
-    0.001,
+    0.03,
+    0.015,
 ]
 
 # --- Same LR acceleration as steepwell d=5…50 trains ---
@@ -200,20 +194,10 @@ def print_table() -> list[dict]:
         f"  {'ρ':>8} {'κ':>10} {'T=2κ':>10} {'note'}"
     )
     notes = {
-        0.15: "pre-FO",
-        0.12: "pre-FO",
-        0.10: "soft open of center",
-        0.095: "near outer FO",
-        0.09: "outer FO",
-        0.085: "outer deep",
-        0.08: "outer deep",
-        0.076: "center catch-up FO",
-        0.07: "post catch-up",
-        0.05: "deepening",
-        0.02: "L3~0.24",
-        0.01: "L3~0.39",
-        0.005: "L3~0.56",
-        0.001: "L3~0.86",
+        0.15: "nonlearnable  L3≈0.007  pre-FO",
+        0.08: "outer-FO deep L3≈0.040  center flat",
+        0.03: "deepening     L3≈0.17   post catch-up",
+        0.015: "learnable     L3≈0.30   cubic target",
     }
     for p in grid:
         print(
