@@ -6,6 +6,7 @@ Loads teacher-axis read-in weights W0[..., 0] from each run:
 Plots -log p(w) histograms overlaid, colored by ρ = κ/(sa0 P) (viridis),
 with χ=N cavity theory V(w) as thin dashed curves (same colors).
 
+Default x half-width is 6.5 so outer wells (≈±2.5…±5) are in frame.
 Theory CSVs default to the FO-window + deep-ρ equilibrium dumps; each
 empirical ρ picks the nearest available theory ρ. Theory is shifted so its
 min on the plot window matches the empirical action min (additive gauge).
@@ -148,7 +149,24 @@ def main() -> None:
         help="cavity V(w) CSVs (FO + deep). Empty disables theory overlay.",
     )
     ap.add_argument("--bins", type=int, default=60)
-    ap.add_argument("--wmax", type=float, default=None, help="x-axis half-width (auto if omit)")
+    ap.add_argument(
+        "--wmax",
+        type=float,
+        default=7.0,
+        help="x-axis half-width (wide enough for outer wells; was emp-auto)",
+    )
+    ap.add_argument(
+        "--ymax",
+        type=float,
+        default=None,
+        help="y-axis max (default: show outer-well walls without barrier blow-up)",
+    )
+    ap.add_argument(
+        "--ymin",
+        type=float,
+        default=None,
+        help="y-axis min (default: below emp/theory well floors)",
+    )
     args = ap.parse_args()
 
     models = args.sweep / "models"
@@ -184,8 +202,8 @@ def main() -> None:
     out = args.out or (args.sweep / "plots" / "empirical_weight_actions_vs_rho.png")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(8.0, 4.8))
-    xmax_auto = 0.0
+    fig, ax = plt.subplots(figsize=(8.4, 5.0))
+    wmax = float(args.wmax)
     ymin_auto, ymax_auto = np.inf, -np.inf
     theory_labeled = False
     for r, c in zip(runs, c_plot):
@@ -200,26 +218,24 @@ def main() -> None:
             label=rf"$\rho={r['rho']:.3g}$ emp ({r['src']})",
         )
         if mask.any():
-            xmax_auto = max(xmax_auto, float(np.max(np.abs(centers[mask]))))
             ymin_auto = min(ymin_auto, float(np.nanmin(action[mask])))
             ymax_auto = max(ymax_auto, float(np.nanpercentile(action[mask], 98)))
 
         th = nearest_theory(catalog, r["rho"])
         if th is not None and mask.any():
             rho_th, w_th, V_th = th
-            # provisional wmax for shift; refined after loop via xlim
-            wmax_guess = (
-                float(args.wmax)
-                if args.wmax is not None
-                else max(1.05 * xmax_auto, 0.8)
-            )
-            in_win = np.abs(w_th) <= wmax_guess
+            in_win = np.abs(w_th) <= wmax
             if not np.any(in_win):
                 in_win = np.ones_like(w_th, dtype=bool)
             emp_min = float(np.nanmin(action[mask]))
             V_win = V_th[in_win]
             if np.any(np.isfinite(V_win)):
                 V_shift = V_th - float(np.nanmin(V_win)) + emp_min
+                Vs = V_shift[in_win]
+                # ylim: well floor + wall height; ignore high spurious local mins
+                v_floor = float(np.nanmin(Vs))
+                ymin_auto = min(ymin_auto, v_floor)
+                ymax_auto = max(ymax_auto, v_floor + 24.0)
                 lbl = None
                 if not theory_labeled:
                     lbl = r"theory $V(w)$ (dashed, shifted)"
@@ -246,11 +262,16 @@ def main() -> None:
                 f"src={r['src']}  var(w0)={r['w0'].var():.4g}"
             )
 
-    wmax = float(args.wmax) if args.wmax is not None else max(1.05 * xmax_auto, 0.8)
     ax.set_xlim(-wmax, wmax)
-    if np.isfinite(ymin_auto):
-        pad = 0.08 * (ymax_auto - ymin_auto + 1e-9)
-        ax.set_ylim(ymin_auto - pad, ymax_auto + pad)
+    if args.ymin is not None or args.ymax is not None or np.isfinite(ymin_auto):
+        y0 = float(args.ymin) if args.ymin is not None else float(ymin_auto)
+        y1 = float(args.ymax) if args.ymax is not None else float(ymax_auto)
+        pad = 0.08 * (y1 - y0 + 1e-9)
+        if args.ymin is None:
+            y0 -= pad
+        if args.ymax is None:
+            y1 += pad
+        ax.set_ylim(y0, y1)
     ax.axhline(0.0, color="0.55", lw=0.8, ls="--")
     ax.set_xlabel(r"read-in weight $w_0$ (teacher axis)")
     ax.set_ylabel(r"action (emp $-\log p$; theory $V$ shifted)")
