@@ -1,0 +1,4 @@
+step 3000000 of 8000000 (+offset 0), 1844s
+original (41 snaps)   : outer frac 0.1579 | inner mean |w0| 0.250, peak 0.235 | inner |w_perp|^2 0.970 | outer median |w0| 1.85 | train discrepancy He1/He3 (+0.120, +0.781) | crossings in->out/out->in 1/0 over 41 snaps
+new, first half       : outer frac 0.2059 | inner mean |w0| 0.290, peak 0.325 | inner |w_perp|^2 0.977 | outer median |w0| 1.78 | train discrepancy He1/He3 (+0.134, +0.771) | crossings in->out/out->in 21/11 over 75 snaps
+new, second half      : outer frac 0.2140 | inner mean |w0| 0.293, peak 0.285 | inner |w_perp|^2 0.972 | outer median |w0| 1.77 | train discrepancy He1/He3 (+0.135, +0.771) | crossings in->out/out->in 18/18 over 75 snaps
