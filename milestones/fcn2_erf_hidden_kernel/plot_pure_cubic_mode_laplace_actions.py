@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Overlay mode-Laplace −log p (self-consistent f*) on pure-cubic χ=N emp A_snapshot −log p.
+"""Overlay mode-Laplace −log p (self-consistent f*) on pure-cubic χ=N emp −log p.
 
 Reads caches from action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac/
-(written by tmp_mode_laplace_pure_cubic_rho.py). Emp from A_snapshots (second half).
+(written by tmp_mode_laplace_pure_cubic_rho.py). Emp: second half of precond
+Langevin (M2000 > M200) when present under PureCubicChiNRhoRay/precond_langevin/,
+else A_snapshots.
 
 Usage:
   python plot_pure_cubic_mode_laplace_actions.py
@@ -25,6 +27,7 @@ DEFAULT_SWEEP = HERE / (
     "_lr0.01_ep60M_sched2_3_5"
 )
 DEFAULT_THEORY = HERE / "action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac"
+PRECOND = HERE / "action_h0_activation_plots/PureCubicChiNRhoRay/precond_langevin"
 DIR_RE = re.compile(
     r"purecubic_rho(?P<rho>[\d.eE+-]+)_d(?P<d>\d+)_P(?P<P>\d+)_N(?P<N>\d+)"
     r"_chi(?P<chi>[\d.]+)_sa0(?P<sa0>[\d.]+)_kappa(?P<kappa>[\d.]+)_seed(?P<seed>\d+)$"
@@ -47,7 +50,36 @@ def parse_run(path: Path):
     }
 
 
-def load_w0(model_dir: Path):
+def _rho_tag(rho: float) -> str:
+    return f"rho{rho:g}".replace(".", "p")
+
+
+def load_w0(model_dir: Path, rho: float | None = None):
+    """Prefer precond Langevin second half; else A_snapshots second half."""
+    if rho is None:
+        meta = parse_run(model_dir)
+        rho = meta["rho"] if meta else None
+    if rho is not None:
+        t = _rho_tag(rho)
+        for mw in ("M2000", "M200"):
+            snap_dir = PRECOND / f"{t}_{mw}" / "snapshots"
+            snaps = (
+                sorted(snap_dir.glob("step_*.pt"), key=lambda s: int(s.stem.split("_")[1]))
+                if snap_dir.is_dir()
+                else []
+            )
+            if len(snaps) < 4:
+                continue
+            use = snaps[len(snaps) // 2 :]
+            chunks = [
+                torch.load(p, map_location="cpu", weights_only=False)["W0"][..., 0]
+                .detach()
+                .cpu()
+                .numpy()
+                .reshape(-1)
+                for p in use
+            ]
+            return np.concatenate(chunks), f"precond {mw}[{len(use)}/{len(snaps)}]"
     snap_dir = model_dir / "A_snapshots"
     snaps = sorted(snap_dir.glob("epoch_*.pt")) if snap_dir.is_dir() else []
     if snaps:
@@ -61,7 +93,7 @@ def load_w0(model_dir: Path):
             for p in use
         ]
         return np.concatenate(chunks), f"A_snapshots[{len(use)}/{len(snaps)}]"
-    raise FileNotFoundError(f"no A_snapshots in {model_dir}")
+    raise FileNotFoundError(f"no precond or A_snapshots for {model_dir}")
 
 
 def emp_action(values, bins=72, min_samples=3, eps=1e-9):
@@ -111,12 +143,13 @@ def main():
         if meta is None:
             continue
         try:
-            w0, src = load_w0(d)
+            w0, src = load_w0(d, rho=meta["rho"])
         except FileNotFoundError as e:
             print(f"skip {d.name}: {e}")
             continue
         meta["w0"], meta["src"] = w0, src
         runs.append(meta)
+        print(f"ρ={meta['rho']:g}: emp from {src}", flush=True)
     if not runs:
         raise SystemExit(f"no runs under {models}")
     runs.sort(key=lambda r: -r["rho"])
@@ -159,7 +192,7 @@ def main():
         in_win = np.abs(x) <= args.wmax
         lbl = None
         if not theory_labeled:
-            lbl = r"mode-Laplace $-\log p$ (dashed; self-consistent $f^*$)"
+            lbl = r"mode-Laplace $-\log p$ (dashed; $S=I$, SELF=full, FIX_TRACE, self-consistent $f^*$)"
             theory_labeled = True
         ax.plot(
             x[in_win],
@@ -188,10 +221,10 @@ def main():
     ax.set_xlabel(r"read-in weight $w_0$ (teacher axis)")
     ax.set_ylabel(r"$-\log p(w_0)$ (density-normalized)")
     ax.set_title(
-        r"Pure cubic $\chi=N$ ρ-ray: emp vs mode-Laplace (all perp modes, self-consistent $f^*$)"
+        r"Pure cubic $\chi=N$ ρ-ray: emp (precond Langevin when available) vs mode-Laplace"
         "\n"
-        r"$d=16$, $N=200$, $P=10^3$, $\mathrm{sa0}=0.03$, $\varepsilon=1$, $\mathrm{he1}=0$; "
-        r"$S=I$, SELF=span"
+        r"154 modes, off-data $S=I$, SELF=full + FIX_TRACE; "
+        r"$d=16$, $N=200$, $P=10^3$, $\mathrm{sa0}=0.03$, $\varepsilon=1$"
     )
     ax.grid(True, alpha=0.25)
     ax.legend(frameon=False, fontsize=7.5, loc="upper right")
