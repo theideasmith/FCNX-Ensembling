@@ -224,7 +224,8 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
                activation="erf", classic=False, output_dir=None,
                batch_size=None, warm_start=None,
                snapshot_a_interval=None, snapshot_a_burnin=0,
-               schedule=False, schedule_divisors=None, extra_epochs=0):
+               schedule=False, schedule_divisors=None, extra_epochs=0,
+               he1=1.0):
     """Train 2-layer erf network and track H eigenvalues.
     
     Args:
@@ -303,6 +304,8 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
 
 
     print(f"  lr={lr:.6e}, T={temperature:.6f}, chi={chi:.6f}, T_eff={effective_temperature:.6f}")
+    print(f"  teacher: Y = {he1:g}·z + {eps:g}·He3(z)"
+          + ("  [pure cubic]" if abs(he1) < 1e-15 else ""))
     print(f"  batch_size={B} ({'minibatch, grad scale P/B=' + f'{grad_scale:.4g}' if use_minibatch else 'full batch'})")
     if use_equal_schedule:
         nph = len(equal_divs)
@@ -337,11 +340,11 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     print(f"  Output: {run_dir}")
     print(f"  Device: {device}")
     
-    # Generate data: Y = X[:, 0] (first dimension as target)
+    # Teacher: Y = he1·z + eps·He3(z). Pure cubic is he1=0 (matches y=(0,ε) theory).
     torch.manual_seed(dataset_seed)
     X = torch.randn(P, d, device=device)
     z = X[:, 0].unsqueeze(-1)  # (P, 1)
-    Y = z + eps * _he3(z)  # (P, 1)
+    Y = he1 * z + eps * _he3(z)  # (P, 1)
     # Model
     ens = ens  # ensemble size
     model = FCN2NetworkActivationGeneric(
@@ -454,7 +457,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     torch.manual_seed(dataset_seed + 1)
     Xinf = torch.randn(3000, d, device=device)
     z_inf = Xinf[:, 0].unsqueeze(-1)
-    Yinf = z_inf + eps * _he3(z_inf)
+    Yinf = he1 * z_inf + eps * _he3(z_inf)
     
     # Compute initial eigenvalues
     if start_epoch == 0 and 0 not in eigenvalues_over_time:
@@ -813,7 +816,7 @@ def train_fcn2(d, P, N, eps=0.03, epochs=10_000_000, log_interval=100_000, ens=5
     
     # Save config
     config = {
-        "d": d, "P": P, "N": N, "eps": eps,
+        "d": d, "P": P, "N": N, "eps": eps, "he1": float(he1),
         "lr": float(lr), "temperature": float(temperature),
         "chi": float(chi), "effective_temperature": float(temperature / chi),
         "s0": float(s0), "sigmaW0": float(sigmaW0_value),
@@ -888,6 +891,12 @@ def main():
     parser.add_argument('--dataset-seed', type=int, default=42, help='Random seed for dataset generation')
     parser.add_argument('--ens', type=int, default=10, help='Ensemble size')
     parser.add_argument('--eps', type=float, default=0.03, help='Epsilon for cubic nonlinearity')
+    parser.add_argument(
+        '--he1',
+        type=float,
+        default=1.0,
+        help='Linear teacher coefficient: Y = he1·z + eps·He3(z). Use 0 for pure cubic.',
+    )
     parser.add_argument('--classic', action='store_true', help='Use classic s0=1.0 naming')
     parser.add_argument('--output-dir', type=str, default=None, help='Directory for model checkpoints and run artifacts')
     parser.add_argument('--tensorboard-dir', type=str, default=None, help='Directory for TensorBoard event files')
@@ -974,7 +983,7 @@ def main():
     
     # Train
     final_eigs, eigs_over_time, run_dir = train_fcn2(
-        d=args.d, P=args.P, N=args.N,eps=args.eps,
+        d=args.d, P=args.P, N=args.N, eps=args.eps, he1=args.he1,
         epochs=args.epochs, log_interval=args.log_interval,
         device_str=args.device, base_lr=args.lr, temperature=args.temperature, chi=args.chi,
         s0=args.s0, sa0=args.sa0, writer=writer, dataset_seed=args.dataset_seed, ens=args.ens,
