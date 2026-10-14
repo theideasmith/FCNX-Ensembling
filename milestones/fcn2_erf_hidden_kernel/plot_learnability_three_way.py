@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cubic learnability L3 vs ρ for network, particle theory, and off-data mode-Laplace.
+"""Cubic learnability L3 vs ρ: network, particle, mode-Laplace, arcsin NNGP.
 
 L3 = E[f_res He3] / E[y He3] (He1 residualized), same as train_fcn2_erf_sigma_a.cubic_learnability.
 
@@ -7,6 +7,8 @@ L3 = E[f_res He3] / E[y He3] (He1 residualized), same as train_fcn2_erf_sigma_a.
              else final cubic_learnability from each run's losses.json
   particle — cavity GP predictor from cached W (prior / outer starts) on a fresh test set
   Laplace  — (ε − pop_he3) / ε from mode_laplace_scfrac/summary (learned He3 mode coeff)
+  NNGP     — infinite-width erf arcsin kernel ridge on the same recovered training set
+             (plot_model_vs_preact_krr.arcsin_krr_predict_from_train; σ² = κ = T/2)
 
 Usage:
   python -u plot_learnability_three_way.py
@@ -21,6 +23,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
+from plot_model_vs_preact_krr import arcsin_krr_predict_from_train
 
 HERE = Path(__file__).resolve().parent
 SWEEP = HERE / (
@@ -122,20 +126,16 @@ def laplace_L3(summary_path: Path) -> dict[float, float]:
     return out
 
 
-def particle_L3(rho: float, *, n_test: int, device: str, seed: int = 0) -> dict[str, float]:
+def _train_and_test(rho: float, *, n_test: int, device: str, seed: int = 0):
+    """Recover the run's training set; draw a fresh test set (same seed as particle path)."""
     from precond_langevin_warmstart import recover_training_set
 
-    z = np.load(PARTICLE / f"{tag(rho)}_particle.npz")
     run = select_run(rho)
     c = json.loads((run / "config.json").read_text())
-    d, P, N = int(c["d"]), int(c["P"]), int(c["N"])
+    d, P = int(c["d"]), int(c["P"])
     eps, he1 = float(c["eps"]), float(c.get("he1", 0.0))
-    sa0, chi = float(c["sa0"]), float(c.get("chi", N))
     T_bare = float(c["temperature"])
-    kappa = (T_bare / chi) / 2.0
-    sig_a2 = sa0 / (N * chi)
-    M = int(z["M"])
-    wt = N / M
+    kappa = T_bare / 2.0  # bare κ in ρ=κ/(sa0 P); arcsin ridge σ²=κ (project convention)
 
     rec = json.loads((run / "pred_vs_true.json").read_text())
     y_np = np.asarray(rec[max(rec, key=int)]["y_true"], dtype=float)
@@ -143,23 +143,46 @@ def particle_L3(rho: float, *, n_test: int, device: str, seed: int = 0) -> dict[
     DEV = torch.device(device if torch.cuda.is_available() else "cpu")
     X = torch.from_numpy(X_np).to(DEV, dtype=torch.float64)
     y = torch.from_numpy(y_np).to(DEV, dtype=torch.float64)
-    I = torch.eye(P, device=DEV, dtype=torch.float64)
 
     gen = torch.Generator(device=DEV)
     gen.manual_seed(seed)
     Xt = torch.randn(n_test, d, generator=gen, device=DEV, dtype=torch.float64)
     yt = he1 * Xt[:, 0] + eps * ((Xt[:, 0] ** 3 - 3 * Xt[:, 0]) / np.sqrt(6.0))
+    return run, c, kappa, X, y, Xt, yt
+
+
+def particle_L3(rho: float, *, n_test: int, device: str, seed: int = 0) -> dict[str, float]:
+    z = np.load(PARTICLE / f"{tag(rho)}_particle.npz")
+    _, c, _, X, y, Xt, yt = _train_and_test(rho, n_test=n_test, device=device, seed=seed)
+    d, N = int(c["d"]), int(c["N"])
+    sa0, chi = float(c["sa0"]), float(c.get("chi", N))
+    T_bare = float(c["temperature"])
+    # cavity ridge is T_eff/2 on K = σ_A² ΦΦᵀ (χ=N amplitude)
+    kappa_cav = (T_bare / chi) / 2.0
+    sig_a2 = sa0 / (N * chi)
+    M = int(z["M"])
+    wt = N / M
+    DEV = X.device
+    I = torch.eye(X.shape[0], device=DEV, dtype=torch.float64)
 
     out = {}
     for start in ("prior", "outer"):
         W = torch.from_numpy(np.asarray(z[f"W_{start}"], dtype=np.float64)).to(DEV)
         Phi = torch.erf(X @ W.T)
         K = sig_a2 * wt * (Phi @ Phi.T)
-        t = torch.cholesky_inverse(torch.linalg.cholesky(K + kappa * I)) @ y
+        t = torch.cholesky_inverse(torch.linalg.cholesky(K + kappa_cav * I)) @ y
         Phi_t = torch.erf(Xt @ W.T)
         f = (sig_a2 * wt * (Phi_t @ (Phi.T @ t))).detach().cpu().numpy()
         out[start] = cubic_L3_numpy(f, Xt.cpu().numpy(), yt.cpu().numpy())
     return out
+
+
+def nngp_arcsin_L3(rho: float, *, n_test: int, device: str, seed: int = 0) -> float:
+    """Arcsin (erf NNGP) KRR on the same training set; σ² = κ = T/2."""
+    _, _, kappa, X, y, Xt, yt = _train_and_test(rho, n_test=n_test, device=device, seed=seed)
+    with torch.no_grad():
+        f = arcsin_krr_predict_from_train(X, y, Xt, float(kappa))
+    return cubic_L3_numpy(f.detach().cpu().numpy(), Xt.cpu().numpy(), yt.cpu().numpy())
 
 
 def main():
@@ -175,12 +198,14 @@ def main():
     lap = laplace_L3(LAPLACE / "summary_scfrac.csv")
     rows = []
     print(
-        f"{'rho':>7} {'net':>8} {'net_src':>22} {'part_pri':>9} {'part_out':>9} {'laplace':>9}",
+        f"{'rho':>7} {'net':>8} {'net_src':>22} {'part_pri':>9} {'part_out':>9} "
+        f"{'nngp':>9} {'laplace':>9}",
         flush=True,
     )
     for rho in RHOS:
         net, net_src = network_L3(rho, n_test=args.n_test, device=args.device)
         part = particle_L3(rho, n_test=args.n_test, device=args.device)
+        nngp = nngp_arcsin_L3(rho, n_test=args.n_test, device=args.device)
         # nearest laplace rho key
         rkey = min(lap, key=lambda r: abs(r - rho))
         L = lap[rkey]
@@ -191,28 +216,30 @@ def main():
                 network_src=net_src,
                 particle_prior=part["prior"],
                 particle_outer=part["outer"],
+                nngp=nngp,
                 laplace=L,
             )
         )
         print(
-            f"{rho:7g} {net:8.4f} {net_src:>22} {part['prior']:9.4f} {part['outer']:9.4f} {L:9.4f}",
+            f"{rho:7g} {net:8.4f} {net_src:>22} {part['prior']:9.4f} {part['outer']:9.4f} "
+            f"{nngp:9.4f} {L:9.4f}",
             flush=True,
         )
 
     # CSV
     csv_path = out.with_suffix(".csv")
     with csv_path.open("w") as f:
-        f.write("rho,network,network_src,particle_prior,particle_outer,laplace\n")
+        f.write("rho,network,network_src,particle_prior,particle_outer,nngp_arcsin,laplace\n")
         for r in rows:
             f.write(
                 f"{r['rho']},{r['network']},{r['network_src']},"
-                f"{r['particle_prior']},{r['particle_outer']},{r['laplace']}\n"
+                f"{r['particle_prior']},{r['particle_outer']},{r['nngp']},{r['laplace']}\n"
             )
     print(f"wrote {csv_path}", flush=True)
 
     rows = sorted(rows, key=lambda r: r["rho"])  # increasing ρ = more noise →
     rhos = np.array([r["rho"] for r in rows])
-    fig, ax = plt.subplots(figsize=(6.8, 4.4))
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
     ax.plot(
         rhos,
         [r["network"] for r in rows],
@@ -242,6 +269,15 @@ def main():
     )
     ax.plot(
         rhos,
+        [r["nngp"] for r in rows],
+        "v-.",
+        color="C2",
+        lw=1.5,
+        ms=6,
+        label=r"NNGP arcsin KRR ($\sigma^2=\kappa=T/2$)",
+    )
+    ax.plot(
+        rhos,
         [r["laplace"] for r in rows],
         "D-",
         color="k",
@@ -259,7 +295,7 @@ def main():
     ax.set_xticks(list(rhos))
     ax.set_xticklabels([f"{r:g}" for r in rhos])
     ax.grid(True, alpha=0.3)
-    ax.legend(frameon=False, fontsize=8.5)
+    ax.legend(frameon=False, fontsize=8.0)
     ax.set_ylim(bottom=min(0.0, min(r["network"] for r in rows) - 0.02))
     fig.tight_layout()
     fig.savefig(out, dpi=160, bbox_inches="tight")
