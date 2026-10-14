@@ -44,6 +44,24 @@ staircase-free weak central FL. Killing `G₁₃` likely needs a different ansat
 (e.g. suppress induced He1 / change χ or the ridge structure), not just `d→hundreds` on
 this ray.
 
+## Super-wide `N` at fixed `d` (also no)
+
+With `χ=N`, the amplitude is
+
+`G = −(1/sa0) v vᵀ + (1/N) Q⁻¹`,   `v = (Q+ρ'I)⁻¹ y`.
+
+The rank-1 data piece is **N-independent**; the diagonalizing `Q⁻¹/N` dies as `N→∞`,
+so `|r_G|→1` even more tightly. Numerical check at `d=16`, `ρ=0.08`, `P=1000`,
+`sa0=0.03` fixed (`Finv∝1/N`):
+
+| N | \|r_G\| | \|G₁₃\|/\|G₃₃\| |
+|---|--------|----------------|
+| 50 | 1.003 | 0.092 |
+| 200 | 1.001 | 0.092 |
+| 12800 | 1.000 | 0.092 |
+
+`|G₁₃|/|G₃₃|` is flat; super-wide `N` does not open a diagonal window either.
+
 ## Reproduce
 
 ```bash
