@@ -25,13 +25,21 @@ SWEEP = HERE / (
     "_d16_N200_P1000_chiN_sa00.03_eps1_he10"
     "_lr0.01_ep60M_sched2_3_5"
 )
-OUT_DIR = HERE / "action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac"
+def _resolve_out_dir() -> Path:
+    raw = os.environ.get("OUT_DIR", "action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac")
+    p = Path(raw)
+    return p if p.is_absolute() else (HERE / p)
+
+
+OUT_DIR = _resolve_out_dir()
 XMAX = float(os.environ.get("XMAX", "6.0"))
 NG = int(os.environ.get("NG", "601"))
 
 # Steepwell d=16 loader (tmp_mode_laplace reads D at import).
 os.environ.setdefault("D", "16")
-os.environ.setdefault("SELF", "span")
+# Hybrid off-data solver that matched steepwell: outside-mode self-overlap (SELF=full),
+# perp Hessian stationarity with prior-trace fix (FIX_TRACE), mild mean damping.
+os.environ.setdefault("SELF", "full")
 os.environ.setdefault("M_DAMP", "0.1")
 os.environ.setdefault("FIX_TRACE", "1")
 # Pure-cubic outer wells sit farther out than steepwell (emp ~1.5–3.5).
@@ -148,7 +156,10 @@ def discover_rhos():
 
 
 def main():
+    global OUT_DIR
+    OUT_DIR = _resolve_out_dir()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"OUT_DIR={OUT_DIR}", flush=True)
     rhos = discover_rhos()
     d = int(os.environ.get("PC_D", "16"))
     P = int(os.environ.get("PC_P", "1000"))
@@ -160,7 +171,7 @@ def main():
     s0 = float(os.environ.get("PC_S0", "1.0"))
     n_bisect = int(os.environ.get("N_BISECT", "7"))
     f_lo = float(os.environ.get("F_LO", "0.01"))
-    f_hi = float(os.environ.get("F_HI", "0.35"))
+    f_hi = float(os.environ.get("F_HI", "0.85"))
 
     summary = []
     for rho in rhos:
@@ -241,8 +252,10 @@ def main():
     meta_path = OUT_DIR / "README.md"
     meta_path.write_text(
         "# Pure-cubic χ=N mode-space Laplace (self-consistent f*)\n\n"
-        "Solver: `tmp_mode_laplace.py` `solve_sc_root` with all 154 modes (He1/3/5/7 + perps), "
-        "S=I, SELF=span, y=(0,ε), σ_A²=sa0/(Nχ), κ=ρ sa0 P.\n\n"
+        "Solver: `tmp_mode_laplace.py` `solve_sc_root` with all 154 modes (He1/3/5/7 + perps: "
+        "x_i, x₀x_ix_j, x₀He₂(x_i), He₂(x₀)x_i), "
+        "S=I (off data), SELF=full, M_DAMP=0.1, FIX_TRACE=1, y=(0,ε), "
+        "σ_A²=sa0/(Nχ), κ=ρ sa0 P, ridge ρ'=κ/(χP).\n\n"
         f"Params: d={d} N={N} P={P} χ={chi} sa0={sa0} ε={eps} he1={he1}.\n"
         "Action curves are density-normalized −log p of the two-well Laplace mixture.\n"
     )
