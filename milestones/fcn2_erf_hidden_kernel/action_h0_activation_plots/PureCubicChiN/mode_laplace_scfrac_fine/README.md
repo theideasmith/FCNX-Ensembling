@@ -1,29 +1,29 @@
-# Fine mode-Laplace ρ scan around the L₃ bump
+# Fine ρ learnability around 0.03
 
-Question: is the non-monotonic L₃ peak near ρ≈0.03 in the 4-point mode-Laplace
-curve a real local max, or a solver/basin artifact?
+## Matrix continuum (primary)
 
-## Status
+Non-specialized multiwell matrix Laplace (`tmp_multiwell_pure_cubic.jl --rho-deep`,
+χ=N, seed-π=0.17) on the fine grid:
 
-Dense scan running: ρ ∈ {0.08, 0.06, 0.05, 0.045, 0.04, 0.035, 0.032, 0.03,
-0.028, 0.025, 0.022, 0.02, 0.018, 0.015, 0.012} with `ITERS=40 N_BISECT=5`.
+`0.08, 0.06, 0.05, 0.045, 0.04, 0.035, 0.032, 0.03, 0.028, 0.025, 0.022, 0.02, 0.018, 0.015, 0.012`
 
-Interim plot overlays:
-- mode-Laplace points (fine scan as they finish; seeded with the old 4-pt caches)
-- multiwell χ=N from `fo_rho_deep_l3/summary_deep_equilibrium.csv` (already dense; **monotonic**)
+Result: **L₃ is strictly monotonic** (rises as ρ falls). No bump at 0.03.
+
+Artifact: `summary_multiwell_fine.csv`, plot `L3_fine_vs_rho.png`.
+
+## Mode-Laplace overlay
+
+Specialist-fraction mode-space Laplace (slower). The old 4-pt “bump” came from a
+suspicious ρ=0.015 root (`f*≈0.77`); the continuum theory has no such feature.
 
 ## Reproduce
 
 ```bash
-OUT_DIR=action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac_fine \
-RHOS=0.08,0.06,0.05,0.045,0.04,0.035,0.032,0.03,0.028,0.025,0.022,0.02,0.018,0.015,0.012 \
-ITERS=40 N_BISECT=5 SKIP_EXISTING=1 \
-python -u tmp_mode_laplace_pure_cubic_rho.py
+julia --project=../../julia_lib tmp_multiwell_pure_cubic.jl --rho-deep \
+  --d 16 --n1 200 --chi 200 --P 1000 --sa0 0.03 --eps 1 --seed-pi 0.17 \
+  --rhos 0.08,0.06,0.05,0.045,0.04,0.035,0.032,0.03,0.028,0.025,0.022,0.02,0.018,0.015,0.012 \
+  --outdir action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac_fine \
+  --out action_h0_activation_plots/PureCubicChiN/mode_laplace_scfrac_fine/summary_multiwell_fine.csv
 
 python -u plot_mode_laplace_fine_rho.py
 ```
-
-## Note
-
-Multiwell Laplace (χ=N) has **no bump** through ρ=0.03 — L₃ rises smoothly
-0.08→0.01. The bump in the three-way plot is mode-space Laplace only.
