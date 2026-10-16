@@ -8,10 +8,12 @@ using Base: @kwdef
 
 export ProblemParams2, Solution2, residuals_fcn2, residuals_fcn2_advanced,
     residuals_fcn2_offdiag, residuals_fcn2_matrix, residuals_regularized,
-    residuals_fcn2_saddle, residuals_fcn2_laplace, solve_FCN2_Erf,
+    residuals_fcn2_saddle, residuals_fcn2_laplace,
+    residuals_fcn2_laplace_eigen_teacher, solve_FCN2_Erf,
     exact_symmetric_gmm_entropy_1d, training_signal, training_amplitude,
     compute_lambda13, hermite_kernel_block, training_amplitudes_offdiag,
     lambda1_point, hermite_point_features, laplace_amplitude_matrix,
+    eigen_sym2, teacher_eigen_residual, he1_from_Q_eigenvector,
     SIG_SADDLE_DEFAULT
 
 # ---------------------------------------------------------
@@ -348,27 +350,68 @@ training_amplitude(chi, n1, kappa, P, delta, λ; a0=1.0) =
     a0 * training_signal(chi / a0, kappa / a0, P, delta, λ) / (n1 * chi)
 
 """
-    laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+    laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0)
 
 2×2 generalization of `training_amplitude` on the teacher-axis Hermite block
-`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`, `y = (1, ε)`:
+`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`, `y = (he1, ε)`:
 
     v = (Q + ρ' I)⁻¹ y
     G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' Q⁻¹ ]
 
-For `λ13 = 0` the (1,1) entry is `training_amplitude(λ11)`. The cubic
-component `v₃ = −λ13 v₁/(λ33+ρ')` survives at `ε = 0`.
+Default `he1=1` recovers the classical teacher `(1, ε)`. For `λ13 = 0` the
+(1,1) entry is `training_amplitude(λ11)`. The cubic component
+`v₃ = −λ13 v₁/(λ33+ρ')` survives at `ε = 0`.
 """
-function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0)
     chi_p = chi / a0
     ρp = kappa / (a0 * P)
-    y = [one(epsilon), epsilon]
     Qm = Matrix(Q)
+    # Promote he1 through Duals (eigen-teacher NLsolve); do not oftype(ε, he1).
+    Tq = promote_type(eltype(Qm), typeof(he1), typeof(epsilon))
+    y = Tq[he1, epsilon]
     qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
-    Qreg = Qm + eps(typeof(qscale)) * (one(qscale) + qscale) * I(2)
+    Qreg = Qm + (1e-10 * (one(qscale) + qscale)) * I(2)
     v = (Qreg + ρp * I(2)) \ y
     G = -(chi_p^2 * delta) * (v * v') + chi_p * inv(Qreg)
     return (a0 / (n1 * chi)) * G
+end
+
+"""
+    teacher_eigen_residual(Q, he1, epsilon)
+
+Signed 2D area `det([y, Q y])` with `y = (he1, ε)`. Zero iff `y` is an
+eigenvector of the He1–He3 block `Q` (or `y = 0`).
+"""
+function teacher_eigen_residual(Q, he1, epsilon)
+    Qm = Matrix(Q)
+    y1 = oftype(Qm[1, 1], he1)
+    y2 = oftype(Qm[1, 1], epsilon)
+    Qy1 = Qm[1, 1] * y1 + Qm[1, 2] * y2
+    Qy2 = Qm[2, 1] * y1 + Qm[2, 2] * y2
+    return y1 * Qy2 - y2 * Qy1
+end
+
+"""
+    he1_from_Q_eigenvector(Q, epsilon; branch=:cubic)
+
+Lab-frame He1 coefficient so `y = (he1, ε)` lies on an eigenvector of `Q`.
+`branch=:cubic` picks the eigen-direction with larger `|u_He3|`;
+`:linear` picks larger `|u_He1|`. Returns `(he1, evals, U, k)`.
+"""
+function he1_from_Q_eigenvector(Q, epsilon; branch::Symbol=:cubic)
+    evals, U = eigen_sym2(Matrix(Q))
+    # Prefer the mode aligned with cubic (:cubic) or linear (:linear).
+    scores = branch === :linear ? abs.(U[1, :]) : abs.(U[2, :])
+    k = argmax(scores)
+    u1, u2 = U[1, k], U[2, k]
+    # y ∝ u with y₂ = ε ⇒ he1 = ε u₁/u₂ (fall back to linear eig if u₂≈0)
+    if abs(u2) < 1e-14 * (one(abs(u2)) + abs(u1))
+        k = 3 - k
+        u1, u2 = U[1, k], U[2, k]
+    end
+    abs(u2) < 1e-14 * (one(abs(u2)) + abs(u1)) &&
+        return (oftype(epsilon, NaN), evals, U, k)
+    return (epsilon * u1 / u2, evals, U, k)
 end
 
 # ---------------------------------------------------------
@@ -700,6 +743,75 @@ function residuals_fcn2_laplace(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
     return [rj1, rj3, rsig, rmu]
 end
 
+"""
+    residuals_fcn2_laplace_eigen_teacher(x, ...; mean_only=false)
+
+Matrix Laplace saddle with an extra equilibrium condition that the teacher
+`y = (he1, ε)` is an eigenvector of the He1–He3 kernel block `Q(μ,σ)`.
+
+State (signed `he1`; `σ,μ` taken positive):
+
+    full:      x = [lJ1, lJ3, σ, μ, he1]
+    mean_only: x = [lJ1, lJ3, μ, he1]
+
+Residuals = usual Laplace residuals plus
+
+    r_eig = det([y, Q y]) = he1 (Q y)₃ − ε (Q y)₁
+
+At a root, `Q` is diagonal in the eigenbasis that contains `y`, so the
+He1–He3 teacher loads a single channel (no off-diagonal mixing into the
+other eigenmode).
+"""
+function residuals_fcn2_laplace_eigen_teacher(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
+    a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT)
+    T_floor = 1.0 + 2.0 * (d - 1.0) * s0 / d
+
+    if mean_only
+        length(x) == 4 || throw(DimensionMismatch(
+            "eigen-teacher mean_only expects [lJ1,lJ3,μ,he1], got length $(length(x))"))
+        lJ1, lJ3, muW, he1 = x
+        sigS = oftype(muW + lJ1, sig_saddle)
+    else
+        length(x) == 5 || throw(DimensionMismatch(
+            "eigen-teacher expects [lJ1,lJ3,σ,μ,he1], got length $(length(x))"))
+        lJ1, lJ3, sigS, muW, he1 = x
+    end
+
+    # Wells are ±μ with σ>0; he1 must keep its sign (λ13 < 0 ⇒ he1/ε < 0 often).
+    sigS = abs(sigS)
+    muW = abs(muW)
+
+    lJ1_gen = compute_lambda1(muW, sigS, T_floor)
+    lJ3_gen = compute_lambda3(muW, sigS, T_floor)
+    Q = hermite_kernel_block(muW, sigS, T_floor)
+    G = laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=a0, he1=he1)
+    V = w -> begin
+        c1, c3 = hermite_point_features(w, T_floor)
+        quad = G[1, 1] * c1^2 + 2.0 * G[1, 2] * c1 * c3 + G[2, 2] * c3^2
+        (d / s0) * 0.5 * w^2 + 0.5 * quad
+    end
+
+    dV = ForwardDiff.derivative(V, muW)
+    rj1 = lJ1 - lJ1_gen
+    rj3 = lJ3 - lJ3_gen
+    rmu = dV
+    # Scale-invariant eigen residual (angle between y and Qy).
+    Qm = Matrix(Q)
+    y = [oftype(Qm[1, 1], he1), oftype(Qm[1, 1], epsilon)]
+    Qy = Qm * y
+    ny = sqrt(y[1]^2 + y[2]^2)
+    nQy = sqrt(Qy[1]^2 + Qy[2]^2)
+    denom = max(ny * nQy, eps(typeof(ny)))
+    r_eig = (y[1] * Qy[2] - y[2] * Qy[1]) / denom
+
+    if mean_only
+        return [rj1, rj3, rmu, r_eig]
+    end
+    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
+    rsig = sigS^2 * d2V - 1.0
+    return [rj1, rj3, rsig, rmu, r_eig]
+end
+
 # ---------------------------------------------------------
 # Saddle-point (δ-well) residuals: σ → 0, stationarity in μ only
 # ---------------------------------------------------------
@@ -827,18 +939,18 @@ function nlsolve_solver_fcn2(initial_guess; anneal=false, chi=1.0, a0=1.0, d=1.0
 end
 
 """
-    matrix_learnabilities(μ, σ, params) -> (L1, L3)
+    matrix_learnabilities(μ, σ, params; he1=1.0) -> (L1, L3)
 
 Kernel-ridge prediction on the teacher-axis Hermite block,
 `f = Q (Q + ρ' I)⁻¹ y` with `Q = hermite_kernel_block(μ, σ, T)`,
-`ρ' = κ/(a0 P)`, `y = (1, ε)`. Returns `(f₁, f₃/ε)`. Because `λ13 ≠ 0`
+`ρ' = κ/(a0 P)`, `y = (he1, ε)`. Returns `(f₁, f₃/ε)`. Because `λ13 ≠ 0`
 locks He3 output to He1, `f₃/ε` can be negative when `ε` is small.
 """
-function matrix_learnabilities(μ, σ, params)
+function matrix_learnabilities(μ, σ, params; he1=1.0)
     T = 1.0 + 2.0 * (params.d - 1.0) * params.s0 / params.d
     Q = Matrix(hermite_kernel_block(μ, σ, T))
     ρp = params.κ / (params.a0 * params.P)
-    y = [1.0, Float64(params.ϵ)]
+    y = [Float64(he1), Float64(params.ϵ)]
     f = Q * ((Q + ρp * I(2)) \ y)
     L3 = params.ϵ == 0 ? f[2] : f[2] / params.ϵ
     return f[1], L3
