@@ -1,23 +1,20 @@
 Eigenframe + Laplace mixture saddle weights
 ===========================================
 
-Basis (only change vs usual multiwell Laplace):
-  Q = U Λ Uᵀ
-  ỹ = (0, ε)
-  G̃ from diagonal Λ (no lab A = U G̃ Uᵀ)
-  V(w) = prior + ½ Σ G̃_kk φ_k²,  φ = Uᵀ c(w)
-
-Mixture saddle weights:
-  π_k ∝ m_k σ_k exp(−V_k)   (m=2 for ±μ)
-  Q = Σ π_k Q(μ_k, σ_k)
-
-Action plotted on w ∈ [−wmax, wmax] so both ± wells are visible.
+ỹ=(0,ε) in eigenframe; lab y = U ỹ (mixed He1–He3).
+Learnability plotted is L̃_k = λ_k/(λ_k+ρ') of Q-eigenmodes, not pure He3.
 
 Params: d=10, N=χ=400, sa0=1, κ=0.5, ε=1
 
-  P=50    L3=0.244  wells ±0.49 (π≈1), ±2.07 (π≈0)
-  P=200   L3=0.626  wells ±0.57, ±3.66 (π_out≈1)
-  P=1000  L3=0.901  wells ±0.58, ±4.33 (π_out≈1)
-  P=5000  L3=0.978  well  ±0.70 (single occupied)
+  P      L̃2     π_out   wells
+  50     0.244   ~0      ±0.49, ±2.07
+  100    0.467   ~0      ±0.60
+  200    0.626   ~1      ±0.57, ±3.66
+  500    0.816   ~1      ±0.58, ±4.14
+  1000   0.901   ~1      ±0.58, ±4.33
+  2000   0.947   ~0      ±0.70
+  5000   0.978   ~0      ±0.70
 
-Plot: V_vs_w_mix_full_d10.png
+Plots:
+  V_vs_w_mix_full_d10.png
+  learnability_vs_P_d10.png
