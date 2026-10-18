@@ -143,7 +143,7 @@ def main():
         axes = [ax]
         norm, cmap = panel(
             ax, eig,
-            r"eigenframe: $\tilde y=(0,\varepsilon)$, $V=\frac12\phi^\top\tilde G\phi$",
+            r"eigenframe: $\tilde y=(0,\varepsilon)$, $V=\frac{1}{2}\phi^\top\tilde G\phi$",
             keep, args.wmax,
         )
         title = (
