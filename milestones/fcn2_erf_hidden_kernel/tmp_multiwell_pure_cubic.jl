@@ -37,18 +37,32 @@ end
 
 """Teacher (He1, He3). Default pure cubic; `--he1 1` is the matrix-Laplace teacher (1, ε)."""
 const TEACHER_HE1 = Ref(0.0)
-teacher_y(c::Cfg) = [TEACHER_HE1[], c.eps]
+
+"""`--eigenframe`: lab y = ε u_cubic(Q) so ỹ = (0, ε) in the eigenbasis of Q (self-consistent)."""
+const EIGENFRAME = Ref(false)
+const EIGENFRAME_BRANCH = Ref(:cubic)
+
+"""Lab teacher. With `--eigenframe`, y depends on Q via `lab_teacher_eigenframe_cubic`."""
+function teacher_y(c::Cfg, Q=nothing)
+    if EIGENFRAME[]
+        Q === nothing && error("eigenframe teacher requires Q")
+        y, _, _, _ = lab_teacher_eigenframe_cubic(Q, c.eps; branch=EIGENFRAME_BRANCH[])
+        return y
+    end
+    return [TEACHER_HE1[], c.eps]
+end
 
 """Artificial control (`--decouple`): He1 and He3 channels independent, Q13 = G13 = 0."""
 const DECOUPLE = Ref(false)
 decouple(M) = DECOUPLE[] ? [M[1, 1] zero(M[1, 2]); zero(M[1, 2]) M[2, 2]] : M
 
-"""Same formula as FCS2_VGA.laplace_amplitude_matrix, but y = (0, ε)."""
+"""Same formula as FCS2_VGA.laplace_amplitude_matrix; y from `teacher_y` (fixed or eigenframe)."""
 function amp(c::Cfg, Q, P, κ)
     chi_p = c.chi / c.a0
     ρp = κ / (c.a0 * P)
     Qm = decouple(Matrix(Q))
-    y = teacher_y(c)
+    # Eigenframe y is built from the *physical* Q (before artificial decouple).
+    y = teacher_y(c, EIGENFRAME[] ? Matrix(Q) : Qm)
     qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
     Qreg = Qm + (1e-10 * (1 + qscale)) * I(2)
     v = (Qreg + ρp * I(2)) \ y
@@ -118,17 +132,18 @@ end
 function free_energy(c::Cfg, Q, G, logZ1, P, κ)
     χp = c.chi / c.a0
     ρp = κ / (c.a0 * P)
-    y = teacher_y(c)
+    y = teacher_y(c, Q)
     c.n1 * (-logZ1 - 0.5 * tr(G * Q)) + 0.5χp * dot(y, (Q + ρp * I) \ y) + 0.5 * logdet(Q)
 end
 
 """Returns (f1, L3). f1 is induced He1 (teacher has none); L3 = f3/ε.
 
 χ=N path: readout prior a0/(n1 χ) rescales the ridge to ρ' = κ/(a0 P).
+With `--eigenframe`, L3 is f·u_cubic/ε in the lab Hermite basis (not a pure He3 load).
 """
 function learnabilities(c::Cfg, Q, P, κ)
     ρp = κ / (c.a0 * P)
-    y = teacher_y(c)
+    y = teacher_y(c, Q)
     f = Q * ((Q + ρp * I) \ y)
     f[1], f[2] / c.eps
 end
@@ -136,7 +151,7 @@ end
 """NNGP (χ=1). Ridge is κ/(a0 P): a0 is not replaced by a0/N, and κ is not multiplied by N."""
 function learnabilities_nngp(c::Cfg, Q, P, κ)
     ρp = κ / (c.a0 * P)
-    y = teacher_y(c)
+    y = teacher_y(c, Q)
     f = Q * ((Q + ρp * I) \ y)
     f[1], f[2] / c.eps
 end
@@ -184,7 +199,7 @@ function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
         sel = po > 0 ? [win, wout] : [win]
         χp = c.chi / c.a0
         ρp = κ / (c.a0 * P)
-        y = teacher_y(c)
+        y = teacher_y(c, Q)
         e = sum(πs[k] * (sel[k][3] - log(sel[k][4] * sel[k][2] * sqrt(2pi))) for k in eachindex(sel))
         s = sum(p * log(p) for p in πs if p > 0)
         ev = eigvals(Symmetric(Q))
@@ -1135,16 +1150,26 @@ function rho_ray_actions_main()
         "0.3,0.26,0.22,0.2,0.18,0.17,0.16,0.15,0.145,0.14,0.135,0.13,0.125,0.12,0.11,0.1,0.09,0.08,0.07,0.06,0.05")); rev=true)
     modes = split(argval("--modes", "equilibrium"), ",")
     DECOUPLE[] = "--decouple" in ARGS
+    EIGENFRAME[] = "--eigenframe" in ARGS
+    EIGENFRAME_BRANCH[] = Symbol(argval("--branch", "cubic"))
     TEACHER_HE1[] = parse(Float64, argval("--he1", "0"))
-    tag = DECOUPLE[] ? "decouple" : "full"
+    if EIGENFRAME[] && DECOUPLE[]
+        error("--eigenframe and --decouple are mutually exclusive")
+    end
+    tag = EIGENFRAME[] ? "eigenframe" : (DECOUPLE[] ? "decouple" : "full")
     out_dir = argval("--outdir", joinpath("action_h0_activation_plots/PureCubicChiN", "actions_chiN_$(tag)"))
     mkpath(out_dir)
     c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
     wgrid = range(-wmax, wmax; length=ngrid)
-    header = "rho,kappa,P,sa0,d,N,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,w,V"
+    header = "rho,kappa,P,sa0,d,N,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,he1_lab,he3_lab,yrot1,yrot2,w,V"
     phase(s) = s.nwells < 2 ? "no_outer" : (s.dV_raw > 0 ? "inner_deeper" : "outer_deeper")
-    @printf("ρ-ray actions (solver)  d=%g N=χ=%g P=%g sa0=%g ε=%g he1=%g  y=(he1,ε)  modes=%s  %s\n",
-        d, n1, P, sa0, eps_task, TEACHER_HE1[], join(modes, ","),
+    y_tag = if EIGENFRAME[]
+        "y=ε u_*(Q) ⇒ ỹ=(0,ε) [$(EIGENFRAME_BRANCH[])]"
+    else
+        "y=(he1=$(TEACHER_HE1[]),ε)"
+    end
+    @printf("ρ-ray actions (solver)  d=%g N=χ=%g P=%g sa0=%g ε=%g  %s  modes=%s  %s\n",
+        d, n1, P, sa0, eps_task, y_tag, join(modes, ","),
         DECOUPLE[] ? "DECOUPLED (Q13=G13=0)" : "full He1–He3")
     for mode in modes
         mode in ("center", "equilibrium") || error("unknown mode $mode")
@@ -1152,7 +1177,7 @@ function rho_ray_actions_main()
         sum_path = joinpath(out_dir, "tmp_pure_cubic_rho_ray_summary_$(mode).csv")
         io, sio = open(act_path, "w"), open(sum_path, "w")
         println(io, header)
-        println(sio, "rho,kappa,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,phase")
+        println(sio, "rho,kappa,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,phase,he1_lab,he3_lab,yrot1,yrot2")
         Qwarm = seed_Q(c, 0.0, 0.5)
         for ρ in rhos
             κ = ρ * sa0 * P
@@ -1182,22 +1207,31 @@ function rho_ray_actions_main()
             Qwarm = s.Q
             G = amp(c, s.Q, P, κ)
             Vfn = potential(c, G)
+            y = teacher_y(c, s.Q)
+            if EIGENFRAME[]
+                _, _, U, _ = lab_teacher_eigenframe_cubic(s.Q, c.eps; branch=EIGENFRAME_BRANCH[])
+                yrot = U' * y
+            else
+                yrot = [NaN, NaN]
+            end
             Vout = s.nwells < 2 ? NaN : s.wout[3]
             muout = s.nwells < 2 ? NaN : s.wout[1]
             sigout = s.nwells < 2 ? NaN : s.wout[2]
             dV = s.nwells < 2 ? NaN : s.dV_raw
             edge_i = at_edge ? 1 : 0
-            meta = @sprintf("%.10g,%.10g,%.10g,%.10g,%g,%g,%g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d",
-                ρ, κ, P, sa0, d, n1, n1, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i)
+            meta = @sprintf("%.10g,%.10g,%.10g,%.10g,%g,%g,%g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%.10g,%.10g,%.10g,%.10g",
+                ρ, κ, P, sa0, d, n1, n1, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i,
+                y[1], y[2], yrot[1], yrot[2])
             for w in wgrid
                 @printf(io, "%s,%.10g,%.10g\n", meta, w, Vfn(w))
             end
-            @printf(sio, "%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%s\n",
-                ρ, κ, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i, phase(s))
+            @printf(sio, "%.10g,%.10g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.10g,%d,%d,%s,%.10g,%.10g,%.10g,%.10g\n",
+                ρ, κ, po, s.win[1], s.win[2], muout, sigout, s.win[3], Vout, dV, s.L3, s.F, s.nwells, edge_i, phase(s),
+                y[1], y[2], yrot[1], yrot[2])
             flush(io); flush(sio)
             edge_tag = at_edge ? " EDGE" : ""
-            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  %s%s [%s]\n",
-                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, phase(s), edge_tag, src)
+            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  y=(%.3g,%.3g) ỹ=(%.2e,%.3g)  %s%s [%s]\n",
+                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, y[1], y[2], yrot[1], yrot[2], phase(s), edge_tag, src)
             flush(stdout)
         end
         close(io); close(sio)
