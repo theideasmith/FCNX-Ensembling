@@ -1,21 +1,23 @@
-Laplace saddle + eigenframe (basis change only)
-===============================================
+Eigenframe + Laplace mixture saddle weights
+===========================================
 
-Same Laplace saddle as FCS2 matrix Laplace:
-  Q = hermite_kernel_block(μ, σ)   # single ±μ Gaussian
-  V'(μ) = 0,  σ = 1/√V''(μ)
-
-Only modification — eigenframe basis:
+Basis (only change vs usual multiwell Laplace):
   Q = U Λ Uᵀ
   ỹ = (0, ε)
   G̃ from diagonal Λ (no lab A = U G̃ Uᵀ)
   V(w) = prior + ½ Σ G̃_kk φ_k²,  φ = Uᵀ c(w)
 
+Mixture saddle weights:
+  π_k ∝ m_k σ_k exp(−V_k)   (m=2 for ±μ)
+  Q = Σ π_k Q(μ_k, σ_k)
+
+Action plotted on w ∈ [−wmax, wmax] so both ± wells are visible.
+
 Params: d=10, N=χ=400, sa0=1, κ=0.5, ε=1
 
-Result: the self-consistent Laplace root stays at small μ (≲0.12).
-The cubic eigenvalue of that Q is tiny, so cubic learnability stays ~0.
-(Deep outer wells require a multiwell/specialist Q ansatz — that is a
-different theory, not "Laplace saddle + basis change only".)
+  P=50    L3=0.244  wells ±0.49 (π≈1), ±2.07 (π≈0)
+  P=200   L3=0.626  wells ±0.57, ±3.66 (π_out≈1)
+  P=1000  L3=0.901  wells ±0.58, ±4.33 (π_out≈1)
+  P=5000  L3=0.978  well  ±0.70 (single occupied)
 
-Plot: V_vs_w_laplace_d10.png
+Plot: V_vs_w_mix_full_d10.png

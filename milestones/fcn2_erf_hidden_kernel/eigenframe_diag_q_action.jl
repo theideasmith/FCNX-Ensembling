@@ -1,23 +1,23 @@
 #!/usr/bin/env julia
-# Standard Laplace saddle, only change = eigenframe basis:
+# Laplace multiwell with mixture saddle weights, eigenframe basis only:
 #
-#   Same as residuals_fcn2_laplace / matrix Laplace:
-#     Q = hermite_kernel_block(μ, σ)   # ±μ Gaussian, width σ
-#     V'(μ) = 0,   σ = 1/√V''(μ)
+#   Q = U Λ Uᵀ
+#   ỹ = (0, ε)
+#   G̃ from diagonal Λ (no lab A = U G̃ Uᵀ)
+#   V(w) = (d/(2 s0)) w² + ½ Σ_k G̃_kk φ_k(w)²,  φ = Uᵀ c(w)
 #
-#   Modification only:
-#     Q = U Λ Uᵀ
-#     ỹ = (0, ε) in that frame
-#     G̃ from diagonal Λ only (no lab A = U G̃ Uᵀ)
-#     V(w) = (d/(2 s0)) w² + ½ Σ_k G̃_kk φ_k(w)²,  φ = Uᵀ c(w)
+#   Wells of V → Laplace mixture weights
+#     π_k ∝ m_k σ_k exp(−V_k)   (m_k = 2 for ±μ pair, 1 for μ=0)
+#   Q = Σ_k π_k Q(μ_k, σ_k); iterate.
 #
-#   julia eigenframe_diag_q_action.jl
+#   Action dumped on w ∈ [−wmax, wmax] so both ± wells are visible.
+#
 #   julia eigenframe_diag_q_action.jl --d 10 --n1 400 --chi 400 --sa0 1 \
 #       --kappa 0.5 --eps 1 --Ps 50,200,1000,5000
 
 include(joinpath(@__DIR__, "..", "..", "julia_lib", "FCS2_VGA.jl"))
 using .FCS2_VGA
-using ForwardDiff, LinearAlgebra, NLsolve, Printf
+using ForwardDiff, LinearAlgebra, Printf
 
 argval(name, default) = (i = findfirst(==(name), ARGS); i === nothing ? default : ARGS[i + 1])
 parse_list(s) = parse.(Float64, split(s, ","))
@@ -25,8 +25,6 @@ parse_list(s) = parse.(Float64, split(s, ","))
 const hermite_kernel_block = FCS2_VGA.hermite_kernel_block
 const hermite_point_features = FCS2_VGA.hermite_point_features
 const eigen_sym2 = FCS2_VGA.eigen_sym2
-const compute_lambda1 = FCS2_VGA.compute_lambda1
-const compute_lambda3 = FCS2_VGA.compute_lambda3
 
 function hermite_eigenbasis(Q)
     evals0, U0 = eigen_sym2(Matrix(Q))
@@ -44,7 +42,6 @@ function hermite_eigenbasis(Q)
     return evals, U
 end
 
-"""G̃ from diagonal Λ and ỹ=(0,ε). Null |λ|<tol·max|λ| → G̃=0. No lab G."""
 function amp_diag(chi, n1, κ, P, a0, eps_task, Q; delta=1.0, rel_eig_tol=1e-2)
     chi_p = chi / a0
     ρp = κ / (a0 * P)
@@ -56,7 +53,6 @@ function amp_diag(chi, n1, κ, P, a0, eps_task, Q; delta=1.0, rel_eig_tol=1e-2)
     Gdiag = zeros(2)
     for k in 1:2
         λ = evals[k]
-        # Drop only silent near-null channels. Never drop a channel the teacher loads.
         if abs(ytilde[k]) == 0 && abs(λ) < thr
             continue
         end
@@ -77,74 +73,75 @@ function make_V(d, s0, T, Gdiag, U)
 end
 
 function learn_L3(evals, ρp, thr)
-    # Cubic eigenchannel (index 2); use same floor as amp_diag for consistency.
     λ2 = evals[2]
     λsafe = abs(λ2) < thr ? thr : max(λ2, thr)
     return λsafe / (λsafe + ρp)
 end
 
-"""
-Standard Laplace residuals in eigenframe:
-  x = [lJ1, lJ3, σ, μ]
-  r = [lJ1−λ11, lJ3−λ33, σ² V''−1, V']
-with V from diagonal Λ and ỹ=(0,ε).
-"""
-function residuals_laplace_eigenframe(x, d, n1, chi, κ, P, a0, s0, eps_task, T)
-    lJ1, lJ3, sigS, muW = x
-    sigS = abs(sigS)
-    muW = abs(muW)
-    λ1 = compute_lambda1(muW, sigS, T)
-    λ3 = compute_lambda3(muW, sigS, T)
-    Q = hermite_kernel_block(muW, sigS, T)
-    Gdiag, evals, U, _, _, _ = amp_diag(chi, n1, κ, P, a0, eps_task, Q)
-    V = make_V(d, s0, T, Gdiag, U)
-    dV = ForwardDiff.derivative(V, muW)
-    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
-    return [lJ1 - λ1, lJ3 - λ3, sigS^2 * d2V - 1.0, dV], V, Gdiag, evals, U, Q
+seed_Q(μ, σ, T) = Matrix(hermite_kernel_block(μ, σ, T))
+
+"""Local minima of V on w ≥ 0 (each μ>0 stands for the ± pair)."""
+function find_wells(V; wmax=12.0, n=4001)
+    grid = collect(range(0.0, wmax; length=n))
+    Vs = [V(w) for w in grid]
+    wells = NamedTuple[]
+    for i in 2:(n - 1)
+        (Vs[i] < Vs[i - 1] && Vs[i] <= Vs[i + 1]) || continue
+        w0 = grid[i]
+        h = max(grid[2] - grid[1], 1e-4)
+        vm, v0, vp = V(w0 - h), V(w0), V(w0 + h)
+        a = (vm - 2v0 + vp) / (2h^2)
+        b = (vp - vm) / (2h)
+        μ = (a > 1e-12) ? clamp(w0 - b / (2a), 0.0, wmax) : w0
+        σ = (a > 1e-12) ? 1 / sqrt(2a) : NaN
+        (!isfinite(σ) || σ <= 0) && continue
+        σ = clamp(σ, 1e-4, 5.0)
+        any(abs(w.μ - μ) < 0.5 * min(σ, w.σ) for w in wells) && continue
+        m = μ < 1e-3 ? 1.0 : 2.0   # ± pair
+        push!(wells, (μ=μ, σ=σ, V=V(μ), m=m))
+    end
+    return wells
 end
 
-function solve_laplace(d, n1, chi, κ, P, a0, s0, eps_task; μ0=0.4, σ0=0.25, tol=1e-10)
+"""Laplace mixture saddle weights → Q."""
+function mixture_Q(wells, T)
+    isempty(wells) && return nothing
+    logZ = [log(w.m * w.σ) - w.V for w in wells]
+    lmax = maximum(logZ)
+    wt = exp.(logZ .- lmax)
+    wt ./= sum(wt)
+    Q = sum(wt[k] * seed_Q(wells[k].μ, wells[k].σ, T) for k in eachindex(wells))
+    return Q, wt
+end
+
+function solve_point(d, n1, chi, κ, P, a0, s0, eps_task; iters=80, damp=0.35, wmax=12.0)
     T = 1.0 + 2.0 * (d - 1.0) * s0 / d
-    best = nothing
-    for (μ0i, σ0i) in ((μ0, σ0), (0.1, 0.3), (0.8, 0.2), (1.5, 0.25),
-                        (2.0, 0.3), (2.5, 0.25), (0.01, 0.5), (3.5, 0.3))
-        λ1 = compute_lambda1(μ0i, σ0i, T)
-        λ3 = compute_lambda3(μ0i, σ0i, T)
-        x0 = [λ1, λ3, σ0i, μ0i]
-        sol = try
-            nlsolve(x -> residuals_laplace_eigenframe(
-                    x, d, n1, chi, κ, P, a0, s0, eps_task, T)[1], x0;
-                xtol=tol, ftol=tol, iterations=8000)
-        catch
-            nothing
+    Q = 0.7 * seed_Q(0.3, 0.25, T) + 0.3 * seed_Q(2.5, 0.25, T)
+    last = nothing
+    for it in 1:iters
+        Gdiag, evals, U, ytilde, ρp, thr = amp_diag(chi, n1, κ, P, a0, eps_task, Q)
+        V = make_V(d, s0, T, Gdiag, U)
+        wells = find_wells(V; wmax=wmax)
+        if isempty(wells)
+            # fallback: grid min on |w|
+            g = collect(range(0.0, wmax; length=2001))
+            Vs = [V(w) for w in g]
+            i = argmin(Vs)
+            μ = float(g[i])
+            wells = [(μ=μ, σ=0.2, V=Vs[i], m=μ < 1e-3 ? 1.0 : 2.0)]
         end
-        sol === nothing && continue
-        NLsolve.converged(sol) || continue
-        lJ1, lJ3, sigS, muW = abs.(sol.zero)
-        r, V, Gdiag, evals, U, Q = residuals_laplace_eigenframe(
-            [lJ1, lJ3, sigS, muW], d, n1, chi, κ, P, a0, s0, eps_task, T)
-        fn = norm(r)
-        ρp = κ / (a0 * P)
-        d_scale = maximum(abs, evals)
-        thr = 1e-2 * max(d_scale, Base.eps(typeof(d_scale)))
+        got = mixture_Q(wells, T)
+        got === nothing && break
+        Qn, wt = got
+        δ = norm(Qn - Q) / max(norm(Q), 1e-30)
+        Q = (1 - damp) * Q + damp * Qn
         L3 = learn_L3(evals, ρp, thr)
-        cand = (μ=muW, σ=sigS, L3=L3, V=V, Gdiag=Gdiag, evals=evals, U=U,
-            Q=Matrix(Q), ρp=ρp, f_norm=fn, thr=thr)
-        # μ=0 is always a critical point (V even); prefer a converged nonzero well
-        # with smallest residual, then deepest V(μ).
-        better = false
-        if best === nothing
-            better = true
-        elseif (cand.μ > 1e-3) != (best.μ > 1e-3)
-            better = cand.μ > best.μ
-        elseif cand.f_norm < best.f_norm - 1e-8
-            better = true
-        elseif abs(cand.f_norm - best.f_norm) < 1e-8 && cand.V(cand.μ) < best.V(best.μ)
-            better = true
-        end
-        better && (best = cand)
+        po = sum(wt[k] for k in eachindex(wells) if wells[k].μ > 0.8; init=0.0)
+        last = (Q=Matrix(Q), Gdiag=Gdiag, evals=evals, U=U, ρp=ρp, L3=L3, V=V,
+            wells=wells, wt=wt, po=po, ytilde=ytilde, thr=thr, iters=it)
+        δ < 1e-9 && break
     end
-    return best
+    return last
 end
 
 function main()
@@ -158,25 +155,27 @@ function main()
     s0 = 1.0
     Ps = parse_list(argval("--Ps", "50,200,1000,5000"))
     wmax = parse(Float64, argval("--wmax", "8"))
-    ngrid = parse(Int, argval("--ngrid", "1601"))
+    ngrid = parse(Int, argval("--ngrid", "3201"))
     out_dir = argval("--outdir",
         joinpath(@__DIR__, "action_h0_activation_plots", "EigenframeDiagQ"))
     mkpath(out_dir)
 
-    @printf("Laplace saddle + eigenframe only: ỹ=(0,ε), G̃(Λ) diagonal, V'(μ)=0, σ=1/√V''\n")
-    @printf("d=%g N=%g χ=%g sa0=%g κ=%g ε=%g\n", d, n1, chi, a0, κ, eps_task)
+    @printf("Eigenframe + Laplace mixture saddle weights: ỹ=(0,ε), G̃(Λ) only\n")
+    @printf("d=%g N=%g χ=%g sa0=%g κ=%g ε=%g; action on w∈[−%g,%g]\n",
+        d, n1, chi, a0, κ, eps_task, wmax, wmax)
 
-    sum_path = joinpath(out_dir, @sprintf("summary_laplace_d%d_N%d_chi%d.csv", Int(d), Int(n1), Int(chi)))
+    sum_path = joinpath(out_dir, @sprintf("summary_mix_d%d_N%d_chi%d.csv", Int(d), Int(n1), Int(chi)))
     open(sum_path, "w") do io
-        println(io, "P,kappa,rho_p,L3,mu,sig,Vmu,lam_lin,lam_cub,G_lin,G_cub,Q11,Q13,Q33,f_norm")
+        println(io, "P,kappa,rho_p,L3,pi_out,nwells,mu_list,V_list,pi_list,lam_lin,lam_cub,G_lin,G_cub,Q11,Q13,Q33,iters")
         for P in Ps
-            s = solve_laplace(d, n1, chi, κ, P, a0, s0, eps_task)
+            s = solve_point(d, n1, chi, κ, P, a0, s0, eps_task; wmax=wmax)
             if s === nothing
-                @printf("P=%-8.0f  no Laplace root\n", P)
+                @printf("P=%-8.0f  failed\n", P)
                 continue
             end
-            grid = range(0.0, wmax; length=ngrid)
-            act_path = joinpath(out_dir, @sprintf("action_laplace_P%g_d%d.csv", P, Int(d)))
+            # Full line so both ± wells are visible
+            grid = range(-wmax, wmax; length=ngrid)
+            act_path = joinpath(out_dir, @sprintf("action_mix_P%g_d%d.csv", P, Int(d)))
             open(act_path, "w") do aio
                 println(aio, "w,V,prior,data")
                 for w in grid
@@ -185,11 +184,16 @@ function main()
                     @printf(aio, "%.10g,%.10g,%.10g,%.10g\n", w, v, prior, v - prior)
                 end
             end
-            @printf(io, "%.10g,%.10g,%.10g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.4g\n",
-                P, κ, s.ρp, s.L3, s.μ, s.σ, s.V(s.μ), s.evals[1], s.evals[2],
-                s.Gdiag[1], s.Gdiag[2], s.Q[1, 1], s.Q[1, 2], s.Q[2, 2], s.f_norm)
-            @printf("P=%-8.0f  L3=%.4f  μ=%.4f σ=%.4f  V=%.4g  Λ=(%.4g, %.4g)  ||r||=%.2e\n",
-                P, s.L3, s.μ, s.σ, s.V(s.μ), s.evals[1], s.evals[2], s.f_norm)
+            mus = join([@sprintf("%.4g", w.μ) for w in s.wells], ";")
+            Vs = join([@sprintf("%.4g", w.V) for w in s.wells], ";")
+            ps = join([@sprintf("%.4g", p) for p in s.wt], ";")
+            @printf(io, "%.10g,%.10g,%.10g,%.8g,%.6g,%d,%s,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%d\n",
+                P, κ, s.ρp, s.L3, s.po, length(s.wells), mus, Vs, ps,
+                s.evals[1], s.evals[2], s.Gdiag[1], s.Gdiag[2],
+                s.Q[1, 1], s.Q[1, 2], s.Q[2, 2], s.iters)
+            wstr = join([@sprintf("μ=±%.3f V=%.4g π=%.3g", w.μ, w.V, s.wt[k])
+                for (k, w) in enumerate(s.wells)], " | ")
+            @printf("P=%-8.0f  L3=%.4f  π_out≈%.3f  %s\n", P, s.L3, s.po, wstr)
             flush(stdout)
         end
     end
