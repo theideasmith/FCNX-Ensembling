@@ -1,30 +1,21 @@
-Eigenframe action with diagonalized Q (user spec)
-================================================
+Eigenframe SADDLE action with diagonalized Q
+============================================
 
-Equations (eigenframe only — no lab A = U G̃ Uᵀ):
-  Q = U Λ Uᵀ
-  ỹ = (0, ε)          # cubic eigenchannel
-  G̃ = diag from Λ,ỹ  # near-null |λ| < 0.01 max|λ| → G̃_kk = 0
-  V(w) = (d/2s0) w² + ½ Σ_k G̃_kk φ_k(w)²,  φ = Uᵀ c(w)
-
-Q rebuilt each iteration from wells of V
-  (default: Laplace mixture; --hard: global-min well only).
+Spec:
+  1. Diagonalize lab Q → Λ (eigenframe)
+  2. Teacher ỹ = (0, ε) in that frame
+  3. Amplitudes G̃ from diagonal Λ only (no lab A = U G̃ Uᵀ)
+  4. V(w) = prior + ½ Σ G̃_kk φ_k², φ = Uᵀ c(w)
+  5. Saddle point: Q comes from the global minimizer of V only
+     (hard assignment — not a Boltzmann/Laplace mixture over wells)
 
 Params: d=10, N=χ=400, sa0=1, κ=0.5, ε=1
 
-Mixture L3(P):
-  P=50    L3=0.235   wells μ≈0.48, 2.28
-  P=200   L3=0.626   wells μ≈0.57, 3.66   (outer is deeper)
-  P=1000  L3=0.901   wells μ≈0.58, 4.33
-  P=5000  L3=0.979   wells μ≈0.58, 4.50
+Results (* = occupied saddle):
+  P=50    L3=0.258  saddle μ=0.54  (bulk only)
+  P=200   L3=0.626  saddle μ=3.66  (outer; bulk still a local min)
+  P=1000  L3=0.901  saddle μ=4.33
+  P=5000  L3=0.979  saddle μ=4.50
 
-Hard-saddle L3(P) matches at P≥200 (outer is the Hamiltonian min).
-
-Plots:
-  V_vs_w_diagQ_d10.png       (mixture Q)
-  V_vs_w_diagQ_hard_d10.png  (hard saddle Q)
-
-Run:
-  julia eigenframe_diag_q_action.jl --d 10 --n1 400 --chi 400 --sa0 1 --kappa 0.5 --eps 1
-  julia eigenframe_diag_q_action.jl ... --hard
-
+Plot: V_vs_w_saddle_d10.png
+Run:  julia eigenframe_diag_q_action.jl --d 10 --n1 400 --chi 400 --sa0 1 --kappa 0.5 --eps 1

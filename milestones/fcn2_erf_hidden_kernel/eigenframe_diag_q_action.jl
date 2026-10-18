@@ -11,7 +11,9 @@
 #      Near-null eigenvalues (|λ| < tol · max|λ|) get G̃_kk = 0
 #      (same null-channel rule as offdiag VGA).
 #   5. V(w) = (d/(2 s0)) w² + ½ Σ_k G̃_kk φ_k(w)²,  φ = Uᵀ c(w).
-#   6. Find wells of V; rebuild Q as a Laplace mixture over those wells; iterate.
+#   6. Saddle point: locate wells of V; take the global minimizer only
+#      (hard assignment — no Boltzmann / Laplace mixture weights on π);
+#      set Q from that well's (μ,σ); iterate to self-consistency.
 #
 #   julia eigenframe_diag_q_action.jl
 #   julia eigenframe_diag_q_action.jl --d 10 --n1 400 --chi 400 --sa0 1 \
@@ -105,58 +107,54 @@ function find_wells(V; wmax=12.0, n=8001)
     return wells, grid, Vs
 end
 
-"""Laplace mixture weights over wells → Q."""
-function mixture_Q(wells, T)
-    isempty(wells) && return nothing
-    logZ = [log(w.m * w.σ) - w.V for w in wells]
-    lmax = maximum(logZ)
-    wt = exp.(logZ .- lmax)
-    wt ./= sum(wt)
-    Q = sum(wt[k] * seed_Q(wells[k].μ, wells[k].σ, T) for k in eachindex(wells))
-    return Q, wt
-end
-
-"""Hard saddle: Q from the global-min well only."""
-function hard_Q(wells, T)
+"""Saddle-point Q: global minimizer of V only (hard assignment)."""
+function saddle_Q(wells, T)
     isempty(wells) && return nothing
     j = argmin([w.V for w in wells])
     w = wells[j]
     return seed_Q(w.μ, w.σ, T), w
 end
 
-"""Self-consistent eigenframe solve at fixed P."""
-function solve_point(d, n1, chi, κ, P, a0, s0, eps; hard=false, iters=60, damp=0.35, wmax=12.0)
+"""Self-consistent eigenframe saddle-point solve at fixed P."""
+function solve_point(d, n1, chi, κ, P, a0, s0, eps; iters=80, damp=0.35, wmax=12.0)
     T = 1.0 + 2.0 * (d - 1.0) * s0 / d
-    # seed: bulk + outer mix so cubic eig is not null
-    Q = 0.7 * seed_Q(0.3, 0.25, T) + 0.3 * seed_Q(2.5, 0.25, T)
-    last = nothing
-    for it in 1:iters
-        Gdiag, evals, U, ytilde, ρp, thr = amp_diag(chi, n1, κ, P, a0, eps, Q)
-        V = make_V(d, s0, T, Gdiag, U)
-        wells, grid, Vs = find_wells(V; wmax=wmax)
-        if isempty(wells)
-            # fallback: force a grid min
-            i = argmin(Vs)
-            μ = float(grid[i])
-            wells = [(μ=μ, σ=0.2, V=Vs[i], m=μ < 1e-3 ? 1.0 : 2.0)]
+    # Seeds that can land on bulk or outer Hamiltonian minima.
+    seeds = [
+        seed_Q(0.4, 0.25, T),
+        seed_Q(2.5, 0.25, T),
+        0.5 * seed_Q(0.3, 0.25, T) + 0.5 * seed_Q(2.5, 0.25, T),
+    ]
+    best = nothing
+    for Q0 in seeds
+        Q = copy(Q0)
+        last = nothing
+        for it in 1:iters
+            Gdiag, evals, U, ytilde, ρp, thr = amp_diag(chi, n1, κ, P, a0, eps, Q)
+            V = make_V(d, s0, T, Gdiag, U)
+            wells, grid, Vs = find_wells(V; wmax=wmax)
+            if isempty(wells)
+                i = argmin(Vs)
+                μ = float(grid[i])
+                wells = [(μ=μ, σ=0.2, V=Vs[i], m=μ < 1e-3 ? 1.0 : 2.0)]
+            end
+            got = saddle_Q(wells, T)
+            got === nothing && break
+            Qn, win = got
+            δ = norm(Qn - Q) / max(norm(Q), 1e-30)
+            Q = (1 - damp) * Q + damp * Qn
+            L3 = learn_L3(evals, ρp, eps, thr)
+            last = (Q=Matrix(Q), Gdiag=Gdiag, evals=evals, U=U, ρp=ρp, L3=L3, V=V,
+                wells=wells, win=win, po=(win.μ > 0.8 ? 1.0 : 0.0),
+                grid=grid, Vs=Vs, ytilde=ytilde, thr=thr, iters=it)
+            δ < 1e-9 && break
         end
-        if hard
-            Qn, win = hard_Q(wells, T)
-            wt = nothing
-            po = win.μ > 0.8 ? 1.0 : 0.0
-        else
-            Qn, wt = mixture_Q(wells, T)
-            po = sum(wt[k] for k in eachindex(wells) if wells[k].μ > 0.8; init=0.0)
+        last === nothing && continue
+        # Prefer the fixed point whose occupied well has lower V.
+        if best === nothing || last.win.V < best.win.V
+            best = last
         end
-        Qn === nothing && break
-        δ = norm(Qn - Q) / max(norm(Q), 1e-30)
-        Q = (1 - damp) * Q + damp * Qn
-        L3 = learn_L3(evals, ρp, eps, thr)
-        last = (Q=Q, Gdiag=Gdiag, evals=evals, U=U, ρp=ρp, L3=L3, V=V,
-            wells=wells, wt=wt, po=po, grid=grid, Vs=Vs, ytilde=ytilde, thr=thr, iters=it)
-        δ < 1e-8 && break
     end
-    return last
+    return best
 end
 
 function main()
@@ -168,28 +166,25 @@ function main()
     κ = parse(Float64, argval("--kappa", "0.5"))
     eps = parse(Float64, argval("--eps", "1"))
     s0 = 1.0
-    hard = "--hard" in ARGS
     Ps = parse_list(argval("--Ps", "50,200,1000,5000"))
     wmax = parse(Float64, argval("--wmax", "10"))
     out_dir = argval("--outdir",
         joinpath(@__DIR__, "action_h0_activation_plots", "EigenframeDiagQ"))
     mkpath(out_dir)
 
-    @printf("Eigenframe diag-Q action: ỹ=(0,ε), G̃(Λ) only%s\n",
-        hard ? " [hard saddle Q]" : " [Laplace mixture Q]")
+    @printf("Eigenframe diag-Q SADDLE action: ỹ=(0,ε), G̃(Λ) only, Q from global min of V\n")
     @printf("d=%g N=%g χ=%g sa0=%g κ=%g ε=%g\n", d, n1, chi, a0, κ, eps)
 
-    sum_path = joinpath(out_dir, @sprintf("summary_d%d_N%d_chi%d%s.csv",
-        Int(d), Int(n1), Int(chi), hard ? "_hard" : ""))
+    sum_path = joinpath(out_dir, @sprintf("summary_saddle_d%d_N%d_chi%d.csv", Int(d), Int(n1), Int(chi)))
     open(sum_path, "w") do io
-        println(io, "P,kappa,rho_p,L3,pi_out,nwells,mu_list,V_list,lam_lin,lam_cub,G_lin,G_cub,Q11,Q13,Q33,iters")
+        println(io, "P,kappa,rho_p,L3,saddle_outer,nwells,mu_saddle,V_saddle,mu_list,V_list,lam_lin,lam_cub,G_lin,G_cub,Q11,Q13,Q33,iters")
         for P in Ps
-            s = solve_point(d, n1, chi, κ, P, a0, s0, eps; hard=hard, wmax=wmax)
+            s = solve_point(d, n1, chi, κ, P, a0, s0, eps; wmax=wmax)
             if s === nothing
                 @printf("P=%-8.0f  failed\n", P)
                 continue
             end
-            act_path = joinpath(out_dir, @sprintf("action_P%g_d%d%s.csv", P, Int(d), hard ? "_hard" : ""))
+            act_path = joinpath(out_dir, @sprintf("action_saddle_P%g_d%d.csv", P, Int(d)))
             open(act_path, "w") do aio
                 println(aio, "w,V,prior,data")
                 for (w, v) in zip(s.grid, s.Vs)
@@ -198,14 +193,15 @@ function main()
                 end
             end
             mus = join([@sprintf("%.4g", w.μ) for w in s.wells], ";")
-            Vs = join([@sprintf("%.4g", w.V) for w in s.wells], ";")
-            @printf(io, "%.10g,%.10g,%.10g,%.8g,%.6g,%d,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%d\n",
-                P, κ, s.ρp, s.L3, s.po, length(s.wells), mus, Vs,
+            Vlist = join([@sprintf("%.4g", w.V) for w in s.wells], ";")
+            @printf(io, "%.10g,%.10g,%.10g,%.8g,%d,%d,%.8g,%.8g,%s,%s,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%.8g,%d\n",
+                P, κ, s.ρp, s.L3, Int(s.po), length(s.wells), s.win.μ, s.win.V, mus, Vlist,
                 s.evals[1], s.evals[2], s.Gdiag[1], s.Gdiag[2],
                 s.Q[1, 1], s.Q[1, 2], s.Q[2, 2], s.iters)
-            wstr = join([@sprintf("μ=%.3f V=%.4g", w.μ, w.V) for w in s.wells], " | ")
-            @printf("P=%-8.0f  L3=%.4f  π_out≈%.3f  Λ=(%.4g, %.4g)  G̃=(%.4g, %.4g)  %s\n",
-                P, s.L3, s.po, s.evals[1], s.evals[2], s.Gdiag[1], s.Gdiag[2], wstr)
+            wstr = join([@sprintf("μ=%.3f V=%.4g%s", w.μ, w.V, abs(w.μ - s.win.μ) < 1e-6 ? "*" : "")
+                for w in s.wells], " | ")
+            @printf("P=%-8.0f  L3=%.4f  saddle μ=%.3f V=%.4g  Λ=(%.4g, %.4g)  wells: %s\n",
+                P, s.L3, s.win.μ, s.win.V, s.evals[1], s.evals[2], wstr)
             flush(stdout)
         end
     end
