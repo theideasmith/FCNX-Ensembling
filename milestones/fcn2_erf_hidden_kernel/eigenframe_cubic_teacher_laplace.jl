@@ -1,14 +1,13 @@
 #!/usr/bin/env julia
-# Matrix Laplace with eigenframe teacher ỹ = (0, ε) — the posing you asked for.
+# Matrix Laplace solved in the eigenframe with ỹ = (0, ε).
 #
 # At each candidate (μ,σ):
 #   1. Build full Hermite block Q (keeps λ13; no artificial Q13=0)
 #   2. Diagonalize Q = U Λ Uᵀ
-#   3. Set lab teacher y_lab = ε u_cubic   ⇒   ỹ = Uᵀ y_lab = (0, ε)
-#   4. Build G from that y; impose V'=0, σ²V''=1, λ-matches
+#   3. Set eigenframe teacher ỹ = (0, ε); build G̃ = G̃(Λ, ỹ)
+#   4. V(w) = prior + ½ φᵀ G̃ φ with φ = Uᵀ c(w); impose V'=0, σ²V''=1, λ-matches
 #
-# So the real (lab) teacher is the Hermite linear combination ε u_*, and in the
-# rotated frame only the cubic eigenchannel is driven — linear eigenmode silent.
+# Equations live in the eigenframe — silent eigenchannel has zero teacher load.
 #
 # Distinct from:
 #   - --decouple (zeros Hermite Q13)

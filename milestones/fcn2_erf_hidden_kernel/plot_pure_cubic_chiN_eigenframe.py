@@ -127,11 +127,11 @@ def main():
         panel(axes[0], full, r"lab $y=(0,\varepsilon)$ ($\chi=N$)", keep, args.wmax)
         norm, cmap = panel(
             axes[1], eig,
-            r"eigenframe $y=\varepsilon u_*(Q)$ $\Rightarrow$ $\tilde y=(0,\varepsilon)$",
+            r"eigenframe solve: $\tilde y=(0,\varepsilon)$ on $\Lambda(Q)$",
             keep, args.wmax,
         )
         title = (
-            r"Pure cubic $\chi=N$: $V(w)$ — fixed lab $y=(0,\varepsilon)$ vs eigenframe"
+            r"Pure cubic $\chi=N$: $V(w)$ — lab $y=(0,\varepsilon)$ vs eigenframe $\tilde y=(0,\varepsilon)$"
             "\n"
             r"$d=16$, $N=\chi=200$, $P=10^3$, $\mathrm{sa0}=0.03$"
         )
@@ -143,11 +143,11 @@ def main():
         axes = [ax]
         norm, cmap = panel(
             ax, eig,
-            r"eigenframe $y=\varepsilon u_{\mathrm{cubic}}(Q)$ $\Rightarrow$ $\tilde y=(0,\varepsilon)$",
+            r"eigenframe: $\tilde y=(0,\varepsilon)$, $V=\frac12\phi^\top\tilde G\phi$",
             keep, args.wmax,
         )
         title = (
-            r"Eigenframe cubic $\chi=N$: read-in action $V(w)$"
+            r"Eigenframe cubic $\chi=N$: $V(w)$ with $\tilde y=(0,\varepsilon)$ on $\Lambda(Q)$"
             "\n"
             r"$d=16$, $N=\chi=200$, $P=10^3$, $\mathrm{sa0}=0.03$"
         )

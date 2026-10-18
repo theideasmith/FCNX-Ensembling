@@ -38,14 +38,15 @@ end
 """Teacher (He1, He3). Default pure cubic; `--he1 1` is the matrix-Laplace teacher (1, ε)."""
 const TEACHER_HE1 = Ref(0.0)
 
-"""`--eigenframe`: lab y = ε u_cubic(Q) so ỹ = (0, ε) in the eigenbasis of Q (self-consistent)."""
+"""`--eigenframe`: solve amp/V/F in the eigenbasis of Q with ỹ=(0,ε) (self-consistent)."""
 const EIGENFRAME = Ref(false)
 const EIGENFRAME_BRANCH = Ref(:cubic)
 
-"""Lab teacher. With `--eigenframe`, y depends on Q via `lab_teacher_eigenframe_cubic`."""
+"""Lab Hermite teacher for the non-eigenframe path."""
 function teacher_y(c::Cfg, Q=nothing)
     if EIGENFRAME[]
         Q === nothing && error("eigenframe teacher requires Q")
+        # Pullback U ỹ for diagnostics / free-energy cross-checks only.
         y, _, _, _ = lab_teacher_eigenframe_cubic(Q, c.eps; branch=EIGENFRAME_BRANCH[])
         return y
     end
@@ -56,13 +57,19 @@ end
 const DECOUPLE = Ref(false)
 decouple(M) = DECOUPLE[] ? [M[1, 1] zero(M[1, 2]); zero(M[1, 2]) M[2, 2]] : M
 
-"""Same formula as FCS2_VGA.laplace_amplitude_matrix; y from `teacher_y` (fixed or eigenframe)."""
+"""Amplitude matrix. Eigenframe path: ỹ=(0,ε) on Λ, then G_lab = U G̃ Uᵀ."""
 function amp(c::Cfg, Q, P, κ)
+    if EIGENFRAME[]
+        # multiwell convention = δ=1 teacher rank-one (matches prior non-eigenframe amp)
+        Glab, _, _, _, _ = laplace_amplitude_eigenframe(
+            c.chi, c.n1, κ, P, 1.0, c.eps, Matrix(Q);
+            a0=c.a0, branch=EIGENFRAME_BRANCH[])
+        return Glab
+    end
     chi_p = c.chi / c.a0
     ρp = κ / (c.a0 * P)
     Qm = decouple(Matrix(Q))
-    # Eigenframe y is built from the *physical* Q (before artificial decouple).
-    y = teacher_y(c, EIGENFRAME[] ? Matrix(Q) : Qm)
+    y = teacher_y(c, Qm)
     qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
     Qreg = Qm + (1e-10 * (1 + qscale)) * I(2)
     v = (Qreg + ρp * I(2)) \ y
@@ -70,11 +77,34 @@ function amp(c::Cfg, Q, P, κ)
     return decouple((c.a0 / (c.n1 * c.chi)) * G)
 end
 
+"""Cavity action. Eigenframe: V = prior + ½ φᵀ G̃ φ with φ = Uᵀ c(w)."""
 function potential(c::Cfg, G)
     w -> begin
         c1, c3 = FCS2_VGA.hermite_point_features(w, c.T)
         (c.d / c.s0) * 0.5 * w^2 + 0.5 * (G[1, 1] * c1^2 + 2G[1, 2] * c1 * c3 + G[2, 2] * c3^2)
     end
+end
+
+function potential_eigenframe(c::Cfg, Gtilde, U)
+    w -> begin
+        c1, c3 = FCS2_VGA.hermite_point_features(w, c.T)
+        φ1 = U[1, 1] * c1 + U[2, 1] * c3
+        φ2 = U[1, 2] * c1 + U[2, 2] * c3
+        quad = Gtilde[1, 1] * φ1^2 + 2Gtilde[1, 2] * φ1 * φ2 + Gtilde[2, 2] * φ2^2
+        (c.d / c.s0) * 0.5 * w^2 + 0.5 * quad
+    end
+end
+
+"""Build (G_lab, V) — eigenframe uses φᵀ G̃ φ; lab path uses cᵀ G c."""
+function amp_and_potential(c::Cfg, Q, P, κ)
+    if EIGENFRAME[]
+        Glab, Gtilde, U, _, _ = laplace_amplitude_eigenframe(
+            c.chi, c.n1, κ, P, 1.0, c.eps, Matrix(Q);
+            a0=c.a0, branch=EIGENFRAME_BRANCH[])
+        return Glab, potential_eigenframe(c, Gtilde, U)
+    end
+    G = amp(c, Q, P, κ)
+    return G, potential(c, G)
 end
 
 const WGRID = range(0.0, 40.0, length=16001)
@@ -132,17 +162,27 @@ end
 function free_energy(c::Cfg, Q, G, logZ1, P, κ)
     χp = c.chi / c.a0
     ρp = κ / (c.a0 * P)
+    if EIGENFRAME[]
+        evals, _ = hermite_eigenbasis(Q)
+        ytilde = teacher_eigenframe(c.eps; branch=EIGENFRAME_BRANCH[])
+        ridge = ytilde[1]^2 / (evals[1] + ρp) + ytilde[2]^2 / (evals[2] + ρp)
+        # tr(G Q) = tr(G̃ Λ) with G = U G̃ Uᵀ
+        return c.n1 * (-logZ1 - 0.5 * tr(G * Q)) + 0.5χp * ridge + 0.5 * sum(log.(max.(evals, 1e-30)))
+    end
     y = teacher_y(c, Q)
     c.n1 * (-logZ1 - 0.5 * tr(G * Q)) + 0.5χp * dot(y, (Q + ρp * I) \ y) + 0.5 * logdet(Q)
 end
 
-"""Returns (f1, L3). f1 is induced He1 (teacher has none); L3 = f3/ε.
-
-χ=N path: readout prior a0/(n1 χ) rescales the ridge to ρ' = κ/(a0 P).
-With `--eigenframe`, L3 is f·u_cubic/ε in the lab Hermite basis (not a pure He3 load).
-"""
+"""Returns (f1, L3). Eigenframe: (f̃_lin, f̃_cub/ε) with ỹ=(0,ε) ⇒ f̃_lin=0."""
 function learnabilities(c::Cfg, Q, P, κ)
     ρp = κ / (c.a0 * P)
+    if EIGENFRAME[]
+        evals, _ = hermite_eigenbasis(Q)
+        ytilde = teacher_eigenframe(c.eps; branch=EIGENFRAME_BRANCH[])
+        f1 = evals[1] / (evals[1] + ρp) * ytilde[1]
+        f3 = evals[2] / (evals[2] + ρp) * ytilde[2]
+        return f1, f3 / c.eps
+    end
     y = teacher_y(c, Q)
     f = Q * ((Q + ρp * I) \ y)
     f[1], f[2] / c.eps
@@ -150,24 +190,21 @@ end
 
 """NNGP (χ=1). Ridge is κ/(a0 P): a0 is not replaced by a0/N, and κ is not multiplied by N."""
 function learnabilities_nngp(c::Cfg, Q, P, κ)
-    ρp = κ / (c.a0 * P)
-    y = teacher_y(c, Q)
-    f = Q * ((Q + ρp * I) \ y)
-    f[1], f[2] / c.eps
+    learnabilities(c, Q, P, κ)
 end
 
 function solve(c::Cfg, Q0, P, κ; iters=4000, η=0.2, tol=1e-9)
     Q = copy(Q0)
     for it in 1:iters
-        G = amp(c, Q, P, κ)
-        ws = wells(potential(c, G))
+        G, Vfn = amp_and_potential(c, Q, P, κ)
+        ws = wells(Vfn)
         isempty(ws) && return nothing
         Qn, _, _ = mixture(c, ws)
         δ = norm(Qn - Q) / max(norm(Q), 1e-30)
         Q = (1 - η) * Q + η * Qn
         if δ < tol
-            G = amp(c, Q, P, κ)
-            ws = wells(potential(c, G))
+            G, Vfn = amp_and_potential(c, Q, P, κ)
+            ws = wells(Vfn)
             Qf, π, logZ1 = mixture(c, ws)
             return (Q=Qf, G=G, ws=ws, π=π, F=free_energy(c, Qf, G, logZ1, P, κ), iters=it)
         end
@@ -181,8 +218,8 @@ seed_Q(c::Cfg, μ, σ) = decouple(Matrix(FCS2_VGA.hermite_kernel_block(μ, σ, c
 function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
     Q = copy(Q0)
     for it in 1:iters
-        G = amp(c, Q, P, κ)
-        ws = wells(potential(c, G))
+        G, Vfn = amp_and_potential(c, Q, P, κ)
+        ws = wells(Vfn)
         isempty(ws) && return nothing
         (po > 0 && length(ws) < 2) && return nothing
         win, wout = ws[1], ws[end]
@@ -190,8 +227,8 @@ function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
         δ = norm(Qn - Q) / max(norm(Q), 1e-30)
         Q = (1 - η) * Q + η * Qn
         δ < tol || continue
-        G = amp(c, Q, P, κ)
-        ws = wells(potential(c, G))
+        G, Vfn = amp_and_potential(c, Q, P, κ)
+        ws = wells(Vfn)
         (po > 0 && length(ws) < 2) && return nothing
         win, wout = ws[1], ws[end]
         Q = (1 - po) * seed_Q(c, win[1], win[2]) + po * seed_Q(c, wout[1], wout[2])
@@ -199,14 +236,21 @@ function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
         sel = po > 0 ? [win, wout] : [win]
         χp = c.chi / c.a0
         ρp = κ / (c.a0 * P)
-        y = teacher_y(c, Q)
         e = sum(πs[k] * (sel[k][3] - log(sel[k][4] * sel[k][2] * sqrt(2pi))) for k in eachindex(sel))
         s = sum(p * log(p) for p in πs if p > 0)
-        ev = eigvals(Symmetric(Q))
+        if EIGENFRAME[]
+            ev, _ = hermite_eigenbasis(Q)
+            ytilde = teacher_eigenframe(c.eps; branch=EIGENFRAME_BRANCH[])
+            ridge = ytilde[1]^2 / (ev[1] + ρp) + ytilde[2]^2 / (ev[2] + ρp)
+        else
+            y = teacher_y(c, Q)
+            ev = eigvals(Symmetric(Q))
+            ridge = dot(y, (Q + ρp * I) \ y)
+        end
         scale = max(1.0, maximum(abs.(ev)))
         minimum(ev) < -1e-8 * scale && return nothing
         ev = max.(ev, 1e-14 * scale)
-        F = c.n1 * (e + s - 0.5 * tr(G * Q)) + 0.5χp * dot(y, (Q + ρp * I) \ y) + 0.5 * sum(log.(ev))
+        F = c.n1 * (e + s - 0.5 * tr(G * Q)) + 0.5χp * ridge + 0.5 * sum(log.(ev))
         f1, L3 = learnabilities(c, Q, P, κ)
         dV = wout[3] - win[3] - log(wout[2] / win[2])
         return (Q=Q, F=F, win=win, wout=wout, f1=f1, L3=L3, dV=dV, nwells=length(ws),
@@ -1164,9 +1208,9 @@ function rho_ray_actions_main()
     header = "rho,kappa,P,sa0,d,N,chi,pi_out,mu_in,sig_in,mu_out,sig_out,V_in,V_out,dV_raw,L3,F,nwells,at_edge,he1_lab,he3_lab,yrot1,yrot2,w,V"
     phase(s) = s.nwells < 2 ? "no_outer" : (s.dV_raw > 0 ? "inner_deeper" : "outer_deeper")
     y_tag = if EIGENFRAME[]
-        "y=ε u_*(Q) ⇒ ỹ=(0,ε) [$(EIGENFRAME_BRANCH[])]"
+        "eigenframe ỹ=$(EIGENFRAME_BRANCH[] === :linear ? "(ε,0)" : "(0,ε)") on Λ(Q)"
     else
-        "y=(he1=$(TEACHER_HE1[]),ε)"
+        "lab y=(he1=$(TEACHER_HE1[]),ε)"
     end
     @printf("ρ-ray actions (solver)  d=%g N=χ=%g P=%g sa0=%g ε=%g  %s  modes=%s  %s\n",
         d, n1, P, sa0, eps_task, y_tag, join(modes, ","),
@@ -1205,13 +1249,13 @@ function rho_ray_actions_main()
                 continue
             end
             Qwarm = s.Q
-            G = amp(c, s.Q, P, κ)
-            Vfn = potential(c, G)
-            y = teacher_y(c, s.Q)
+            G, Vfn = amp_and_potential(c, s.Q, P, κ)
             if EIGENFRAME[]
-                _, _, U, _ = lab_teacher_eigenframe_cubic(s.Q, c.eps; branch=EIGENFRAME_BRANCH[])
-                yrot = U' * y
+                ytilde = teacher_eigenframe(c.eps; branch=EIGENFRAME_BRANCH[])
+                y = teacher_y(c, s.Q)  # U ỹ pullback (diagnostic only)
+                yrot = ytilde
             else
+                y = teacher_y(c, s.Q)
                 yrot = [NaN, NaN]
             end
             Vout = s.nwells < 2 ? NaN : s.wout[3]
@@ -1230,8 +1274,8 @@ function rho_ray_actions_main()
                 y[1], y[2], yrot[1], yrot[2])
             flush(io); flush(sio)
             edge_tag = at_edge ? " EDGE" : ""
-            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  y=(%.3g,%.3g) ỹ=(%.2e,%.3g)  %s%s [%s]\n",
-                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, y[1], y[2], yrot[1], yrot[2], phase(s), edge_tag, src)
+            @printf("  %-11s ρ=%-6.4g π_out=%-7.4g ΔF=%+-9.4g μ_out=%-6.3f V_in=%-8.4g V_out=%-8.4g dV_raw=%+-8.4g  ỹ=(%.3g,%.3g)  %s%s [%s]\n",
+                mode, ρ, po, dF0, muout, s.win[3], Vout, dV, yrot[1], yrot[2], phase(s), edge_tag, src)
             flush(stdout)
         end
         close(io); close(sio)
