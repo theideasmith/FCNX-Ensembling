@@ -9,12 +9,13 @@ using Base: @kwdef
 export ProblemParams2, Solution2, residuals_fcn2, residuals_fcn2_advanced,
     residuals_fcn2_offdiag, residuals_fcn2_matrix, residuals_regularized,
     residuals_fcn2_saddle, residuals_fcn2_laplace,
-    residuals_fcn2_laplace_eigen_teacher, solve_FCN2_Erf,
+    residuals_fcn2_laplace_eigen_teacher,
+    residuals_fcn2_laplace_eigenframe_cubic, solve_FCN2_Erf,
     exact_symmetric_gmm_entropy_1d, training_signal, training_amplitude,
     compute_lambda13, hermite_kernel_block, training_amplitudes_offdiag,
     lambda1_point, hermite_point_features, laplace_amplitude_matrix,
     eigen_sym2, teacher_eigen_residual, he1_from_Q_eigenvector,
-    SIG_SADDLE_DEFAULT
+    lab_teacher_eigenframe_cubic, SIG_SADDLE_DEFAULT
 
 # ---------------------------------------------------------
 # ForwardDiff Extension for Complex erfcx
@@ -350,30 +351,74 @@ training_amplitude(chi, n1, kappa, P, delta, λ; a0=1.0) =
     a0 * training_signal(chi / a0, kappa / a0, P, delta, λ) / (n1 * chi)
 
 """
-    laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0)
+    laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0, y=nothing)
 
 2×2 generalization of `training_amplitude` on the teacher-axis Hermite block
-`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`, `y = (he1, ε)`:
+`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`:
 
     v = (Q + ρ' I)⁻¹ y
     G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' Q⁻¹ ]
 
-Default `he1=1` recovers the classical teacher `(1, ε)`. For `λ13 = 0` the
-(1,1) entry is `training_amplitude(λ11)`. The cubic component
-`v₃ = −λ13 v₁/(λ33+ρ')` survives at `ε = 0`.
+Teacher `y` defaults to `(he1, ε)`. Pass `y=` to set an arbitrary lab-frame
+teacher (e.g. `ε · u_cubic` so the eigenframe teacher is `(0, ε)`).
 """
-function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0)
+function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0, y=nothing)
     chi_p = chi / a0
     ρp = kappa / (a0 * P)
     Qm = Matrix(Q)
-    # Promote he1 through Duals (eigen-teacher NLsolve); do not oftype(ε, he1).
-    Tq = promote_type(eltype(Qm), typeof(he1), typeof(epsilon))
-    y = Tq[he1, epsilon]
+    if y === nothing
+        Tq = promote_type(eltype(Qm), typeof(he1), typeof(epsilon))
+        y = Tq[he1, epsilon]
+    else
+        y = collect(y)
+    end
     qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
     Qreg = Qm + (1e-10 * (one(qscale) + qscale)) * I(2)
     v = (Qreg + ρp * I(2)) \ y
     G = -(chi_p^2 * delta) * (v * v') + chi_p * inv(Qreg)
     return (a0 / (n1 * chi)) * G
+end
+
+"""
+    lab_teacher_eigenframe_cubic(Q, epsilon; branch=:cubic)
+
+Lab-frame teacher that is a Hermite linear combination of the two eigenvectors
+of `Q`, chosen so the *rotated* teacher is exactly one-hot:
+
+    branch=:cubic  →  ỹ = Uᵀ y = (0, ε)   (only cubic-aligned eigenchannel)
+    branch=:linear →  ỹ = Uᵀ y = (ε, 0)   (only linear-aligned eigenchannel)
+
+Construction:
+  1. Diagonalize `Q = U₀ Λ U₀ᵀ` (keeps λ13; no artificial Q13=0).
+  2. Reorder columns of `U` by |He3| weight ascending, so column 1 is more
+     He1-like and column 2 is more He3-like. Orient each column so its
+     dominant Hermite entry is positive.
+  3. Set `y = ε · U[:, 2]` (`:cubic`) or `y = ε · U[:, 1]` (`:linear`).
+
+Returns `(y, evals, U, k)` with `k` the active eigen-column (2 or 1) and
+`U`/`evals` in the reordered basis used for ỹ.
+"""
+function lab_teacher_eigenframe_cubic(Q, epsilon; branch::Symbol=:cubic)
+    evals0, U0 = eigen_sym2(Matrix(Q))
+    # Order so column 1 = more He1-like, column 2 = more He3-like.
+    he3 = abs.(U0[2, :])
+    order = he3[1] <= he3[2] ? (1, 2) : (2, 1)
+    evals = [evals0[order[1]], evals0[order[2]]]
+    U = similar(U0)
+    for (j, src) in enumerate(order)
+        u1, u2 = U0[1, src], U0[2, src]
+        # Orient: positive dominant Hermite component for that column.
+        # col1 → He1; col2 → He3
+        dom = j == 1 ? u1 : u2
+        if dom < 0
+            u1, u2 = -u1, -u2
+        end
+        U[1, j] = u1
+        U[2, j] = u2
+    end
+    k = branch === :linear ? 1 : 2
+    y = [epsilon * U[1, k], epsilon * U[2, k]]
+    return y, evals, U, k
 end
 
 """
@@ -810,6 +855,58 @@ function residuals_fcn2_laplace_eigen_teacher(x, P, chi, d, kappa, delta, n1, s0
     d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
     rsig = sigS^2 * d2V - 1.0
     return [rj1, rj3, rsig, rmu, r_eig]
+end
+
+"""
+    residuals_fcn2_laplace_eigenframe_cubic(x, ...; branch=:cubic)
+
+Matrix Laplace with lab teacher chosen so the *eigenframe* teacher is
+exactly `(0, ε)` on the cubic eigenchannel of `Q`:
+
+    Q = U Λ Uᵀ,   y_lab = ε u_cubic,   ỹ = Uᵀ y_lab = (0, ε)
+
+(or `(ε, 0)` if `branch=:linear`). No free `he1`: the lab teacher is the
+linear combination `ε u_*` of Hermite modes implied by that single
+eigen-drive. State is the usual `[lJ1, lJ3, σ, μ]` (or mean-only without σ).
+
+This is the correct “only cubic eigenmode active” posing — not Hermite
+`Q13=0`, and not fixing lab `y₃=ε` with a free `he1`.
+"""
+function residuals_fcn2_laplace_eigenframe_cubic(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
+    a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT,
+    branch::Symbol=:cubic)
+    T_floor = 1.0 + 2.0 * (d - 1.0) * s0 / d
+
+    if mean_only
+        lJ1, lJ3, muW = x
+        sigS = oftype(muW + lJ1, sig_saddle)
+    else
+        lJ1, lJ3, sigS, muW = x
+    end
+    sigS = abs(sigS)
+    muW = abs(muW)
+
+    lJ1_gen = compute_lambda1(muW, sigS, T_floor)
+    lJ3_gen = compute_lambda3(muW, sigS, T_floor)
+    Q = hermite_kernel_block(muW, sigS, T_floor)
+    y, _, _, _ = lab_teacher_eigenframe_cubic(Q, epsilon; branch=branch)
+    G = laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=a0, y=y)
+    V = w -> begin
+        c1, c3 = hermite_point_features(w, T_floor)
+        quad = G[1, 1] * c1^2 + 2.0 * G[1, 2] * c1 * c3 + G[2, 2] * c3^2
+        (d / s0) * 0.5 * w^2 + 0.5 * quad
+    end
+
+    dV = ForwardDiff.derivative(V, muW)
+    rj1 = lJ1 - lJ1_gen
+    rj3 = lJ3 - lJ3_gen
+    rmu = dV
+    if mean_only
+        return [rj1, rj3, rmu]
+    end
+    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
+    rsig = sigS^2 * d2V - 1.0
+    return [rj1, rj3, rsig, rmu]
 end
 
 # ---------------------------------------------------------
