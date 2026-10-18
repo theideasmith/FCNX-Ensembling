@@ -9,9 +9,7 @@
 #
 # Equations live in the eigenframe — silent eigenchannel has zero teacher load.
 #
-# Distinct from:
-#   - --decouple (zeros Hermite Q13)
-#   - eigen_teacher_matrix_laplace.jl (fixes lab y3=ε, free he1)
+# Distinct from eigen_teacher_matrix_laplace.jl (fixes lab y3=ε, free he1).
 #
 # Usage:
 #   julia eigenframe_cubic_teacher_laplace.jl --compare

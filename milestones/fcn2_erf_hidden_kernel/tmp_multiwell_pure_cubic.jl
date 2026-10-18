@@ -53,10 +53,6 @@ function teacher_y(c::Cfg, Q=nothing)
     return [TEACHER_HE1[], c.eps]
 end
 
-"""Artificial control (`--decouple`): He1 and He3 channels independent, Q13 = G13 = 0."""
-const DECOUPLE = Ref(false)
-decouple(M) = DECOUPLE[] ? [M[1, 1] zero(M[1, 2]); zero(M[1, 2]) M[2, 2]] : M
-
 """Amplitude matrix. Eigenframe path: ỹ=(0,ε) on Λ, then G_lab = U G̃ Uᵀ."""
 function amp(c::Cfg, Q, P, κ)
     if EIGENFRAME[]
@@ -68,13 +64,13 @@ function amp(c::Cfg, Q, P, κ)
     end
     chi_p = c.chi / c.a0
     ρp = κ / (c.a0 * P)
-    Qm = decouple(Matrix(Q))
+    Qm = Matrix(Q)
     y = teacher_y(c, Qm)
     qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
     Qreg = Qm + (1e-10 * (1 + qscale)) * I(2)
     v = (Qreg + ρp * I(2)) \ y
     G = -(chi_p^2) * (v * v') + chi_p * inv(Qreg)
-    return decouple((c.a0 / (c.n1 * c.chi)) * G)
+    return (c.a0 / (c.n1 * c.chi)) * G
 end
 
 """Cavity action. Eigenframe: V = prior + ½ φᵀ G̃ φ with φ = Uᵀ c(w)."""
@@ -156,7 +152,7 @@ function mixture(c::Cfg, ws)
     logZ1 = lmax + log(sum(wt)) + 0.5 * log(2pi)
     wt ./= sum(wt)
     Q = sum(wt[k] * Matrix(FCS2_VGA.hermite_kernel_block(ws[k][1], ws[k][2], c.T)) for k in eachindex(ws))
-    decouple(Q), wt, logZ1
+    Q, wt, logZ1
 end
 
 function free_energy(c::Cfg, Q, G, logZ1, P, κ)
@@ -212,7 +208,7 @@ function solve(c::Cfg, Q0, P, κ; iters=4000, η=0.2, tol=1e-9)
     nothing
 end
 
-seed_Q(c::Cfg, μ, σ) = decouple(Matrix(FCS2_VGA.hermite_kernel_block(μ, σ, c.T)))
+seed_Q(c::Cfg, μ, σ) = Matrix(FCS2_VGA.hermite_kernel_block(μ, σ, c.T))
 
 """Fixed outer fraction π_out; innermost well = bulk/center, outermost = outer."""
 function solve_fixed_pi(c::Cfg, po, Q0, P, κ; iters=3000, η=0.3, tol=1e-10)
@@ -1193,14 +1189,10 @@ function rho_ray_actions_main()
     rhos = sort(parse_list(argval("--rhos",
         "0.3,0.26,0.22,0.2,0.18,0.17,0.16,0.15,0.145,0.14,0.135,0.13,0.125,0.12,0.11,0.1,0.09,0.08,0.07,0.06,0.05")); rev=true)
     modes = split(argval("--modes", "equilibrium"), ",")
-    DECOUPLE[] = "--decouple" in ARGS
     EIGENFRAME[] = "--eigenframe" in ARGS
     EIGENFRAME_BRANCH[] = Symbol(argval("--branch", "cubic"))
     TEACHER_HE1[] = parse(Float64, argval("--he1", "0"))
-    if EIGENFRAME[] && DECOUPLE[]
-        error("--eigenframe and --decouple are mutually exclusive")
-    end
-    tag = EIGENFRAME[] ? "eigenframe" : (DECOUPLE[] ? "decouple" : "full")
+    tag = EIGENFRAME[] ? "eigenframe" : "full"
     out_dir = argval("--outdir", joinpath("action_h0_activation_plots/PureCubicChiN", "actions_chiN_$(tag)"))
     mkpath(out_dir)
     c = Cfg(d, n1, n1, sa0, eps_task, 1.0, 1.0 + 2.0 * (d - 1.0) / d)
@@ -1212,9 +1204,8 @@ function rho_ray_actions_main()
     else
         "lab y=(he1=$(TEACHER_HE1[]),ε)"
     end
-    @printf("ρ-ray actions (solver)  d=%g N=χ=%g P=%g sa0=%g ε=%g  %s  modes=%s  %s\n",
-        d, n1, P, sa0, eps_task, y_tag, join(modes, ","),
-        DECOUPLE[] ? "DECOUPLED (Q13=G13=0)" : "full He1–He3")
+    @printf("ρ-ray actions (solver)  d=%g N=χ=%g P=%g sa0=%g ε=%g  %s  modes=%s  full He1–He3\n",
+        d, n1, P, sa0, eps_task, y_tag, join(modes, ","))
     for mode in modes
         mode in ("center", "equilibrium") || error("unknown mode $mode")
         act_path = joinpath(out_dir, "tmp_pure_cubic_rho_ray_actions_$(mode).csv")
