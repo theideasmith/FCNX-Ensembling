@@ -1,21 +1,21 @@
-Eigenframe SADDLE action with diagonalized Q
-============================================
+Laplace saddle + eigenframe (basis change only)
+===============================================
 
-Spec:
-  1. Diagonalize lab Q → Λ (eigenframe)
-  2. Teacher ỹ = (0, ε) in that frame
-  3. Amplitudes G̃ from diagonal Λ only (no lab A = U G̃ Uᵀ)
-  4. V(w) = prior + ½ Σ G̃_kk φ_k², φ = Uᵀ c(w)
-  5. Saddle point: Q comes from the global minimizer of V only
-     (hard assignment — not a Boltzmann/Laplace mixture over wells)
+Same Laplace saddle as FCS2 matrix Laplace:
+  Q = hermite_kernel_block(μ, σ)   # single ±μ Gaussian
+  V'(μ) = 0,  σ = 1/√V''(μ)
+
+Only modification — eigenframe basis:
+  Q = U Λ Uᵀ
+  ỹ = (0, ε)
+  G̃ from diagonal Λ (no lab A = U G̃ Uᵀ)
+  V(w) = prior + ½ Σ G̃_kk φ_k²,  φ = Uᵀ c(w)
 
 Params: d=10, N=χ=400, sa0=1, κ=0.5, ε=1
 
-Results (* = occupied saddle):
-  P=50    L3=0.258  saddle μ=0.54  (bulk only)
-  P=200   L3=0.626  saddle μ=3.66  (outer; bulk still a local min)
-  P=1000  L3=0.901  saddle μ=4.33
-  P=5000  L3=0.979  saddle μ=4.50
+Result: the self-consistent Laplace root stays at small μ (≲0.12).
+The cubic eigenvalue of that Q is tiny, so cubic learnability stays ~0.
+(Deep outer wells require a multiwell/specialist Q ansatz — that is a
+different theory, not "Laplace saddle + basis change only".)
 
-Plot: V_vs_w_saddle_d10.png
-Run:  julia eigenframe_diag_q_action.jl --d 10 --n1 400 --chi 400 --sa0 1 --kappa 0.5 --eps 1
+Plot: V_vs_w_laplace_d10.png

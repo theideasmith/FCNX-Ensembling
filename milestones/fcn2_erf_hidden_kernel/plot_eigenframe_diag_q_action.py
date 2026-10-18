@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot V(w) for the diagonal-Λ eigenframe action (ỹ=(0,ε))."""
+"""Plot V(w) for Laplace saddle + eigenframe (ỹ=(0,ε), diagonal Λ)."""
 from pathlib import Path
 import argparse
 import numpy as np
@@ -12,10 +12,10 @@ def main():
     ap.add_argument("--wmax", type=float, default=6.0)
     args = ap.parse_args()
     base = Path(args.dir)
-    files = sorted(base.glob("action_saddle_P*_d*.csv"),
+    files = sorted(base.glob("action_laplace_P*_d*.csv"),
                    key=lambda p: float(p.name.split("_")[2][1:]))
     if not files:
-        raise SystemExit(f"no action_saddle_P*.csv in {base}")
+        raise SystemExit(f"no action_laplace_P*.csv in {base}")
 
     fig, ax = plt.subplots(figsize=(6.4, 4.2))
     cmap = plt.cm.viridis(np.linspace(0.15, 0.9, len(files)))
@@ -26,7 +26,7 @@ def main():
         ax.plot(rows["w"][m], rows["V"][m], color=c, lw=1.6, label=fr"$P={P:g}$")
     ax.set_xlabel(r"$w_0$")
     ax.set_ylabel(r"$V(w_0)$")
-    ax.set_title(r"Eigenframe saddle action: $\tilde Q=\Lambda$, $\tilde y=(0,\varepsilon)$")
+    ax.set_title(r"Laplace saddle + eigenframe: $\tilde Q=\Lambda$, $\tilde y=(0,\varepsilon)$")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False, fontsize=8)
     fig.tight_layout()
