@@ -1,0 +1,53 @@
+w=  0.0  z=0: c1=  0.0000 c2= 0.00e+00   z=0.3: c1=  0.0000 c2=  0.0000
+w=  0.5  z=0: c1=  0.4607 c2= 1.33e-17   z=0.3: c1=  0.4607 c2= -0.0614
+w=  1.0  z=0: c1=  0.6515 c2= 1.09e-17   z=0.3: c1=  0.6515 c2= -0.0894
+w= -0.5  z=0: c1= -0.4607 c2= 1.33e-17   z=0.3: c1= -0.4607 c2= -0.0614
+w= -1.0  z=0: c1= -0.6515 c2= 1.09e-17   z=0.3: c1= -0.6515 c2= -0.0894
+even check z=0.3: c2(1)=-0.089408 c2(-1)=-0.089408
+Decoupled He1–He2 Laplace  d=150 χ=200 a0=0.03 P=1000 ε=1
+(Q12=G12=0 always)
+z      ρ        Q22      G22        V''(0)   nwell  μ_in     note
+0      0.15     8.05e-36 4.974e+07  151      1      0        center_only
+0      0.14     8.05e-36 4.974e+07  151      1      0        center_only
+0      0.13     8.05e-36 4.974e+07  151      1      0        center_only
+0      0.12     8.05e-36 4.974e+07  151      1      0        center_only
+0      0.11     8.05e-36 4.974e+07  151      1      0        center_only
+0      0.1      8.05e-36 4.974e+07  151      1      0        center_only
+0      0.09     8.05e-36 4.974e+07  151      1      0        center_only
+0      0.08     8.05e-36 4.973e+07  151      1      0        center_only
+0      0.07     8.05e-36 4.973e+07  151      1      0        center_only
+0      0.06     8.05e-36 4.973e+07  151      1      0        center_only
+0      0.05     8.05e-36 4.973e+07  151      1      0        center_only
+0      0.04     8.05e-36 4.972e+07  151      1      0        center_only
+0      0.03     8.05e-36 4.97e+07   151      1      0        center_only
+0      0.02     8.05e-36 4.966e+07  151      1      0        center_only
+0.2    0.15     6.17e-06 -670.4     151      1      0        center_only
+0.2    0.14     6.17e-06 -889.6     151      1      0        center_only
+0.2    0.13     6.17e-06 -1161      151      1      0        center_only
+0.2    0.12     6.17e-06 -1504      151      1      0        center_only
+0.2    0.11     6.17e-06 -1944      151      1      0        center_only
+0.2    0.1      6.17e-06 -2522      151      1      0        center_only
+0.2    0.09     6.17e-06 -3304      151      1      0        center_only
+0.2    0.08     6.17e-06 -4397      151      1      0        center_only
+0.2    0.07     6.17e-06 -5991      151      1      0        center_only
+0.2    0.06     6.17e-06 -8446      151      1      0        center_only
+0.2    0.05     6.17e-06 -1.252e+04 151      1      0        center_only
+0.2    0.04     0.000772 -2.005e+04 150      2      0        OUTER_PLUS_CENTER
+0.2    0.03     0.0026   -3.136e+04 150      2      0        OUTER_PLUS_CENTER
+0.2    0.02     0.00324  -6.172e+04 150      2      0        OUTER_PLUS_CENTER
+0.5    0.15     2.59e-05 -1288      151      1      0        center_only
+0.5    0.14     2.59e-05 -1507      151      1      0        center_only
+0.5    0.13     2.59e-05 -1779      151      1      0        center_only
+0.5    0.12     2.59e-05 -2121      151      1      0        center_only
+0.5    0.11     2.59e-05 -2561      151      1      0        center_only
+0.5    0.1      2.59e-05 -3139      151      1      0        center_only
+0.5    0.09     0.0018   -3953      150      2      0        OUTER_PLUS_CENTER
+0.5    0.08     0.00677  -4426      150      2      0        OUTER_PLUS_CENTER
+0.5    0.07     0.0115   -5015      150      2      0        OUTER_PLUS_CENTER
+0.5    0.06     0.0137   -6129      150      2      0        OUTER_PLUS_CENTER
+0.5    0.05     0.0155   -7778      150      2      0        OUTER_PLUS_CENTER
+0.5    0.04     0.0169   -1.029e+04 150      2      0        OUTER_PLUS_CENTER
+0.5    0.03     0.0181   -1.441e+04 150      2      0        OUTER_PLUS_CENTER
+0.5    0.02     0.019    -2.189e+04 150      2      0        OUTER_PLUS_CENTER
+wrote he12_decoupled_*.csv
+DONE
