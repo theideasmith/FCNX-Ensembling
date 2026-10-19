@@ -257,6 +257,15 @@ _STEEPWELL_EPS0P5_MODELS_DIR = (
     / "models"
 )
 
+_PURE_CUBIC_CHI_N_RHO_RAY_MODELS_DIR = (
+    Path(__file__).parent
+    / "red_robin_pure_cubic_rho_ray_d16_N200_P1000_chiN_sa00.03_eps1_he10_lr0.01_ep60M_sched2_3_5"
+    / "models"
+)
+_pure_cubic_rho_ray_pattern = re.compile(
+    r"^purecubic_rho[\d.eE+-]+_d\d+_P\d+_N\d+_chi[\d.]+_sa0[\d.]+_kappa[\d.]+_seed\d+$"
+)
+
 # Same F-invariant ray as the parent steepwell, but TASK_EPS=0.03 and N/d≈30 at d=50.
 _STEEPWELL_EPS0P03_N30D_MODELS_DIR = (
     Path(__file__).parent
@@ -363,6 +372,12 @@ EXPERIMENT_GROUPS = [
         name="SteepwellInvariantEps0p5Asnap",
         model_dirs=collect_model_dirs_with_weights(
             _STEEPWELL_EPS0P5_MODELS_DIR, _invariant_beta_alpha_pattern
+        ),
+    ),
+    ExperimentGroup(
+        name="PureCubicChiNRhoRay",
+        model_dirs=collect_model_dirs_with_asnap(
+            _PURE_CUBIC_CHI_N_RHO_RAY_MODELS_DIR, _pure_cubic_rho_ray_pattern
         ),
     ),
     ExperimentGroup(
