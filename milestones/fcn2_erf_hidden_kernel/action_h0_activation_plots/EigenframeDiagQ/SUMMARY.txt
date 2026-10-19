@@ -18,3 +18,10 @@ Params: d=10, N=χ=400, sa0=1, κ=0.5, ε=1
 Plots:
   V_vs_w_mix_full_d10.png
   learnability_vs_P_d10.png
+
+Why L̃₂≈0.98 at P=5000 with no outer wells
+------------------------------------------
+L̃₂ = λ₂/(λ₂+ρ') with ρ'=κ/(a0 P). Outer wells inflate λ₂ during the mid-P
+ramp, but once λ₂∼4.5e-3 is set, shrinking ρ' alone drives L̃₂→1. At P=5000
+the landscape reorganizes onto |μ|≈0.7 (π_out=0); λ₂ stays ∼same order so
+learnability stays high. Lab teacher is still y=Uỹ≈(0.31,0.95), not pure He3.
