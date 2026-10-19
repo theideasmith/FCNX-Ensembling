@@ -9,14 +9,17 @@ using Base: @kwdef
 export ProblemParams2, Solution2, residuals_fcn2, residuals_fcn2_advanced,
     residuals_fcn2_offdiag, residuals_fcn2_matrix, residuals_regularized,
     residuals_fcn2_saddle, residuals_fcn2_laplace, residuals_fcn2_laplace_he57,
-    solve_FCN2_Erf,
+    residuals_fcn2_laplace_eigen_teacher,
+    residuals_fcn2_laplace_eigenframe_cubic, solve_FCN2_Erf,
     exact_symmetric_gmm_entropy_1d, training_signal, training_amplitude,
     compute_lambda13, hermite_kernel_block, hermite_kernel_block_he57,
     training_amplitudes_offdiag,
     lambda1_point, hermite_point_features, hermite_point_features_he57,
     laplace_amplitude_matrix, laplace_amplitude_matrix_he57,
     he57_training_ell, matrix_learnabilities_he57,
-    SIG_SADDLE_DEFAULT
+    eigen_sym2, teacher_eigen_residual, he1_from_Q_eigenvector,
+    lab_teacher_eigenframe_cubic, hermite_eigenbasis, teacher_eigenframe,
+    laplace_amplitude_eigenframe, SIG_SADDLE_DEFAULT
 
 # ---------------------------------------------------------
 # ForwardDiff Extension for Complex erfcx
@@ -398,32 +401,30 @@ training_amplitude(chi, n1, kappa, P, delta, λ; a0=1.0) =
     a0 * training_signal(chi / a0, kappa / a0, P, delta, λ) / (n1 * chi)
 
 """
-    laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+    laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0, y=nothing)
 
 2×2 generalization of `training_amplitude` on the teacher-axis Hermite block
-`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`, `y = (1, ε)`:
+`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`:
 
     v = (Q + ρ' I)⁻¹ y
     G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' Q⁻¹ ]
 
-For `λ13 = 0` the (1,1) entry is `training_amplitude(λ11)`. The cubic
-component `v₃ = −λ13 v₁/(λ33+ρ')` survives at `ε = 0`.
+Teacher `y` defaults to `(he1, ε)`. Pass `y=` to set an arbitrary lab-frame
+teacher (e.g. `ε · u_cubic` so the eigenframe teacher is `(0, ε)`).
 """
-function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
+function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0, y=nothing)
     chi_p = chi / a0
     ρp = kappa / (a0 * P)
     Qm = Matrix(Q)
-    m = size(Qm, 1)
-    Tq = eltype(Qm)
-    y = zeros(Tq, m)
-    y[1] = one(Tq)
-    m >= 2 && (y[2] = oftype(y[1], epsilon))
-    qscale = zero(Tq)
-    for i in 1:m
-        qscale += abs(Qm[i, i])
+    if y === nothing
+        Tq = promote_type(eltype(Qm), typeof(he1), typeof(epsilon))
+        y = Tq[he1, epsilon]
+    else
+        y = collect(y)
     end
-    Qreg = Qm + (1e-10 * (one(Tq) + qscale)) * I(m)
-    v = (Qreg + ρp * I(m)) \ y
+    qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
+    Qreg = Qm + (1e-10 * (one(qscale) + qscale)) * I(2)
+    v = (Qreg + ρp * I(2)) \ y
     G = -(chi_p^2 * delta) * (v * v') + chi_p * inv(Qreg)
     return (a0 / (n1 * chi)) * G
 end
@@ -491,6 +492,137 @@ function he57_training_ell(Q, chi, n1, kappa, P, delta, epsilon; a0=1.0)
     ell = disc + bare + onsager
     return a0 * ell / (n1 * chi)
 end
+
+
+"""
+    hermite_eigenbasis(Q)
+
+Eigenbasis of the He1–He3 block `Q`, columns ordered by |He3| weight ascending
+(col 1 ≈ linear-like, col 2 ≈ cubic-like), each oriented so its dominant
+Hermite entry is positive. Returns `(evals, U)`.
+"""
+function hermite_eigenbasis(Q)
+    evals0, U0 = eigen_sym2(Matrix(Q))
+    he3 = abs.(U0[2, :])
+    order = he3[1] <= he3[2] ? (1, 2) : (2, 1)
+    evals = [evals0[order[1]], evals0[order[2]]]
+    U = similar(U0)
+    for (j, src) in enumerate(order)
+        u1, u2 = U0[1, src], U0[2, src]
+        dom = j == 1 ? u1 : u2
+        if dom < 0
+            u1, u2 = -u1, -u2
+        end
+        U[1, j] = u1
+        U[2, j] = u2
+    end
+    return evals, U
+end
+
+
+"""
+    teacher_eigenframe(epsilon; branch=:cubic)
+
+Eigenframe teacher: `ỹ = (0, ε)` (`:cubic`) or `(ε, 0)` (`:linear`).
+"""
+function teacher_eigenframe(epsilon; branch::Symbol=:cubic)
+    z = zero(epsilon)
+    return branch === :linear ? [epsilon, z] : [z, epsilon]
+end
+
+
+"""
+    lab_teacher_eigenframe_cubic(Q, epsilon; branch=:cubic)
+
+Pullback of the eigenframe teacher to the lab Hermite basis:
+`y = U ỹ` with `ỹ` from `teacher_eigenframe`. Prefer solving with
+`laplace_amplitude_eigenframe` instead of using this lab `y` directly.
+
+Returns `(y, evals, U, k)`.
+"""
+function lab_teacher_eigenframe_cubic(Q, epsilon; branch::Symbol=:cubic)
+    evals, U = hermite_eigenbasis(Q)
+    k = branch === :linear ? 1 : 2
+    ytilde = teacher_eigenframe(epsilon; branch=branch)
+    y = U * ytilde
+    return y, evals, U, k
+end
+
+
+"""
+    laplace_amplitude_eigenframe(chi, n1, kappa, P, delta, epsilon, Q;
+                                 a0=1.0, branch=:cubic)
+
+Solve the matrix-Laplace amplitude **in the eigenframe of `Q`**:
+
+    Q = U Λ Uᵀ,   ỹ = (0, ε),   ṽ = (Λ + ρ' I)⁻¹ ỹ,
+    G̃ = a0/(n1 χ) · [ −χ'² δ ṽ ṽᵀ + χ' Λ⁻¹ ],   G_lab = U G̃ Uᵀ
+
+Silent eigenchannel has zero teacher load; only Onsager `χ'/λ` remains there.
+Returns `(G_lab, G̃, U, evals, ỹ)`.
+"""
+function laplace_amplitude_eigenframe(chi, n1, kappa, P, delta, epsilon, Q;
+    a0=1.0, branch::Symbol=:cubic)
+    chi_p = chi / a0
+    ρp = kappa / (a0 * P)
+    evals, U = hermite_eigenbasis(Q)
+    ytilde = teacher_eigenframe(epsilon; branch=branch)
+    Tλ = promote_type(eltype(evals), typeof(ρp), eltype(ytilde))
+    λreg = Tλ[evals[1] + 1e-10 * (one(Tλ) + abs(evals[1]) + abs(evals[2])),
+              evals[2] + 1e-10 * (one(Tλ) + abs(evals[1]) + abs(evals[2]))]
+    vtilde = Tλ[ytilde[1] / (λreg[1] + ρp), ytilde[2] / (λreg[2] + ρp)]
+    # G̃ diagonal when δ-term is rank-one along ṽ (ỹ one-hot ⇒ ṽ one-hot)
+    Gtilde = zeros(Tλ, 2, 2)
+    Gtilde[1, 1] = -(chi_p^2 * delta) * vtilde[1]^2 + chi_p / λreg[1]
+    Gtilde[2, 2] = -(chi_p^2 * delta) * vtilde[2]^2 + chi_p / λreg[2]
+    Gtilde[1, 2] = -(chi_p^2 * delta) * vtilde[1] * vtilde[2]
+    Gtilde[2, 1] = Gtilde[1, 2]
+    scale = a0 / (n1 * chi)
+    Gtilde .*= scale
+    Glab = U * Gtilde * U'
+    return Glab, Gtilde, U, evals, ytilde
+end
+
+
+"""
+    teacher_eigen_residual(Q, he1, epsilon)
+
+Signed 2D area `det([y, Q y])` with `y = (he1, ε)`. Zero iff `y` is an
+eigenvector of the He1–He3 block `Q` (or `y = 0`).
+"""
+function teacher_eigen_residual(Q, he1, epsilon)
+    Qm = Matrix(Q)
+    y1 = oftype(Qm[1, 1], he1)
+    y2 = oftype(Qm[1, 1], epsilon)
+    Qy1 = Qm[1, 1] * y1 + Qm[1, 2] * y2
+    Qy2 = Qm[2, 1] * y1 + Qm[2, 2] * y2
+    return y1 * Qy2 - y2 * Qy1
+end
+
+
+"""
+    he1_from_Q_eigenvector(Q, epsilon; branch=:cubic)
+
+Lab-frame He1 coefficient so `y = (he1, ε)` lies on an eigenvector of `Q`.
+`branch=:cubic` picks the eigen-direction with larger `|u_He3|`;
+`:linear` picks larger `|u_He1|`. Returns `(he1, evals, U, k)`.
+"""
+function he1_from_Q_eigenvector(Q, epsilon; branch::Symbol=:cubic)
+    evals, U = eigen_sym2(Matrix(Q))
+    # Prefer the mode aligned with cubic (:cubic) or linear (:linear).
+    scores = branch === :linear ? abs.(U[1, :]) : abs.(U[2, :])
+    k = argmax(scores)
+    u1, u2 = U[1, k], U[2, k]
+    # y ∝ u with y₂ = ε ⇒ he1 = ε u₁/u₂ (fall back to linear eig if u₂≈0)
+    if abs(u2) < 1e-14 * (one(abs(u2)) + abs(u1))
+        k = 3 - k
+        u1, u2 = U[1, k], U[2, k]
+    end
+    abs(u2) < 1e-14 * (one(abs(u2)) + abs(u1)) &&
+        return (oftype(epsilon, NaN), evals, U, k)
+    return (epsilon * u1 / u2, evals, U, k)
+end
+
 
 # ---------------------------------------------------------
 # Core Residual Functions
@@ -865,6 +997,129 @@ function residuals_fcn2_laplace_he57(x, P, chi, d, kappa, delta, n1, s0, epsilon
     grads = ForwardDiff.gradient(vars -> action(vars[1], vars[2]), [sigS, muW])
     return [rj1, rj3, grads[1], grads[2]]
 end
+
+
+"""
+    residuals_fcn2_laplace_eigen_teacher(x, ...; mean_only=false)
+
+Matrix Laplace saddle with an extra equilibrium condition that the teacher
+`y = (he1, ε)` is an eigenvector of the He1–He3 kernel block `Q(μ,σ)`.
+
+State (signed `he1`; `σ,μ` taken positive):
+
+    full:      x = [lJ1, lJ3, σ, μ, he1]
+    mean_only: x = [lJ1, lJ3, μ, he1]
+
+Residuals = usual Laplace residuals plus
+
+    r_eig = det([y, Q y]) = he1 (Q y)₃ − ε (Q y)₁
+
+At a root, `Q` is diagonal in the eigenbasis that contains `y`, so the
+He1–He3 teacher loads a single channel (no off-diagonal mixing into the
+other eigenmode).
+"""
+function residuals_fcn2_laplace_eigen_teacher(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
+    a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT)
+    T_floor = 1.0 + 2.0 * (d - 1.0) * s0 / d
+
+    if mean_only
+        length(x) == 4 || throw(DimensionMismatch(
+            "eigen-teacher mean_only expects [lJ1,lJ3,μ,he1], got length $(length(x))"))
+        lJ1, lJ3, muW, he1 = x
+        sigS = oftype(muW + lJ1, sig_saddle)
+    else
+        length(x) == 5 || throw(DimensionMismatch(
+            "eigen-teacher expects [lJ1,lJ3,σ,μ,he1], got length $(length(x))"))
+        lJ1, lJ3, sigS, muW, he1 = x
+    end
+
+    # Wells are ±μ with σ>0; he1 must keep its sign (λ13 < 0 ⇒ he1/ε < 0 often).
+    sigS = abs(sigS)
+    muW = abs(muW)
+
+    lJ1_gen = compute_lambda1(muW, sigS, T_floor)
+    lJ3_gen = compute_lambda3(muW, sigS, T_floor)
+    Q = hermite_kernel_block(muW, sigS, T_floor)
+    G = laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=a0, he1=he1)
+    V = w -> begin
+        c1, c3 = hermite_point_features(w, T_floor)
+        quad = G[1, 1] * c1^2 + 2.0 * G[1, 2] * c1 * c3 + G[2, 2] * c3^2
+        (d / s0) * 0.5 * w^2 + 0.5 * quad
+    end
+
+    dV = ForwardDiff.derivative(V, muW)
+    rj1 = lJ1 - lJ1_gen
+    rj3 = lJ3 - lJ3_gen
+    rmu = dV
+    # Scale-invariant eigen residual (angle between y and Qy).
+    Qm = Matrix(Q)
+    y = [oftype(Qm[1, 1], he1), oftype(Qm[1, 1], epsilon)]
+    Qy = Qm * y
+    ny = sqrt(y[1]^2 + y[2]^2)
+    nQy = sqrt(Qy[1]^2 + Qy[2]^2)
+    denom = max(ny * nQy, eps(typeof(ny)))
+    r_eig = (y[1] * Qy[2] - y[2] * Qy[1]) / denom
+
+    if mean_only
+        return [rj1, rj3, rmu, r_eig]
+    end
+    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
+    rsig = sigS^2 * d2V - 1.0
+    return [rj1, rj3, rsig, rmu, r_eig]
+end
+
+
+"""
+    residuals_fcn2_laplace_eigenframe_cubic(x, ...; branch=:cubic)
+
+Matrix Laplace solved **in the eigenframe of `Q`**:
+
+    Q = U Λ Uᵀ,   ỹ = (0, ε),   G̃ = G̃(Λ, ỹ),
+    V(w) = (d/2s₀) w² + ½ φ(w)ᵀ G̃ φ(w),   φ = Uᵀ c(w)
+
+Silent eigenchannel has zero teacher load. Distinct from Hermite `Q13=0`
+and from free-`he1` lab posing. State is still `[lJ1, lJ3, σ, μ]` matching
+lab Hermite kernel diagonals from `(μ,σ)`.
+"""
+function residuals_fcn2_laplace_eigenframe_cubic(x, P, chi, d, kappa, delta, n1, s0, epsilon=1.0;
+    a0=1.0, mean_only::Bool=false, sig_saddle::Real=SIG_SADDLE_DEFAULT,
+    branch::Symbol=:cubic)
+    T_floor = 1.0 + 2.0 * (d - 1.0) * s0 / d
+
+    if mean_only
+        lJ1, lJ3, muW = x
+        sigS = oftype(muW + lJ1, sig_saddle)
+    else
+        lJ1, lJ3, sigS, muW = x
+    end
+    sigS = abs(sigS)
+    muW = abs(muW)
+
+    lJ1_gen = compute_lambda1(muW, sigS, T_floor)
+    lJ3_gen = compute_lambda3(muW, sigS, T_floor)
+    Q = hermite_kernel_block(muW, sigS, T_floor)
+    _, Gtilde, U, _, _ = laplace_amplitude_eigenframe(
+        chi, n1, kappa, P, delta, epsilon, Q; a0=a0, branch=branch)
+    V = w -> begin
+        c1, c3 = hermite_point_features(w, T_floor)
+        φ1 = U[1, 1] * c1 + U[2, 1] * c3
+        φ2 = U[1, 2] * c1 + U[2, 2] * c3
+        quad = Gtilde[1, 1] * φ1^2 + 2.0 * Gtilde[1, 2] * φ1 * φ2 + Gtilde[2, 2] * φ2^2
+        (d / s0) * 0.5 * w^2 + 0.5 * quad
+    end
+
+    dV = ForwardDiff.derivative(V, muW)
+    rj1 = lJ1 - lJ1_gen
+    rj3 = lJ3 - lJ3_gen
+    rmu = dV
+    if mean_only
+        return [rj1, rj3, rmu]
+    end
+    d2V = ForwardDiff.derivative(w -> ForwardDiff.derivative(V, w), muW)
+    rsig = sigS^2 * d2V - 1.0
+    return [rj1, rj3, rsig, rmu]
+end
+
 
 # ---------------------------------------------------------
 # Saddle-point (δ-well) residuals: σ → 0, stationarity in μ only
