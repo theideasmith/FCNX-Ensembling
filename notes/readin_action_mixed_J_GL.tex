@@ -467,21 +467,38 @@ Define the $d$-stripped potential
 \end{equation}
 Phase structure of $V$ coincides with that of $\tilde v$.
 
-From \eqref{eq:G}, the dimensionless strength of the discrepancy channel is set by
+\paragraph{Definition of $C$.}
+Substitute the discrepancy piece of \eqref{eq:V-explicit} into \eqref{eq:vtilde}:
 \begin{equation}
-  g
-  :=
-  \frac{\sigma_w^2}{d}
-  \cdot
-  \frac{a_0\chi}{N}
+  \tilde v(w)
   =
-  \frac{\sigma_w^2\, a_0\, \chi}{N\, d},
-  \label{eq:g}
+  w^2
+  -
+  \frac{\sigma_w^2 a_0\chi\,\delta}{N d}
+  \bigl(v_1 c_1(w)+v_3 c_3(w)\bigr)^2
+  +
+  \frac{2\sigma_w^2}{N d}\,
+  c(w)^\top J^{-1} c(w).
+  \label{eq:vtilde-explicit}
 \end{equation}
-while the ridge scale that enters $v$ is $\kappa/P$ (together with the weighting $a_0$
-of $J$ in $R=a_0 J+\tfrac{\kappa}{P}I$).
-An invariant training ray holds combinations such as $(g,\kappa/(a_0 P))$ fixed while
-dialling $\varepsilon$, or scans $P$ at fixed $(a_0,\kappa,\chi,N,d)$.
+The prefactor of $-\bigl(v\cdot c\bigr)^2$ is a pure combination of the external scales
+$(\sigma_w^2,a_0,\chi,\delta,N,d)$; it does not depend on $w$, on $J$, or on
+$\varepsilon$. We therefore define
+\begin{equation}
+  C
+  :=
+  \frac{\sigma_w^2 a_0 \chi\,\delta}{N d},
+  \label{eq:C}
+\end{equation}
+so that the discrepancy contribution to the stripped action is exactly
+$-C\,(v_1 c_1+v_3 c_3)^2$.
+This is the natural dimensionless coupling: $C$ measures how strongly the
+readout-integrated data term (scaled by $a_0\chi/N$) competes with the read-in
+prior wall $w^2$ after $d$ has been stripped.
+The ridge that enters $v$ remains $\kappa/P$, with $J$ weighted by $a_0$ in
+$R=a_0 J+\tfrac{\kappa}{P}I$.
+An invariant ray holds $(C,\kappa/(a_0 P))$ fixed while dialling $\varepsilon$,
+or scans $P$ at fixed $(\sigma_w^2,a_0,\kappa,\chi,N,d)$.
 
 \subsection{Small-$w$ expansion (inner / center transition)}
 
@@ -503,19 +520,7 @@ Then
   (v_3\alpha_3)^2 w^6
   +O(w^8).
 \end{equation}
-Using \eqref{eq:vtilde} and the discrepancy part of \eqref{eq:V-explicit},
-\begin{equation}
-  \tilde v(w)
-  =
-  w^2
-  -
-  \frac{\sigma_w^2 a_0\chi\,\delta}{N d}
-  \bigl(v_1 c_1+v_3 c_3\bigr)^2
-  +
-  \frac{2\sigma_w^2}{N d}\,
-  c^\top J^{-1} c.
-\end{equation}
-Expanding the discrepancy square and writing the Onsager contribution as an even
+Expanding \eqref{eq:vtilde-explicit} and writing the Onsager contribution as an even
 series $\sum_{n\ge 1} o_{2n} w^{2n}$ gives
 \begin{equation}
   \tilde v(w)
@@ -528,7 +533,7 @@ series $\sum_{n\ge 1} o_{2n} w^{2n}$ gives
   +O(w^8),
   \label{eq:GL}
 \end{equation}
-with the exact discrepancy coefficients
+with
 \begin{align}
   a_2
   &=
@@ -553,32 +558,38 @@ with the exact discrepancy coefficients
   o_6,
   \label{eq:a6}
 \end{align}
-and
-\begin{equation}
-  C
-  :=
-  \frac{\sigma_w^2 a_0 \chi\,\delta}{N d}.
-  \label{eq:C}
-\end{equation}
 (If Onsager is dropped, set $o_{2n}=0$.)
 
-\paragraph{Invariant order parameters.}
-Define cavity loads
+\paragraph{Order parameters.}
+The Landau coefficients depend on $v$ only through the combinations
+$C v_1^2$, $C v_1 v_3$, and $C v_3^2$.
+We therefore introduce the dimensionless order parameters
 \begin{equation}
-  \psi_1 := \sqrt{C}\, v_1,
+  \psi_1
+  :=
+  \sqrt{C}\, v_1,
   \qquad
-  \psi_3 := \sqrt{C}\, v_3,
+  \psi_3
+  :=
+  \sqrt{C}\, v_3,
   \label{eq:psi}
 \end{equation}
-so that
+i.e.\ the resolvent components $v_m$ measured in units of the coupling $C$
+defined in \eqref{eq:C}.
+Equivalently,
 $\psi_1^2=C v_1^2$,
 $\psi_3^2=C v_3^2$,
-and
-$\psi_1\psi_3=C v_1 v_3$.
-Then the discrepancy parts of \eqref{eq:a2}--\eqref{eq:a6} are
-$a_2^{\mathrm{disc}}=1-(\alpha_1\psi_1)^2$,
-$a_4^{\mathrm{disc}}=-2\alpha_1\alpha_3\,\psi_1\psi_3$,
-$a_6^{\mathrm{disc}}=-(\alpha_3\psi_3)^2$.
+$\psi_1\psi_3=C v_1 v_3$,
+and the discrepancy parts of \eqref{eq:a2}--\eqref{eq:a6} become
+\begin{equation}
+  a_2^{\mathrm{disc}}=1-(\alpha_1\psi_1)^2,
+  \qquad
+  a_4^{\mathrm{disc}}=-2\alpha_1\alpha_3\,\psi_1\psi_3,
+  \qquad
+  a_6^{\mathrm{disc}}=-(\alpha_3\psi_3)^2.
+\end{equation}
+Thus $(\psi_1,\psi_3)$ are the order parameters of the Ginzburg--Landau theory:
+they absorb all dependence on $(v_1,v_3)$ and on the external scales packaged in $C$.
 Expanding $v_1 v_3$ from \eqref{eq:v1}--\eqref{eq:v3} gives
 \begin{equation}
   v_1 v_3
@@ -601,13 +612,13 @@ Expanding $v_1 v_3$ from \eqref{eq:v1}--\eqref{eq:v3} gives
   \Bigr],
 \end{equation}
 so $\mathrm{sign}(\varepsilon)$ enters $a_4$ through the odd-in-$\varepsilon$ piece of
-$\psi_1\psi_3=C v_1 v_3$.
+the order-parameter product $\psi_1\psi_3=C v_1 v_3$.
 
 \paragraph{Landau diagnostics.}
 \begin{center}
 \begin{tabular}{@{}lll@{}}
 \toprule
-Phenomenon & Condition on $(a_2,a_4,a_6)$ & Controlling invariants \\
+Phenomenon & Condition on $(a_2,a_4,a_6)$ & Controlling order parameters \\
 \midrule
 center spinodal & $a_2=0$, $a_4>0$ & $\psi_1^2$ \\
 inner / central wells & $a_2>0$, $a_4<0$, $a_6>0$ & $\psi_1\psi_3$ (He1--$\varepsilon$ cross) \\
@@ -638,10 +649,11 @@ Criticality is a condition on $\bigl(|\psi_3|,\,J_{33},\,\kappa/P,\,a_0\bigr)$, 
 
 \subsection{Protocol to map the phase diagram}
 \begin{enumerate}
-  \item Fix an invariant ray: strip $d$; hold $g$ and $\kappa/(a_0 P)$ (or equivalent).
-  \item Solve self-consistent $J\Rightarrow v=(a_0 J+\tfrac{\kappa}{P}I)^{-1}y\Rightarrow(\psi_1,\psi_3)$.
+  \item Fix an invariant ray: strip $d$; hold $C$ and $\kappa/(a_0 P)$.
+  \item Solve self-consistent
+        $J\Rightarrow v=(a_0 J+\tfrac{\kappa}{P}I)^{-1}y\Rightarrow(\psi_1,\psi_3)=(\sqrt{C}\,v_1,\sqrt{C}\,v_3)$.
   \item Compute $(a_2,a_4,a_6)$ from the small-$w$ expansion of $\tilde v$.
-  \item Draw boundaries in $(\psi_1^2,\psi_1\psi_3)$ or $(a_2,a_4)$.
+  \item Draw boundaries in the order-parameter plane $(\psi_1^2,\psi_1\psi_3)$ or $(a_2,a_4)$.
   \item Overlay the outer boundary from a large-$w$ / finite-$\mu$ condition.
   \item Scan $\mathrm{sign}(\varepsilon)$ at fixed $|\varepsilon|$: this moves $a_4$ and
         diagnoses whether the inner transition is physical or a mixing artifact.
@@ -674,11 +686,13 @@ Criticality is a condition on $\bigl(|\psi_3|,\,J_{33},\,\kappa/P,\,a_0\bigr)$, 
   \item $\varepsilon$ enters through
         $-\bigl(\phi_1+\varepsilon\phi_\varepsilon\bigr)^2$; only
         $2\varepsilon\phi_1\phi_\varepsilon$ flips with $\mathrm{sign}(\varepsilon)$.
-  \item After stripping $d$, Landau coefficients $(a_2,a_4,a_6)$ are controlled by
-        $(\psi_1,\psi_3)$;
-        inner $\leftrightarrow a_4\leftrightarrow\psi_1\psi_3$;
+  \item Coupling
+        $C=\sigma_w^2 a_0\chi\delta/(N d)$ is the prefactor of $-(v\cdot c)^2$ in
+        $\tilde v$; order parameters $\psi_m=\sqrt{C}\,v_m$ make
+        $(a_2,a_4,a_6)$ depend on $(\psi_1,\psi_3)$ alone
+        (inner $\leftrightarrow a_4\leftrightarrow\psi_1\psi_3$;
         outer $\leftrightarrow|\psi_3|$;
-        learning $\leftrightarrow$ spectrum of $J$ versus $\kappa/P$ (with weight $a_0$).
+        learning $\leftrightarrow$ spectrum of $J$ versus $\kappa/P$).
 \end{itemize}
 
 \vspace{1em}
