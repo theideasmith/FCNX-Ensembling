@@ -1,0 +1,568 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,bm}
+\usepackage{mathtools}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\title{Read-in action in mixed Hermite space\\
+\large Two-layer erf nets with a nondiagonal He1--He3 block $J$}
+\author{Notes for discussion (notation as in Lipshitz MSc thesis)\\
+\small Companion to the FCN2 matrix-Laplace / eigenframe calculations in the repo}
+\date{\today}
+
+\newtheorem{remark}{Remark}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+These notes specialize the thesis notation to a \emph{two-layer} erf network and keep the
+teacher-aligned Hermite block of the first-layer kernel \emph{nondiagonal}.
+The thesis mean-field treatment often works in a basis where that block is diagonal;
+here we keep the off-diagonal matrix element $J_{13}$ explicit.
+We (i)~write the posterior in the mixed He1--He3 mode space,
+(ii)~integrate the readout to obtain a quadratic amplitude matrix $G$ acting on
+Stein features $c(w)$,
+(iii)~obtain the scalar read-in action $V(w)$ along the teacher axis, and
+(iv)~perform a Ginzburg--Landau expansion that identifies which invariant order
+parameters control the inner (center) versus outer well transitions, and how
+$\varepsilon$ enters.
+\end{abstract}
+
+\tableofcontents
+\vspace{1em}
+
+%% ----------------------------------------------------------------
+\section{Setup and notation (thesis conventions)}
+%% ----------------------------------------------------------------
+
+We work with a two-layer network with erf activations,
+\begin{equation}
+  f_\Theta(x)
+  =
+  \sum_{i=1}^{N}
+  a_i\,
+  \Phi\!\bigl(w_i\cdot x\bigr),
+  \qquad
+  \Phi=\mathrm{erf},
+\end{equation}
+with read-in rows $w_i\in\mathbb{R}^d$ collected in $W\in\mathbb{R}^{N\times d}$ and
+readout $a\in\mathbb{R}^{N}$.
+(The three-layer objects $B,h_k,\nu_k$ of the thesis are absent.)
+
+\paragraph{Data and target.}
+Inputs $x\sim\mathcal{N}(0,I_d)$.
+The target lives in the span of the first two odd probabilists' Hermite polynomials
+along a unit teacher direction $v_\ast$ ($\lVert v_\ast\rVert=1$):
+\begin{equation}
+  y(x)
+  =
+  \mathrm{He}_1(v_\ast\cdot x)
+  +
+  \varepsilon\,
+  \mathrm{He}_3(v_\ast\cdot x),
+  \label{eq:target}
+\end{equation}
+with $\mathrm{He}_1(z)=z$ and
+$\mathrm{He}_3(z)=\tfrac{1}{\sqrt{6}}(z^3-3z)$ as in the thesis.
+We write Hermite feature maps $\varphi_1(x)=\mathrm{He}_1(v_\ast\cdot x)$ and
+$\varphi_3(x)=\mathrm{He}_3(v_\ast\cdot x)$.
+
+\paragraph{Inner products.}
+As in the thesis, dataset / population averages use the input measure $d\mu_x$:
+\begin{equation}
+  \langle h\mid g\rangle_x
+  :=
+  \int d\mu_x\, h(x)\,g(x),
+  \qquad
+  \lVert h\rVert_x^2
+  :=
+  \langle h\mid h\rangle_x.
+\end{equation}
+Operator kernels act as
+$\bigl(Kg\bigr)(x)=\int d\mu_{x'}\,K(x,x')g(x')$.
+
+\paragraph{Bayesian action.}
+With noise scale $\kappa$ (Langevin temperature $T\equiv 2\kappa$) and readout scale $\chi$,
+the weight-space action has the thesis structure
+\begin{equation}
+  S[a,W]
+  =
+  \frac{N\chi}{2a_0}\,\lVert a\rVert^2
+  +
+  \frac{d}{2s_0}\,\lVert W\rVert^2
+  +
+  \frac{P\chi}{2\kappa}\,
+  \bigl\lVert f-y\bigr\rVert_x^2,
+  \label{eq:S-weights}
+\end{equation}
+up to inessential overall constants.
+Here $a_0$ (code: \texttt{sa0}) is the readout prior variance scale and $s_0$ is the
+read-in prior variance scale (usually $s_0=1$).
+The posterior is $p(a,W)\propto e^{-S[a,W]}$.
+
+\paragraph{First-layer kernel $J$.}
+Following the thesis definition of the first-layer activation kernel,
+\begin{equation}
+  J(x,x')
+  :=
+  \mathbb{E}_{W\sim p(W\mid D)}
+  \Bigl[
+    \tfrac{1}{N}
+    \sum_{i=1}^{N}
+    \Phi(w_i\cdot x)\,
+    \Phi(w_i\cdot x')
+  \Bigr].
+  \label{eq:J-op}
+\end{equation}
+In the large-$d$ Hermite basis aligned with $v_\ast$, it is enough for the teacher
+\eqref{eq:target} to retain the $2\times 2$ block of Rayleigh quotients
+\begin{equation}
+  J_{mn}
+  :=
+  \langle \varphi_m \mid J \mid \varphi_n\rangle_x,
+  \qquad
+  m,n\in\{1,3\},
+  \label{eq:J-block}
+\end{equation}
+i.e.\ the finite matrix
+\begin{equation}
+  J
+  =
+  \begin{pmatrix}
+    J_{11} & J_{13}\\
+    J_{13} & J_{33}
+  \end{pmatrix}.
+  \label{eq:J-matrix}
+\end{equation}
+\textbf{This is the object called $Q$ in the recent FCN2 code notes; here we keep the
+thesis letter $J$.}
+The thesis often assumes a basis in which $J_{13}=0$.
+We do \emph{not}: mixed space means $J_{13}$ is retained.
+
+\begin{remark}[Perp modes]
+Modes orthogonal to $v_\ast$ remain (to leading large-$d$ order) unadapted and are
+absorbed into an effective floor $T$ in the Stein formulae below; they do not enlarge
+the $2\times 2$ teacher block.
+\end{remark}
+
+%% ----------------------------------------------------------------
+\section{Posterior in mixed (He1--He3) mode space}
+%% ----------------------------------------------------------------
+
+Project the network output and the target onto the Hermite subspace
+$\mathrm{span}\{\varphi_1,\varphi_3\}$.
+Write mode coefficients
+\begin{equation}
+  f_m := \langle \varphi_m\mid f\rangle_x,
+  \qquad
+  y_m := \langle \varphi_m\mid y\rangle_x,
+\end{equation}
+so that, for the target \eqref{eq:target},
+\begin{equation}
+  y
+  =
+  \begin{pmatrix} y_1\\ y_3\end{pmatrix}
+  =
+  \begin{pmatrix} 1\\ \varepsilon\end{pmatrix}
+  \label{eq:y-vec}
+\end{equation}
+(up to the conventional normalization of $\mathrm{He}_3$; absolute scales can be
+absorbed into $\varepsilon$).
+
+In this two-dimensional representation the NNGP / mean-field free action of the thesis
+(Sec.~2.4.1), restricted to the teacher subspace and with a data-adapted kernel $J$,
+reads
+\begin{equation}
+  S_{\mathrm{mix}}[f]
+  =
+  \frac12\,
+  f^\top J^{-1} f
+  +
+  \frac{P\chi}{2\kappa}\,
+  \lVert f-y\rVert^2,
+  \label{eq:Smix-raw}
+\end{equation}
+where $f=(f_1,f_3)^\top$ and $\lVert f-y\rVert^2=(f-y)^\top(f-y)$ in mode space.
+(Equivalently one may keep the population $\langle f\mid J^{-1}\mid f\rangle_x$ and then
+Rayleigh-project.)
+
+Completing the square / integrating the free field yields the usual ridge resolvent.
+Define the ridge
+\begin{equation}
+  \rho'
+  :=
+  \frac{\kappa}{a_0 P}
+  \quad\text{(effective ridge after the $a_0$ rescaling of $\chi,\kappa$ as in the thesis / FCS2)},
+\end{equation}
+and the cavity field
+\begin{equation}
+  v
+  :=
+  \bigl(J + \rho' I_2\bigr)^{-1} y
+  =
+  \bigl(J + \rho' I_2\bigr)^{-1}
+  \begin{pmatrix} 1\\ \varepsilon\end{pmatrix}.
+  \label{eq:v}
+\end{equation}
+Explicitly, with $\Delta=\det(J+\rho'I)$,
+\begin{align}
+  v_1
+  &=
+  \frac{1}{\Delta}
+  \bigl[
+    (J_{33}+\rho')\,
+    -
+    J_{13}\,\varepsilon
+  \bigr],
+  \label{eq:v1}\\
+  v_3
+  &=
+  \frac{1}{\Delta}
+  \bigl[
+    -J_{13}
+    +
+    (J_{11}+\rho')\,\varepsilon
+  \bigr].
+  \label{eq:v3}
+\end{align}
+Thus \textbf{both} cavity components depend on $\varepsilon$ and on the mixing element
+$J_{13}$.
+If one set $J_{13}=0$ (thesis diagonal assumption), these collapse to
+$v_1=(J_{11}+\rho')^{-1}$ and $v_3=\varepsilon(J_{33}+\rho')^{-1}$.
+
+The mode-space posterior mean (learnabilities) is
+\begin{equation}
+  \bar f
+  =
+  J\,v
+  =
+  J\bigl(J+\rho'I\bigr)^{-1} y,
+  \qquad
+  \tilde L_m
+  :=
+  \frac{\lambda_m}{\lambda_m+\rho'}
+  \ \text{in the eigenbasis of $J$}.
+  \label{eq:learn}
+\end{equation}
+Learnability is therefore controlled by the spectrum of $J$ versus $\rho'$, not by which
+wells of the eventual read-in potential are occupied.
+
+%% ----------------------------------------------------------------
+\section{From mixed-space posterior to the amplitude matrix $G$}
+%% ----------------------------------------------------------------
+
+Integrating the Gaussian readout $a$ (thesis: integrating the last-layer weights)
+replaces the data term by a quadratic form in the first-layer features.
+In the He1--He3 block this produces a $2\times 2$ amplitude matrix of the matrix-Laplace /
+mean-field form used in the FCN2 calculations,
+\begin{equation}
+  G
+  =
+  \frac{a_0}{N\chi}
+  \Bigl[
+    -\,(\chi')^{2}\,\delta\,
+    v v^\top
+    +
+    \chi'\,
+    J^{-1}
+  \Bigr],
+  \qquad
+  \chi':=\frac{\chi}{a_0},
+  \label{eq:G}
+\end{equation}
+with $\delta=1$ for the standard square loss (discrepancy strength).
+The first term is negative semidefinite (rank one along $v$); the second (Onsager) is
+positive definite when $J\succ 0$.
+
+\begin{remark}[Code caveat]
+Some experimental solvers temporarily drop the Onsager piece.
+The structural $\varepsilon$-dependence derived below lives in $-vv^\top$ and is unchanged.
+\end{remark}
+
+Writing $G=G_{\mathrm{disc}}+G_{\mathrm{ons}}$,
+\begin{equation}
+  \tfrac12\, c^\top G_{\mathrm{disc}}\, c
+  \propto
+  -\,(v_1 c_1 + v_3 c_3)^2,
+  \qquad
+  \tfrac12\, c^\top G_{\mathrm{ons}}\, c
+  \propto
+  \chi'\,
+  c^\top J^{-1} c.
+  \label{eq:G-split}
+\end{equation}
+
+%% ----------------------------------------------------------------
+\section{Stein features and the scalar read-in action}
+%% ----------------------------------------------------------------
+
+Reduce each read-in row to the teacher coordinate
+$w:=w_i\cdot v_\ast$
+(perp components frozen into the thesis floor $T=1+2\tfrac{d-1}{d}s_0$).
+The thesis Stein evaluations of $\langle\Phi\circ w\mid\mathrm{He}_n\circ v_\ast\rangle_x$
+define scalar features $c(w)=(c_1(w),c_3(w))$ with
+\begin{align}
+  c_1(w)
+  &=
+  \sqrt{\frac{4}{\pi}}\,
+  \frac{w}{(T+2w^2)^{1/2}},
+  \label{eq:c1}\\
+  c_3(w)
+  &=
+  -\sqrt{\frac{8}{3\pi}}\,
+  \frac{w^3}{(T+2w^2)^{3/2}},
+  \label{eq:c3}
+\end{align}
+normalized so that the empirical / Gaussian-mixture estimates of the block recover
+\begin{equation}
+  J
+  \approx
+  \mathbb{E}_{w\sim p(w)}
+  \bigl[c(w)c(w)^\top\bigr]
+  \label{eq:J-from-c}
+\end{equation}
+in the Laplace / mixture ansatz for $p(w)$.
+(We do not assume a sign for $c_3$ beyond the conventional overall phase in
+\eqref{eq:c3}; all expansions below keep $c_1,c_3$ symbolic until the GL section.)
+
+The effective single-neuron read-in action is then
+\begin{equation}
+  \boxed{
+  V(w)
+  =
+  \frac{d}{2s_0}\, w^2
+  +
+  \tfrac12\,
+  c(w)^\top G\, c(w)
+  }
+  \label{eq:V}
+\end{equation}
+with $G=G[J,y,\rho',\chi']$ from \eqref{eq:G}--\eqref{eq:v}.
+Self-consistency closes by rebuilding $J$ from the wells of $V$
+(Laplace mixture: wells $\{\mu_k,\sigma_k\}$ with weights
+$\pi_k\propto m_k\sigma_k e^{-V(\mu_k)}$, then
+$J=\sum_k\pi_k\,J(\mu_k,\sigma_k)$).
+
+\paragraph{Where $\varepsilon$ enters.}
+Substitute \eqref{eq:v1}--\eqref{eq:v3} into the discrepancy square:
+\begin{equation}
+  v_1 c_1 + v_3 c_3
+  =
+  \underbrace{
+    \bigl(R^{-1}_{11} c_1 + R^{-1}_{21} c_3\bigr)
+  }_{\phi_1(c)}
+  \cdot 1
+  +
+  \underbrace{
+    \bigl(R^{-1}_{12} c_1 + R^{-1}_{22} c_3\bigr)
+  }_{\phi_\varepsilon(c)}
+  \cdot\varepsilon,
+  \label{eq:vdotc}
+\end{equation}
+where $R:=J+\rho'I$.
+Hence
+\begin{equation}
+  \tfrac12 c^\top G_{\mathrm{disc}} c
+  \propto
+  -
+  \bigl(
+    \phi_1(c)
+    +
+    \varepsilon\,
+    \phi_\varepsilon(c)
+  \bigr)^2
+  =
+  -
+  \phi_1^2
+  -
+  \varepsilon^2 \phi_\varepsilon^2
+  -
+  2\varepsilon\,
+  \phi_1\phi_\varepsilon.
+  \label{eq:eps-expand}
+\end{equation}
+Only the last term flips under $\varepsilon\to-\varepsilon$.
+The Onsager piece $\chi' c^\top J^{-1}c$ depends on $\varepsilon$ only indirectly through
+the self-consistent $J$.
+
+%% ----------------------------------------------------------------
+\section{Ginzburg--Landau treatment after stripping $d$}
+%% ----------------------------------------------------------------
+
+Define the $d$-stripped potential
+\begin{equation}
+  \tilde v(w)
+  :=
+  \frac{2s_0}{d}\, V(w)
+  =
+  w^2
+  +
+  \frac{s_0}{d}\,
+  c(w)^\top G\, c(w).
+  \label{eq:vtilde}
+\end{equation}
+Phase structure of $V$ coincides with that of $\tilde v$.
+The dimensionless coupling is
+\begin{equation}
+  g
+  :=
+  \frac{s_0}{d}
+  \times
+  \bigl(\text{scale of }G\bigr)
+  \propto
+  \frac{s_0 a_0}{d\, N\chi}\,
+  (\chi')^2.
+\end{equation}
+On an invariant training ray one holds the mean-field combinations that keep
+$(g,\rho')$ fixed while dialling $\varepsilon$ (or $P$).
+
+\subsection{Small-$w$ expansion (inner / center transition)}
+
+Near $w=0$,
+\begin{equation}
+  c_1(w)=\alpha_1 w+O(w^3),
+  \qquad
+  c_3(w)=\alpha_3 w^3+O(w^5),
+\end{equation}
+with $\alpha_1,\alpha_3$ fixed by \eqref{eq:c1}--\eqref{eq:c3} and $T$.
+Then
+\begin{equation}
+  (v_1 c_1+v_3 c_3)^2
+  =
+  (v_1\alpha_1)^2 w^2
+  +
+  2 v_1 v_3 \alpha_1\alpha_3\, w^4
+  +
+  (v_3\alpha_3)^2 w^6
+  +\cdots,
+\end{equation}
+and (discrepancy-dominated, schematic Onsager absorbed into coefficients)
+\begin{equation}
+  \tilde v(w)
+  =
+  a_2 w^2
+  +
+  a_4 w^4
+  +
+  a_6 w^6
+  +\cdots,
+  \label{eq:GL}
+\end{equation}
+with invariant Landau coefficients
+\begin{align}
+  a_2
+  &=
+  1
+  -
+  C\,(v_1\alpha_1)^2
+  +\cdots,
+  \label{eq:a2}\\
+  a_4
+  &=
+  -
+  C\,(2 v_1 v_3\alpha_1\alpha_3)
+  +\cdots,
+  \label{eq:a4}\\
+  a_6
+  &=
+  -
+  C\,(v_3\alpha_3)^2
+  +\cdots,
+  \label{eq:a6}
+\end{align}
+and $C\propto g(\chi')^2\delta>0$.
+
+\paragraph{Invariant order parameters.}
+Define cavity loads
+\begin{equation}
+  \psi_1 := \sqrt{C}\, v_1,
+  \qquad
+  \psi_3 := \sqrt{C}\, v_3.
+  \label{eq:psi}
+\end{equation}
+Then $(a_2,a_4,a_6)$ are functions of the invariants
+$(\psi_1^2,\ \psi_1\psi_3,\ \psi_3^2)$.
+From \eqref{eq:v1}--\eqref{eq:v3},
+\begin{equation}
+  \psi_1\psi_3
+  \ \propto\
+  v_1 v_3
+  =
+  (\text{terms in }1)
+  +
+  (\text{terms in }\varepsilon)
+  +
+  (\text{terms in }\varepsilon^2),
+\end{equation}
+so \textbf{$\mathrm{sign}(\varepsilon)$ moves $a_4$ at fixed $|\varepsilon|$} through the
+cross invariant $\psi_1\psi_3$.
+
+\paragraph{Landau diagnostics for the two landscape transitions.}
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Phenomenon & Condition on $(a_2,a_4,a_6)$ & Controlling invariants \\
+\midrule
+center spinodal & $a_2=0$, $a_4>0$ & $\psi_1^2$ (mostly He1 load) \\
+inner / central wells & $a_2>0$, $a_4<0$, $a_6>0$ & $\psi_1\psi_3\sim\varepsilon$ cross \\
+outer wells & not visible in small-$w$; need large-$|w|$ or finite-$\mu$ OP & $|\psi_3|$, $J_{33}$, $\rho'$ \\
+learnability & $\tilde L=\lambda(J)/(\lambda+\rho')$ & spectrum of $J$ vs $\rho'$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.5em}
+\noindent
+With $\varepsilon>0$ and lab mixing, the cross term that feeds $a_4$ leaves the
+\textbf{inner/center} reorganization live, while the cubic channel $|\psi_3|$
+(open outer minima at large $|w|$) provides a \textbf{second} landscape transition.
+Flipping $\varepsilon\to-\varepsilon$ flips only $a_4$'s sensitive piece and can kill the
+inner transition, leaving a single landscape transition tied to the outer / learning
+channel.
+
+\subsection{Outer transition}
+
+The small-$w$ Landau series cannot see outer wells.
+One either (i)~matches the large-$|w|$ asymptotics of $\tilde v(w)$, dominated by
+$-C(v_3 c_3(w))^2$, or (ii)~introduces a finite-well order parameter $m=\mu^2$ and
+expands an effective potential $U(m)$ about a trial outer scale.
+Criticality is a condition on $(|\psi_3|,\rho',J_{33})$, not on $a_2$.
+
+\subsection{Protocol to map the phase diagram}
+\begin{enumerate}
+  \item Fix an invariant ray (strip $d$; hold $g$ and $\rho'$).
+  \item Solve self-consistent $J\Rightarrow v\Rightarrow(\psi_1,\psi_3)$.
+  \item Compute $(a_2,a_4,a_6)$ from the small-$w$ expansion of $\tilde v$.
+  \item Draw boundaries in the invariant plane $(\psi_1^2,\psi_1\psi_3)$ or $(a_2,a_4)$.
+  \item Overlay the outer boundary from a large-$w$ / finite-$\mu$ condition.
+  \item Scan $\mathrm{sign}(\varepsilon)$ at fixed $|\varepsilon|$: this is a pure $a_4$ dial
+        if $R$ is held fixed, and diagnoses whether the inner transition is physical or
+        an artifact of the mixing phase.
+\end{enumerate}
+
+%% ----------------------------------------------------------------
+\section{Summary}
+%% ----------------------------------------------------------------
+
+\begin{itemize}
+  \item Mixed-space posterior: keep the full $2\times 2$ block $J$ including $J_{13}$;
+        cavity $v=(J+\rho'I)^{-1}y$ with $y=(1,\varepsilon)^\top$.
+  \item Read-in action:
+        $V(w)=\frac{d}{2s_0}w^2+\tfrac12 c(w)^\top G c(w)$ with
+        $G\propto -\chi'^2\delta\,vv^\top+\chi' J^{-1}$.
+  \item $\varepsilon$ enters $V$ through
+        $-\bigl(\phi_1+\varepsilon\phi_\varepsilon\bigr)^2$; only the cross piece
+        $2\varepsilon\phi_1\phi_\varepsilon$ flips with $\mathrm{sign}(\varepsilon)$.
+  \item After stripping $d$, Landau coefficients $(a_2,a_4,a_6)$ are controlled by
+        invariants $(\psi_1,\psi_3)$; inner transition $\leftrightarrow a_4\leftrightarrow\psi_1\psi_3$;
+        outer $\leftrightarrow|\psi_3|$; learning $\leftrightarrow$ spectrum of $J$ vs $\rho'$.
+\end{itemize}
+
+\vspace{1em}
+\noindent\textit{These notes are intended for discussion with the thesis advisor; they
+extend the diagonal-$J$ treatment of the MSc thesis to mixed He1--He3 space for the
+two-layer read-in problem.}
+
+\end{document}
