@@ -91,7 +91,9 @@ $\bigl(Kg\bigr)(x)=\int d\mu_{x'}\,K(x,x')g(x')$.
   \item $\chi$: train / loss scale in the data term;
   \item $a_0$: readout prior scale, so that the readout prior variance per neuron is
         $\displaystyle \sigma_A^2=\frac{a_0}{N\chi}$;
-  \item $\sigma_w^2$: read-in prior variance scale (usually $\sigma_w^2=1$).
+  \item $\sigma_w^2$: prior variance of each read-in weight component
+        (usually $\sigma_w^2=1$), so that the read-in prior term is
+        $\frac{d}{2\sigma_w^2}\lVert W\rVert^2$.
 \end{itemize}
 
 \paragraph{Bayesian action.}
@@ -106,7 +108,8 @@ $\bigl(Kg\bigr)(x)=\int d\mu_{x'}\,K(x,x')g(x')$.
   \bigl\lVert f-y\bigr\rVert_x^2.
   \label{eq:S-weights}
 \end{equation}
-The posterior is $p(a,W)\propto e^{-S[a,W]}$.
+The posterior is
+$p(a,W)=Z^{-1}e^{-S[a,W]}$ with $Z=\int da\,dW\,e^{-S}$.
 The Gaussian readout measure implied by the first term is
 $a\sim\mathcal{N}\!\bigl(0,\tfrac{a_0}{N\chi}I\bigr)$.
 
@@ -373,7 +376,18 @@ The effective single-neuron read-in action is
 with $G$ from \eqref{eq:G}.
 Self-consistency closes by rebuilding $J$ from the wells of $V$:
 locate wells $\{\mu_k,\sigma_k\}$ of $V$, assign Laplace mixture weights
-$\pi_k\propto m_k\sigma_k e^{-V(\mu_k)}$ ($m_k=2$ for a $\pm\mu$ pair), and set
+\begin{equation}
+  \pi_k
+  =
+  \frac{
+    m_k\,\sigma_k\, e^{-V(\mu_k)}
+  }{
+    \sum_\ell m_\ell\,\sigma_\ell\, e^{-V(\mu_\ell)}
+  }
+  \qquad
+  (m_k=2\text{ for a $\pm\mu$ pair},\ m_k=1\text{ if }\mu_k=0),
+\end{equation}
+and set
 $J=\sum_k\pi_k\,\mathbb{E}_{w\sim\mathcal{N}(\mu_k,\sigma_k^2)}[c(w)c(w)^\top]$.
 
 \paragraph{Where $\varepsilon$ enters.}
@@ -392,9 +406,12 @@ With $R=a_0 J+\tfrac{\kappa}{P}I$,
   \cdot\varepsilon.
   \label{eq:vdotc}
 \end{equation}
-Hence the discrepancy contribution is proportional to
+Substituting into the exact discrepancy piece of \eqref{eq:G-split} gives
 \begin{equation}
+  \tfrac12\, c^\top G_{\mathrm{disc}}\, c
+  =
   -
+  \frac{a_0\chi\,\delta}{2N}
   \bigl(
     \phi_1(c)
     +
@@ -403,17 +420,34 @@ Hence the discrepancy contribution is proportional to
   \bigr)^2
   =
   -
-  \phi_1^2
-  -
-  \varepsilon^2 \phi_\varepsilon^2
-  -
-  2\varepsilon\,
-  \phi_1\phi_\varepsilon.
+  \frac{a_0\chi\,\delta}{2N}
+  \Bigl(
+    \phi_1^2
+    +
+    \varepsilon^2 \phi_\varepsilon^2
+    +
+    2\varepsilon\,
+    \phi_1\phi_\varepsilon
+  \Bigr).
   \label{eq:eps-expand}
 \end{equation}
-Only the last term flips under $\varepsilon\to-\varepsilon$.
+Only the cross term $2\varepsilon\,\phi_1\phi_\varepsilon$ flips under $\varepsilon\to-\varepsilon$.
 The Onsager piece $\tfrac{1}{2N}\,c^\top J^{-1}c$ depends on $\varepsilon$ only
 indirectly through the self-consistent $J$.
+
+Assembling \eqref{eq:V} with \eqref{eq:G-split} and \eqref{eq:eps-expand},
+\begin{equation}
+  V(w)
+  =
+  \frac{d}{2\sigma_w^2}\, w^2
+  -
+  \frac{a_0\chi\,\delta}{2N}
+  \bigl(v_1 c_1(w)+v_3 c_3(w)\bigr)^2
+  +
+  \frac{1}{2N}\,
+  c(w)^\top J^{-1} c(w).
+  \label{eq:V-explicit}
+\end{equation}
 
 %% ----------------------------------------------------------------
 \section{Ginzburg--Landau treatment after stripping $d$}
@@ -467,9 +501,22 @@ Then
   2 v_1 v_3 \alpha_1\alpha_3\, w^4
   +
   (v_3\alpha_3)^2 w^6
-  +\cdots,
+  +O(w^8).
 \end{equation}
-and (discrepancy-dominated; Onsager absorbed into the coefficients)
+Using \eqref{eq:vtilde} and the discrepancy part of \eqref{eq:V-explicit},
+\begin{equation}
+  \tilde v(w)
+  =
+  w^2
+  -
+  \frac{\sigma_w^2 a_0\chi\,\delta}{N d}
+  \bigl(v_1 c_1+v_3 c_3\bigr)^2
+  +
+  \frac{2\sigma_w^2}{N d}\,
+  c^\top J^{-1} c.
+\end{equation}
+Expanding the discrepancy square and writing the Onsager contribution as an even
+series $\sum_{n\ge 1} o_{2n} w^{2n}$ gives
 \begin{equation}
   \tilde v(w)
   =
@@ -478,59 +525,83 @@ and (discrepancy-dominated; Onsager absorbed into the coefficients)
   a_4 w^4
   +
   a_6 w^6
-  +\cdots,
+  +O(w^8),
   \label{eq:GL}
 \end{equation}
-with
+with the exact discrepancy coefficients
 \begin{align}
   a_2
   &=
   1
   -
   C\,(v_1\alpha_1)^2
-  +\cdots,
+  +
+  o_2,
   \label{eq:a2}\\
   a_4
   &=
   -
-  C\,(2 v_1 v_3\alpha_1\alpha_3)
-  +\cdots,
+  2C\, v_1 v_3\alpha_1\alpha_3
+  +
+  o_4,
   \label{eq:a4}\\
   a_6
   &=
   -
   C\,(v_3\alpha_3)^2
-  +\cdots,
+  +
+  o_6,
   \label{eq:a6}
 \end{align}
-and $C\propto g\,\chi\,\delta
-= \dfrac{\sigma_w^2 a_0 \chi^{2}\delta}{N d}>0$
-(up to the precise factor from \eqref{eq:G-split}).
+and
+\begin{equation}
+  C
+  :=
+  \frac{\sigma_w^2 a_0 \chi\,\delta}{N d}.
+  \label{eq:C}
+\end{equation}
+(If Onsager is dropped, set $o_{2n}=0$.)
 
 \paragraph{Invariant order parameters.}
 Define cavity loads
 \begin{equation}
   \psi_1 := \sqrt{C}\, v_1,
   \qquad
-  \psi_3 := \sqrt{C}\, v_3.
+  \psi_3 := \sqrt{C}\, v_3,
   \label{eq:psi}
 \end{equation}
-Then $(a_2,a_4,a_6)$ are functions of
-$(\psi_1^2,\ \psi_1\psi_3,\ \psi_3^2)$.
-From \eqref{eq:v1}--\eqref{eq:v3},
+so that
+$\psi_1^2=C v_1^2$,
+$\psi_3^2=C v_3^2$,
+and
+$\psi_1\psi_3=C v_1 v_3$.
+Then the discrepancy parts of \eqref{eq:a2}--\eqref{eq:a6} are
+$a_2^{\mathrm{disc}}=1-(\alpha_1\psi_1)^2$,
+$a_4^{\mathrm{disc}}=-2\alpha_1\alpha_3\,\psi_1\psi_3$,
+$a_6^{\mathrm{disc}}=-(\alpha_3\psi_3)^2$.
+Expanding $v_1 v_3$ from \eqref{eq:v1}--\eqref{eq:v3} gives
 \begin{equation}
-  \psi_1\psi_3
-  \ \propto\
   v_1 v_3
   =
-  (\text{terms independent of }\varepsilon)
-  +
-  (\text{terms linear in }\varepsilon)
-  +
-  (\text{terms in }\varepsilon^2),
+  \frac{1}{\Delta^2}
+  \Bigl[
+    \bigl(a_0 J_{33}+\tfrac{\kappa}{P}\bigr)(-a_0 J_{13})
+    +
+    \Bigl(
+      \bigl(a_0 J_{33}+\tfrac{\kappa}{P}\bigr)
+      \bigl(a_0 J_{11}+\tfrac{\kappa}{P}\bigr)
+      -
+      (a_0 J_{13})^2
+    \Bigr)
+    \varepsilon
+    -
+    a_0 J_{13}
+    \bigl(a_0 J_{11}+\tfrac{\kappa}{P}\bigr)
+    \varepsilon^2
+  \Bigr],
 \end{equation}
-so $\mathrm{sign}(\varepsilon)$ moves $a_4$ at fixed $|\varepsilon|$ through the cross
-invariant $\psi_1\psi_3$.
+so $\mathrm{sign}(\varepsilon)$ enters $a_4$ through the odd-in-$\varepsilon$ piece of
+$\psi_1\psi_3=C v_1 v_3$.
 
 \paragraph{Landau diagnostics.}
 \begin{center}
