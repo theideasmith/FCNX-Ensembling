@@ -91,7 +91,7 @@ $\bigl(Kg\bigr)(x)=\int d\mu_{x'}\,K(x,x')g(x')$.
   \item $\chi$: train / loss scale in the data term;
   \item $a_0$: readout prior scale, so that the readout prior variance per neuron is
         $\displaystyle \sigma_A^2=\frac{a_0}{N\chi}$;
-  \item $s_0$: read-in prior variance scale (usually $s_0=1$).
+  \item $\sigma_w^2$: read-in prior variance scale (usually $\sigma_w^2=1$).
 \end{itemize}
 
 \paragraph{Bayesian action.}
@@ -100,7 +100,7 @@ $\bigl(Kg\bigr)(x)=\int d\mu_{x'}\,K(x,x')g(x')$.
   =
   \frac{N\chi}{2a_0}\,\lVert a\rVert^2
   +
-  \frac{d}{2s_0}\,\lVert W\rVert^2
+  \frac{d}{2\sigma_w^2}\,\lVert W\rVert^2
   +
   \frac{P\chi}{2\kappa}\,
   \bigl\lVert f-y\bigr\rVert_x^2.
@@ -153,7 +153,7 @@ absorbed into an effective floor
   =
   1
   +
-  2\,\frac{d-1}{d}\,s_0
+  2\,\frac{d-1}{d}\,\sigma_w^2
 \end{equation}
 in the Stein formulae below; they do not enlarge the $2\times 2$ teacher block.
 \end{remark}
@@ -363,7 +363,7 @@ The effective single-neuron read-in action is
   \boxed{
   V(w)
   =
-  \frac{d}{2s_0}\, w^2
+  \frac{d}{2\sigma_w^2}\, w^2
   +
   \tfrac12\,
   c(w)^\top G\, c(w)
@@ -423,11 +423,11 @@ Define the $d$-stripped potential
 \begin{equation}
   \tilde v(w)
   :=
-  \frac{2s_0}{d}\, V(w)
+  \frac{2\sigma_w^2}{d}\, V(w)
   =
   w^2
   +
-  \frac{s_0}{d}\,
+  \frac{\sigma_w^2}{d}\,
   c(w)^\top G\, c(w).
   \label{eq:vtilde}
 \end{equation}
@@ -437,11 +437,11 @@ From \eqref{eq:G}, the dimensionless strength of the discrepancy channel is set 
 \begin{equation}
   g
   :=
-  \frac{s_0}{d}
+  \frac{\sigma_w^2}{d}
   \cdot
   \frac{a_0\chi}{N}
   =
-  \frac{s_0\, a_0\, \chi}{N\, d},
+  \frac{\sigma_w^2\, a_0\, \chi}{N\, d},
   \label{eq:g}
 \end{equation}
 while the ridge scale that enters $v$ is $\kappa/P$ (together with the weighting $a_0$
@@ -504,7 +504,7 @@ with
   \label{eq:a6}
 \end{align}
 and $C\propto g\,\chi\,\delta
-= \dfrac{s_0 a_0 \chi^{2}\delta}{N d}>0$
+= \dfrac{\sigma_w^2 a_0 \chi^{2}\delta}{N d}>0$
 (up to the precise factor from \eqref{eq:G-split}).
 
 \paragraph{Invariant order parameters.}
@@ -599,7 +599,7 @@ Criticality is a condition on $\bigl(|\psi_3|,\,J_{33},\,\kappa/P,\,a_0\bigr)$, 
           \frac{\chi}{a_0}\, J^{-1}
         \Bigr]$.
   \item Read-in action:
-        $V(w)=\dfrac{d}{2s_0}w^2+\tfrac12 c(w)^\top G\, c(w)$.
+        $V(w)=\dfrac{d}{2\sigma_w^2}w^2+\tfrac12 c(w)^\top G\, c(w)$.
   \item $\varepsilon$ enters through
         $-\bigl(\phi_1+\varepsilon\phi_\varepsilon\bigr)^2$; only
         $2\varepsilon\phi_1\phi_\varepsilon$ flips with $\mathrm{sign}(\varepsilon)$.
