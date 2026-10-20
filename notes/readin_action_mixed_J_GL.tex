@@ -83,9 +83,19 @@ As in the thesis, dataset / population averages use the input measure $d\mu_x$:
 Operator kernels act as
 $\bigl(Kg\bigr)(x)=\int d\mu_{x'}\,K(x,x')g(x')$.
 
-\paragraph{Bayesian action.}
-With noise scale $\kappa$ (Langevin temperature $T\equiv 2\kappa$) and readout scale $\chi$,
-the weight-space action has the thesis structure
+\paragraph{Bayesian action and $a_0$ conventions (FCS2 multiwell).}
+Noise scale $\kappa$ (Langevin temperature $T\equiv 2\kappa$), train scale $\chi$,
+readout prior scale $a_0$ (code: \texttt{sa0}), read-in prior scale $s_0$ (usually $s_0=1$).
+We adopt the cleaned FCS2 / multiwell conventions
+(\texttt{laplace\_amplitude\_matrix} in \texttt{FCS2\_VGA.jl}, mirrored by
+\texttt{tmp\_multiwell\_pure\_cubic.jl}):
+\begin{itemize}
+  \item readout prior variance per neuron: $\displaystyle \sigma_A^2=\frac{a_0}{N\chi}$;
+  \item rescaled train / ridge parameters inside the free energy:
+        $\displaystyle \chi':=\frac{\chi}{a_0}$,\quad
+        $\displaystyle \rho':=\frac{\kappa}{a_0 P}$.
+\end{itemize}
+The weight-space action is then
 \begin{equation}
   S[a,W]
   =
@@ -97,9 +107,11 @@ the weight-space action has the thesis structure
   \bigl\lVert f-y\bigr\rVert_x^2,
   \label{eq:S-weights}
 \end{equation}
-up to inessential overall constants.
-Here $a_0$ (code: \texttt{sa0}) is the readout prior variance scale and $s_0$ is the
-read-in prior variance scale (usually $s_0=1$).
+so that integrating $a\sim\mathcal{N}\!\bigl(0,\tfrac{a_0}{N\chi}I\bigr)$ produces the
+amplitude formulae below.
+(The bare train scale $\chi$ and noise $\kappa$ that appear in \eqref{eq:S-weights}
+are \emph{not} replaced by $\chi'$, $\kappa/a_0$ outside the integrated readout;
+those primed quantities arise only after the $a_0$ Gaussian integral.)
 The posterior is $p(a,W)\propto e^{-S[a,W]}$.
 
 \paragraph{First-layer kernel $J$.}
@@ -189,14 +201,18 @@ where $f=(f_1,f_3)^\top$ and $\lVert f-y\rVert^2=(f-y)^\top(f-y)$ in mode space.
 Rayleigh-project.)
 
 Completing the square / integrating the free field yields the usual ridge resolvent.
-Define the ridge
+With the multiwell $a_0$ convention the effective ridge is
 \begin{equation}
   \rho'
   :=
-  \frac{\kappa}{a_0 P}
-  \quad\text{(effective ridge after the $a_0$ rescaling of $\chi,\kappa$ as in the thesis / FCS2)},
+  \frac{\kappa}{a_0 P},
+  \qquad
+  \chi'
+  :=
+  \frac{\chi}{a_0},
+  \label{eq:primes}
 \end{equation}
-and the cavity field
+and the cavity field is
 \begin{equation}
   v
   :=
@@ -206,6 +222,9 @@ and the cavity field
   \begin{pmatrix} 1\\ \varepsilon\end{pmatrix}.
   \label{eq:v}
 \end{equation}
+(No extra factor of $a_0$ multiplies $J$ inside the resolvent: it is
+$v=(J+\rho'I)^{-1}y$, as in \texttt{amp} / \texttt{laplace\_amplitude\_matrix}.)
+
 Explicitly, with $\Delta=\det(J+\rho'I)$,
 \begin{align}
   v_1
@@ -253,11 +272,11 @@ wells of the eventual read-in potential are occupied.
 \section{From mixed-space posterior to the amplitude matrix $G$}
 %% ----------------------------------------------------------------
 
-Integrating the Gaussian readout $a$ (thesis: integrating the last-layer weights)
+Integrating the Gaussian readout $a\sim\mathcal{N}(0,\tfrac{a_0}{N\chi}I)$
 replaces the data term by a quadratic form in the first-layer features.
-In the He1--He3 block this produces a $2\times 2$ amplitude matrix of the matrix-Laplace /
-mean-field form used in the FCN2 calculations,
+In the He1--He3 block the cleaned multiwell / FCS2 matrix-Laplace amplitude is
 \begin{equation}
+  \boxed{
   G
   =
   \frac{a_0}{N\chi}
@@ -267,18 +286,35 @@ mean-field form used in the FCN2 calculations,
     +
     \chi'\,
     J^{-1}
-  \Bigr],
-  \qquad
-  \chi':=\frac{\chi}{a_0},
+  \Bigr]
+  },
   \label{eq:G}
 \end{equation}
-with $\delta=1$ for the standard square loss (discrepancy strength).
-The first term is negative semidefinite (rank one along $v$); the second (Onsager) is
-positive definite when $J\succ 0$.
+with $\chi'=\chi/a_0$, $\rho'=\kappa/(a_0 P)$, $v=(J+\rho'I)^{-1}y$ as in
+\eqref{eq:primes}--\eqref{eq:v}, and $\delta=1$ for standard square loss.
+Equivalently, writing the unscaled bracket as $\tilde G$,
+\begin{equation}
+  \tilde G
+  =
+  -(\chi')^2\delta\, vv^\top
+  +
+  \chi'\, J^{-1},
+  \qquad
+  G
+  =
+  \frac{a_0}{N\chi}\,\tilde G,
+\end{equation}
+which is exactly the return value of \texttt{laplace\_amplitude\_matrix}
+(and of \texttt{amp} in \texttt{tmp\_multiwell\_pure\_cubic.jl}).
+The first term is negative semidefinite (rank one along $v$); the Onsager piece
+$\chi' J^{-1}$ is positive definite when $J\succ 0$.
 
-\begin{remark}[Code caveat]
-Some experimental solvers temporarily drop the Onsager piece.
-The structural $\varepsilon$-dependence derived below lives in $-vv^\top$ and is unchanged.
+\begin{remark}[What was cleaned up]
+Older one-off experiments sometimes (i)~omitted Onsager, (ii)~used a bare ridge
+$\kappa/P$ without $a_0$, or (iii)~multiplied $J$ by $a_0$ inside the resolvent.
+The multiwell solver standardizes on
+$\rho'=\kappa/(a_0 P)$, $v=(J+\rho'I)^{-1}y$, and the prefactor $a_0/(N\chi)$ in
+\eqref{eq:G}. We use that convention throughout.
 \end{remark}
 
 Writing $G=G_{\mathrm{disc}}+G_{\mathrm{ons}}$,
@@ -404,19 +440,29 @@ Define the $d$-stripped potential
   \label{eq:vtilde}
 \end{equation}
 Phase structure of $V$ coincides with that of $\tilde v$.
-The dimensionless coupling is
+The dimensionless coupling built from \eqref{eq:G} is
 \begin{equation}
   g
   :=
   \frac{s_0}{d}
-  \times
-  \bigl(\text{scale of }G\bigr)
-  \propto
-  \frac{s_0 a_0}{d\, N\chi}\,
-  (\chi')^2.
+  \cdot
+  \frac{a_0}{N\chi}
+  (\chi')^2
+  =
+  \frac{s_0}{d}
+  \cdot
+  \frac{\chi}{a_0\, N}
+  =
+  \frac{s_0\,\chi}{a_0\, N\, d},
+  \label{eq:g}
 \end{equation}
-On an invariant training ray one holds the mean-field combinations that keep
-$(g,\rho')$ fixed while dialling $\varepsilon$ (or $P$).
+since $(\chi')^2 a_0/(N\chi)=\chi/(a_0 N)$.
+Together with $\rho'=\kappa/(a_0 P)$, the pair $(g,\rho')$ are the natural
+invariants held fixed on a multiwell / steepwell ray while dialling
+$\varepsilon$ (or scanning $P$ at fixed $a_0$).
+(The steepwell action factor used in the multiwell scanner,
+$F_{\mathrm{inv}}=2P^2 a_0/(\pi\kappa^2 d N)$, is another packaging of the same
+$a_0$--$\kappa$--$P$ content.)
 
 \subsection{Small-$w$ expansion (inner / center transition)}
 
@@ -550,8 +596,10 @@ Criticality is a condition on $(|\psi_3|,\rho',J_{33})$, not on $a_2$.
   \item Mixed-space posterior: keep the full $2\times 2$ block $J$ including $J_{13}$;
         cavity $v=(J+\rho'I)^{-1}y$ with $y=(1,\varepsilon)^\top$.
   \item Read-in action:
-        $V(w)=\frac{d}{2s_0}w^2+\tfrac12 c(w)^\top G c(w)$ with
-        $G\propto -\chi'^2\delta\,vv^\top+\chi' J^{-1}$.
+        $V(w)=\frac{d}{2s_0}w^2+\tfrac12 c(w)^\top G c(w)$ with the multiwell
+        $a_0$ convention
+        $G=\frac{a_0}{N\chi}\bigl[-(\chi')^2\delta\,vv^\top+\chi' J^{-1}\bigr]$,
+        $\chi'=\chi/a_0$, $\rho'=\kappa/(a_0 P)$, $v=(J+\rho'I)^{-1}y$.
   \item $\varepsilon$ enters $V$ through
         $-\bigl(\phi_1+\varepsilon\phi_\varepsilon\bigr)^2$; only the cross piece
         $2\varepsilon\phi_1\phi_\varepsilon$ flips with $\mathrm{sign}(\varepsilon)$.
