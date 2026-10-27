@@ -392,29 +392,38 @@ function training_signal(chi, kappa, P, delta, λ)
 end
 
 """
-A_pot = a0 · ℓ_T(χ/a0, κ/a0) / (n1 χ) for one spectral mode.
+A_pot = a0 · ℓ / (n1 χ) for one spectral mode.
 
-Integrating out a readout with prior variance `a0/(n1 χ)` rescales both
-`χ → χ/a0` and the ridge `κ/P → κ/(a0 P)` inside ℓ_T.
+Readout prior variance `a0/(n1 χ)` multiplies the kernel inside the
+resolvent. The loss `χ` is not divided by `a0`. With `ρ = κ/P`,
+
+    v = 1 / (a0 λ + ρ)
+    ℓ = −χ² δ v² + (χ / a0) / λ
 """
-training_amplitude(chi, n1, kappa, P, delta, λ; a0=1.0) =
-    a0 * training_signal(chi / a0, kappa / a0, P, delta, λ) / (n1 * chi)
+function training_amplitude(chi, n1, kappa, P, delta, λ; a0=1.0)
+    ρ = kappa / P
+    λ_safe = max(λ, eps(typeof(λ + ρ)))
+    m = max(a0 * λ_safe + ρ, eps(typeof(ρ + λ_safe)))
+    v = inv(m)
+    ell = -(chi^2 * delta) * v^2 + (chi / a0) / λ_safe
+    return a0 * ell / (n1 * chi)
+end
 
 """
     laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0, y=nothing)
 
 2×2 generalization of `training_amplitude` on the teacher-axis Hermite block
-`Q = [λ11 λ13; λ13 λ33]`, with `χ' = χ/a0`, `ρ' = κ/(a0 P)`:
+`Q = [λ11 λ13; λ13 λ33]`. Readout prior `a0` multiplies `Q`; the ridge
+stays `ρ = κ/P` and the loss `χ` is not divided by `a0`:
 
-    v = (Q + ρ' I)⁻¹ y
-    G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' Q⁻¹ ]
+    v = (a0 Q + ρ I)⁻¹ y
+    G = a0/(n1 χ) · [ −χ² δ v vᵀ + (χ / a0) Q⁻¹ ]
 
 Teacher `y` defaults to `(he1, ε)`. Pass `y=` to set an arbitrary lab-frame
 teacher (e.g. `ε · u_cubic` so the eigenframe teacher is `(0, ε)`).
 """
 function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, he1=1.0, y=nothing)
-    chi_p = chi / a0
-    ρp = kappa / (a0 * P)
+    ρp = kappa / P
     Qm = Matrix(Q)
     if y === nothing
         Tq = promote_type(eltype(Qm), typeof(he1), typeof(epsilon))
@@ -424,8 +433,8 @@ function laplace_amplitude_matrix(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0, 
     end
     qscale = abs(Qm[1, 1]) + abs(Qm[2, 2])
     Qreg = Qm + (1e-10 * (one(qscale) + qscale)) * I(2)
-    v = (Qreg + ρp * I(2)) \ y
-    G = -(chi_p^2 * delta) * (v * v') + chi_p * inv(Qreg)
+    v = (Qreg * a0 + ρp * I(2)) \ y
+    G = -(chi^2 * delta) * (v * v') + (chi / a0) * inv(Qreg)
     return (a0 / (n1 * chi)) * G
 end
 
@@ -433,12 +442,13 @@ end
     laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=1.0)
 
 4×4 cavity kernel on (He1, He3, He5, He7). `Q` must be 4×4
-(`hermite_kernel_block_he57`). Replica field
-`τ ~ N(i χ' R⁻¹ y, χ' R⁻¹)` with `R = Q + ρ' I₄` and
+(`hermite_kernel_block_he57`). Same split as `laplace_amplitude_matrix`:
+`a0` multiplies `Q`, `ρ = κ/P`, and the loss `χ` is not divided by `a0`.
 `y = (1, ε, 0, 0)`:
 
+    R = a0 Q + ρ I₄
     v = R⁻¹ y ∈ ℝ⁴
-    G = a0/(n1 χ) · [ −χ'² δ v vᵀ + χ' R⁻¹ ] ∈ ℝ⁴ˣ⁴
+    G = a0/(n1 χ) · [ −χ² δ v vᵀ + χ R⁻¹ ] ∈ ℝ⁴ˣ⁴
 
 Same `c ∈ ℝ⁴` as in `V`. Not the 2×2 `Q⁻¹` Onsager.
 """
@@ -446,15 +456,14 @@ function laplace_amplitude_matrix_he57(chi, n1, kappa, P, delta, epsilon, Q; a0=
     Qm = Matrix(Q)
     size(Qm) == (4, 4) || throw(DimensionMismatch(
         "laplace_amplitude_matrix_he57 expects a 4×4 Q, got $(size(Qm))"))
-    chi_p = chi / a0
-    ρp = kappa / (a0 * P)
+    ρp = kappa / P
     Tq = eltype(Qm)
     y = Tq[one(Tq), oftype(one(Tq), epsilon), zero(Tq), zero(Tq)]
-    ρ_safe = max(ρp, eps(typeof(ρp + chi_p)))
-    R = Qm + ρ_safe * I(4)
+    ρ_safe = max(ρp, eps(typeof(ρp + chi)))
+    R = a0 * Qm + ρ_safe * I(4)
     Rinv = inv(R)
     v = Rinv * y
-    G = -(chi_p^2 * delta) * (v * v') + chi_p * Rinv
+    G = -(chi^2 * delta) * (v * v') + chi * Rinv
     return (a0 / (n1 * chi)) * G
 end
 
@@ -463,32 +472,31 @@ end
 
 Gaussian-averaged He57 training energy (already scaled by `a0/(n1 χ)`).
 `Q = E[c cᵀ]` is 4×4 on `(c1,c3,c5,c7)`, `y = (1, ε, 0, 0)`,
-`χ' = χ/a0`, `ρ' = κ/(a0 P)`, `R = Q + ρ' I₄`, `v = R⁻¹ y`:
+`ρ = κ/P`, `R = a0 Q + ρ I₄`, `v = R⁻¹ y`:
 
-    ell = −χ'² δ vᵀ Q v  +  χ' · 4  +  χ' ρ' tr(Q R⁻¹ Q)
+    ell = −χ² δ vᵀ Q v  +  (χ / a0) · 4  +  (χ / a0) ρ tr(Q R⁻¹ Q)
 
-The first two pieces do not depend on λ once `v` is formed (`χ'·4`
-is `χ' tr(I₄)`; the −χ'² discrepancy uses cavity `v`). The last is
-the other χ² term, `χ'² κ/(a0 P χ') η` in one mode, and depends on
-λ through `R` and `Q`. Same signs as `lT1_current` / diagnose VGA.
+The first two pieces do not depend on λ once `v` is formed (`(χ/a0)·4`
+is `(χ/a0) tr(I₄)`; the −χ² discrepancy uses cavity `v`). The last is
+the other χ² term and depends on λ through `R` and `Q`. Same signs as
+`lT1_current` / diagnose VGA. `a0` multiplies `Q` only.
 """
 function he57_training_ell(Q, chi, n1, kappa, P, delta, epsilon; a0=1.0)
     Qm = Matrix(Q)
     size(Qm) == (4, 4) || throw(DimensionMismatch(
         "he57_training_ell expects a 4×4 Q, got $(size(Qm))"))
-    chi_p = chi / a0
-    ρp = kappa / (a0 * P)
+    ρp = kappa / P
     Tq = eltype(Qm)
     y = Tq[one(Tq), oftype(one(Tq), epsilon), zero(Tq), zero(Tq)]
-    ρ_safe = max(ρp, eps(typeof(ρp + chi_p)))
-    R = Qm + ρ_safe * I(4)
+    ρ_safe = max(ρp, eps(typeof(ρp + chi)))
+    R = a0 * Qm + ρ_safe * I(4)
     v = R \ y
-    # −χ'² discrepancy (cavity v)
-    disc = -(chi_p^2 * delta) * dot(v, Qm * v)
-    # χ' · 4  (χ tr(Q⁻¹ Q) at full rank; independent of λ)
-    bare = chi_p * 4
-    # other χ²: χ' ρ' tr(Q R⁻¹ Q)  ↔  χ'² κ/(a0 P χ') η λ  in 1D
-    onsager = chi_p * ρ_safe * tr(Qm * (R \ Qm))
+    # −χ² discrepancy (cavity v). Q stays the bare block; a0 is inside R.
+    disc = -(chi^2 * delta) * dot(v, Qm * v)
+    # (χ/a0) · 4  (Onsager trace at full rank; independent of λ)
+    bare = (chi / a0) * 4
+    # (χ/a0) ρ tr(Q R⁻¹ Q)
+    onsager = (chi / a0) * ρ_safe * tr(Qm * (R \ Qm))
     ell = disc + bare + onsager
     return a0 * ell / (n1 * chi)
 end
@@ -555,27 +563,26 @@ end
 
 Solve the matrix-Laplace amplitude **in the eigenframe of `Q`**:
 
-    Q = U Λ Uᵀ,   ỹ = (0, ε),   ṽ = (Λ + ρ' I)⁻¹ ỹ,
-    G̃ = a0/(n1 χ) · [ −χ'² δ ṽ ṽᵀ + χ' Λ⁻¹ ],   G_lab = U G̃ Uᵀ
+    Q = U Λ Uᵀ,   ỹ = (0, ε),   ṽ = (a0 Λ + ρ I)⁻¹ ỹ,   ρ = κ/P,
+    G̃ = a0/(n1 χ) · [ −χ² δ ṽ ṽᵀ + (χ / a0) Λ⁻¹ ],   G_lab = U G̃ Uᵀ
 
-Silent eigenchannel has zero teacher load; only Onsager `χ'/λ` remains there.
+Silent eigenchannel has zero teacher load; only Onsager `(χ/a0)/λ` remains there.
 Returns `(G_lab, G̃, U, evals, ỹ)`.
 """
 function laplace_amplitude_eigenframe(chi, n1, kappa, P, delta, epsilon, Q;
     a0=1.0, branch::Symbol=:cubic)
-    chi_p = chi / a0
-    ρp = kappa / (a0 * P)
+    ρp = kappa / P
     evals, U = hermite_eigenbasis(Q)
     ytilde = teacher_eigenframe(epsilon; branch=branch)
-    Tλ = promote_type(eltype(evals), typeof(ρp), eltype(ytilde))
+    Tλ = promote_type(eltype(evals), typeof(ρp), eltype(ytilde), typeof(a0))
     λreg = Tλ[evals[1] + 1e-10 * (one(Tλ) + abs(evals[1]) + abs(evals[2])),
               evals[2] + 1e-10 * (one(Tλ) + abs(evals[1]) + abs(evals[2]))]
-    vtilde = Tλ[ytilde[1] / (λreg[1] + ρp), ytilde[2] / (λreg[2] + ρp)]
+    vtilde = Tλ[ytilde[1] / (a0 * λreg[1] + ρp), ytilde[2] / (a0 * λreg[2] + ρp)]
     # G̃ diagonal when δ-term is rank-one along ṽ (ỹ one-hot ⇒ ṽ one-hot)
     Gtilde = zeros(Tλ, 2, 2)
-    Gtilde[1, 1] = -(chi_p^2 * delta) * vtilde[1]^2 + chi_p / λreg[1]
-    Gtilde[2, 2] = -(chi_p^2 * delta) * vtilde[2]^2 + chi_p / λreg[2]
-    Gtilde[1, 2] = -(chi_p^2 * delta) * vtilde[1] * vtilde[2]
+    Gtilde[1, 1] = -(chi^2 * delta) * vtilde[1]^2 + (chi / a0) / λreg[1]
+    Gtilde[2, 2] = -(chi^2 * delta) * vtilde[2]^2 + (chi / a0) / λreg[2]
+    Gtilde[1, 2] = -(chi^2 * delta) * vtilde[1] * vtilde[2]
     Gtilde[2, 1] = Gtilde[1, 2]
     scale = a0 / (n1 * chi)
     Gtilde .*= scale
@@ -962,7 +969,7 @@ He1/He3: through `Q(μ,σ) = E_{N(μ,σ²)}[c cᵀ]`, not through a
 pointwise `V'(μ)`.
 
     F = (d/(2 s0))(μ²+σ²) + he57_training_ell(Q)
-    ell = −χ'² δ vᵀ Q v  +  χ' · 4  +  χ' ρ' tr(Q R⁻¹ Q)
+    ell = −χ² δ vᵀ Q v  +  (χ/a0)·4  +  (χ/a0) ρ tr(Q R⁻¹ Q)
 
 No VGA entropy. State `x = [lJ1, lJ3, σ, μ]` with dummy matches
 `lJ1, lJ3` to `Q₁₁, Q₃₃`. `mean_only=true` freezes `σ` and returns
@@ -1264,16 +1271,17 @@ end
     matrix_learnabilities(μ, σ, params) -> (L1, L3)
 
 Kernel-ridge prediction on the teacher-axis Hermite block,
-`f = Q (Q + ρ' I)⁻¹ y` with `Q = hermite_kernel_block(μ, σ, T)`,
-`ρ' = κ/(a0 P)`, `y = (1, ε)`. Returns `(f₁, f₃/ε)`. Because `λ13 ≠ 0`
+`f = (a0 Q) (a0 Q + ρ I)⁻¹ y` with `Q = hermite_kernel_block(μ, σ, T)`,
+`ρ = κ/P`, `y = (1, ε)`. Returns `(f₁, f₃/ε)`. Because `λ13 ≠ 0`
 locks He3 output to He1, `f₃/ε` can be negative when `ε` is small.
 """
 function matrix_learnabilities(μ, σ, params)
     T = 1.0 + 2.0 * (params.d - 1.0) * params.s0 / params.d
     Q = Matrix(hermite_kernel_block(μ, σ, T))
-    ρp = params.κ / (params.a0 * params.P)
+    ρp = params.κ / params.P
     y = [1.0, Float64(params.ϵ)]
-    f = Q * ((Q + ρp * I(2)) \ y)
+    Qs = params.a0 * Q
+    f = Qs * ((Qs + ρp * I(2)) \ y)
     L3 = params.ϵ == 0 ? f[2] : f[2] / params.ϵ
     return f[1], L3
 end
@@ -1282,15 +1290,16 @@ end
     matrix_learnabilities_he57(μ, σ, params) -> (L1, L3, f5, f7)
 
 Kernel ridge on the 4×4 He1–He3–He5–He7 block,
-`f = Q (Q + ρ' I)⁻¹ y` with `y = (1, ε, 0, 0)`. `L3 = f₃/ε`;
+`f = (a0 Q) (a0 Q + ρ I)⁻¹ y` with `ρ = κ/P` and `y = (1, ε, 0, 0)`. `L3 = f₃/ε`;
 `f5, f7` are raw leakages (teacher has no He5/He7).
 """
 function matrix_learnabilities_he57(μ, σ, params)
     T = 1.0 + 2.0 * (params.d - 1.0) * params.s0 / params.d
     Q = Matrix(hermite_kernel_block_he57(μ, σ, T))
-    ρp = params.κ / (params.a0 * params.P)
+    ρp = params.κ / params.P
     y = [1.0, Float64(params.ϵ), 0.0, 0.0]
-    f = Q * ((Q + ρp * I(4)) \ y)
+    Qs = params.a0 * Q
+    f = Qs * ((Qs + ρp * I(4)) \ y)
     L3 = params.ϵ == 0 ? f[2] : f[2] / params.ϵ
     return f[1], L3, f[3], f[4]
 end
@@ -1310,7 +1319,7 @@ function populate_solution_fcn2(sol_vec, params; sig_saddle::Real=SIG_SADDLE_DEF
 
     ts = lWT + (params.d - 1.0) / params.d
     gy = (4/π) / (1 + 2.0 * ts)
-    kt = params.κ / params.P
+    kt = params.κ / (params.a0 * params.P)
     L5, L7 = NaN, NaN
     if he57
         L1, L3, L5, L7 = matrix_learnabilities_he57(abs(muW), abs(sigS), params)

@@ -1,0 +1,321 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{default}
+\usefonttheme{serif}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{frametitle}{%
+  \vspace{0.35em}%
+  {\large\bfseries\insertframetitle}\par
+  \vspace{0.25em}%
+  \hrule
+  \vspace{0.6em}%
+}
+
+\usepackage{amsmath,amssymb,mathtools}
+
+\title{Adaptation Effects in Two and Three Layer Networks}
+\author{Akiva Lipshitz}
+\date{}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{Network}
+  \begin{equation*}
+    f(x)
+    =
+    \sum_{i=1}^{N}
+    a_i\,
+    \operatorname{erf}(w_i\cdot x),
+    \qquad
+    x\in\mathbb{R}^{d}
+  \end{equation*}
+  \begin{equation*}
+    D=\{(x_\mu,y_\mu)\}_{\mu=1}^{P}
+  \end{equation*}
+\end{frame}
+
+\begin{frame}{Targets and feature integrals}
+  \begin{align*}
+    d\mu_x
+    &=
+    p(x)\,dx,
+    \\[1.2ex]
+    y(x)
+    &=
+    \mathrm{He}_1(w_*\cdot x)
+    +
+    \varepsilon\,
+    \mathrm{He}_3(w_*\cdot x),
+    \qquad
+    \varphi_m(x)
+    =
+    \mathrm{He}_m(w_*\cdot x),
+    \\[1.2ex]
+    y_m
+    &=
+    \langle y,\varphi_m\rangle_x
+    =
+    \int d\mu_x\,
+    y(x)\,
+    \varphi_m(x),
+    \\[1.2ex]
+    c_m(w)
+    &=
+    \langle\operatorname{erf}(w\cdot x),\varphi_m\rangle_x
+    =
+    \int d\mu_x\,
+    \operatorname{erf}(w\cdot x)\,
+    \varphi_m(x).
+  \end{align*}
+\end{frame}
+
+\begin{frame}{Bayesian action}
+  \begin{equation*}
+    p(a,W\mid D)
+    \propto
+    e^{-S[a,W]}
+  \end{equation*}
+  \begin{equation*}
+    S[a,W]
+    =
+    \frac{1}{2\sigma_A^{2}}\lVert a\rVert^{2}
+    +
+    \frac{d}{2\sigma_w^{2}}\lVert W\rVert^{2}
+    +
+    \frac{P\chi}{2\kappa}
+    \int d\mu_x\,
+    \bigl(f(x)-y(x)\bigr)^{2}
+  \end{equation*}
+  \vspace{0.6em}
+  \begin{center}
+  \small
+  \begin{tabular}{ll}
+    \(\kappa\) & ridge \\
+    \(P\) & dataset size \\
+    \(N\) & width \\
+    \(d\) & input dimension \\
+    \(\sigma_w^{2},\ \sigma_A^{2}\) & prior variances \\
+    \(\chi\) & loss scale
+  \end{tabular}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Phenomenology of Neural Adaptation}
+  \small
+  \begin{equation*}
+    S[w\cdot w_*]
+    =
+    \frac{d}{2\sigma_w^{2}}
+    \left[
+      (w\cdot w_*)^{2}
+      -
+      \frac{\sigma_w^{2}\sigma_A^{2}\chi}{d\,N}
+      \Bigl(
+        t(\tilde{L})\,(w\cdot w_*)
+        +
+        g(\tilde{L})\,(w\cdot w_*)^{3}
+        +
+        u(\tilde{L})\,(w\cdot w_*)^{5}
+      \Bigr)^{2}
+    \right]
+  \end{equation*}
+  \vspace{0.8em}
+  with discrepancy
+  \begin{equation*}
+    \tilde{L}_m
+    =
+    \frac{P}{\kappa}\,
+    \bigl\langle y-f,\ \varphi_m\bigr\rangle_{x}
+    =
+    \frac{P}{\kappa}
+    \int d\mu_x\,
+    \bigl(y(x)-f(x)\bigr)\,
+    \varphi_m(x).
+  \end{equation*}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \includegraphics[width=0.96\textwidth]{%
+    ../milestones/fcn2_erf_hidden_kernel/action_h0_activation_plots/RubinRegime/V_action_kappa0p07_chi.png}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \includegraphics[width=0.9\textwidth]{%
+    ../milestones/fcn2_erf_hidden_kernel/action_h0_activation_plots/RubinRegime/learnability_vs_chi_kappa0p07_P3000.png}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \includegraphics[width=0.96\textwidth]{%
+    ../milestones/fcn2_erf_hidden_kernel/action_h0_activation_plots/RubinRegime/V_action_chi1_kappa_ray.png}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \includegraphics[width=0.9\textwidth]{%
+    ../milestones/fcn2_erf_hidden_kernel/action_h0_activation_plots/RubinRegime/learnability_vs_alpha_kappa0p07_chi1.png}
+\end{frame}
+
+% \begin{frame}{Phenomenology of Adaptation in DNNs}
+% \begin{align}
+% V(w)
+% &=
+% \frac{d}{2\sigma_w^2}
+% \Bigg[
+% w^2
+% -
+% \frac{\sigma_w^2\sigma_A^2\chi}{d\,N}
+% \Big(
+% \bigl(t(R)+\varepsilon\,t_{\varepsilon}(R)\bigr)\,w
+% \\
+% &\qquad
+% +
+% \bigl(g(R)+\varepsilon\,g_{\varepsilon}(R)\bigr)\,w^3
+% +
+% \bigl(u(R)+\varepsilon\,u_{\varepsilon}(R)\bigr)\,w^5
+% \Big)^2
+% \Bigg].
+% \end{align}
+% \begin{align}
+% R
+% &=
+% \sigma_A^2\,
+% \mathbb{E}\!\left[c\,c^\top\right]
+% +
+% \frac{\kappa}{P}I,
+% \\
+% \mathbb{E}\!\left[c\,c^\top\right]
+% &=
+% \frac{1}{Z}
+% \int
+% \begin{pmatrix}
+% c_1(w)^2 & c_1(w)c_3(w)\\
+% c_1(w)c_3(w) & c_3(w)^2
+% \end{pmatrix}
+% e^{-V(w)}\,dw,
+% \\
+% V(w)
+% &=
+% \frac{d}{2\sigma_w^2}w^2
+% -
+% \frac{\sigma_A^2\chi}{2N}
+% \bigl(y^\top R^{-1} c(w)\bigr)^2,
+% \quad
+% y=\begin{pmatrix}1\\ \varepsilon\end{pmatrix},
+% \quad
+% Z=\int e^{-V}\,dw.
+% \end{align}
+% \end{frame}
+
+\begin{frame}{Kernels of the preactivations}
+  Each preactivation layer carries a kernel \(K\).
+  For the erf read-in,
+  \begin{equation*}
+    K
+    =
+    \sigma_A^{2}\, J,
+    \qquad
+    J(x,x')
+    =
+    \mathbb{E}\bigl[
+      \operatorname{erf}(w\cdot x)\,
+      \operatorname{erf}(w\cdot x')
+    \bigr].
+  \end{equation*}
+  \begin{equation*}
+    R
+    =
+    K+\frac{\kappa}{P}\,I,
+    \qquad
+    L
+    =
+    K\,R^{-1},
+    \qquad
+    f
+    =
+    L\,y,
+    \qquad
+    y-f
+    =
+    \frac{\kappa}{P}\,R^{-1}y.
+  \end{equation*}
+  Hence \(\tilde{L}=R^{-1}y\) in the \(\varphi_m\) basis.
+  A three-layer net has the same object on the next preactivation.
+\end{frame}
+
+\begin{frame}{Kernel Ridge Regression in Readout Layer}
+  The readout learns a feature map:
+  \(\phi_i(x)=\operatorname{erf}(w_i\cdot x)\),
+  with
+  \begin{align*}
+    \sum_{i}
+    a_i\,
+    \operatorname{erf}(w_i\cdot x)
+    &=
+    \bigl(KR^{-1} y\bigr)(x),
+    \\
+    &=
+    \bigl(L\,y\bigr)(x).
+  \end{align*}
+\end{frame}
+
+\begin{frame}{Exact fit in the eigenbasis}
+  In the eigenbasis of \(K\), with \(K\varphi_m=\lambda_m\,\varphi_m\),
+  \begin{equation*}
+    \bigl(KR^{-1}y\bigr)(x)
+    =
+    \sum_m
+    \frac{\lambda_m}{\lambda_m+\kappa/P}
+    \,
+    y_m\,
+    \varphi_m(x).
+  \end{equation*}
+  The same basis expands the activation,
+  \begin{equation*}
+    \operatorname{erf}(w\cdot x)
+    =
+    \sum_m
+    c_m(w)\,
+    \varphi_m(x).
+  \end{equation*}
+  The readout therefore meets \(KR^{-1}y\) mode by mode,
+  \begin{equation*}
+    \sum_i a_i\, c_m(w_i)
+    =
+    \frac{\lambda_m}{\lambda_m+\kappa/P}
+    \,
+    y_m.
+  \end{equation*}
+\end{frame}
+
+\begin{frame}{Feature learning: GFL and grokking}
+\end{frame}
+
+\begin{frame}{What the network expresses}
+\end{frame}
+
+\begin{frame}{Sample complexity}
+\end{frame}
+
+\begin{frame}{Barrier height and time}
+\end{frame}
+
+\begin{frame}{Linear adaptation}
+\end{frame}
+
+\begin{frame}{Grokking}
+\end{frame}
+
+\begin{frame}{Inner well at larger $\chi$}
+\end{frame}
+
+\begin{frame}{Cubic learnability: NNGP and rich}
+\end{frame}
+
+\end{document}
