@@ -1,0 +1,7 @@
+runs/*/samples/
+runs/*/checkpoint.pt
+runs/logs/
+__pycache__/
+runs_superseded/
+runs/inits/
+plots/cache/
