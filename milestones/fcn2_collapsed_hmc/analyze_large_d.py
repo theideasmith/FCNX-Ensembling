@@ -39,7 +39,7 @@ def _dfact(n):
 
 
 def a_k(s, k):
-    return (2 / sqrt(np.pi)) * (-1) ** ((k - 1) // 2) * _dfact(k - 1) / sqrt(factorial(k)) * s ** k / (1 + 2 * s * s) ** (k / 2)
+    return (2 / sqrt(np.pi)) * (-2) ** ((k - 1) // 2) * _dfact(k - 2) / sqrt(factorial(k)) * s ** k / (1 + 2 * s * s) ** (k / 2)
 
 
 def groups():
@@ -53,7 +53,7 @@ def groups():
 
 
 @torch.no_grad()
-def hmc_exact(g, a, n_snap=30, device="cuda:0"):
+def hmc_exact(g, a, n_snap=30, device="cuda:0", ks=(1, 3, 5, 7)):
     dev = torch.device(device)
     X, Y, _, _ = make_data(a["d"], a["P"], a["eps"], a["he1"], a["seed"], dev)
     X, Y = X.double(), Y.double()
@@ -66,7 +66,7 @@ def hmc_exact(g, a, n_snap=30, device="cuda:0"):
         A = torch.linalg.solve(M, Phi.T @ Y / hT)
         s = W.norm(dim=1)
         u0 = W[:, 0] / s
-        fk.append([(A * a_k(s, k) * u0 ** k).sum().item() for k in (1, 3, 5, 7)])
+        fk.append([(A * a_k(s, k) * u0 ** k).sum().item() for k in ks])
         del Phi, M
     return np.mean(fk, 0), len(fk)
 

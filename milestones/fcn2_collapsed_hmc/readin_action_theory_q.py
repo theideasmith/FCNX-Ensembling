@@ -26,7 +26,7 @@ def he_coeff(W, Q, k):
     """Normalized He_k(x0) coefficient of erf(w0 x0 + w_perp·x_perp), |w_perp|² = Q (odd k)."""
     from math import factorial, sqrt
     T = 1 + 2 * Q
-    return ((2 / np.sqrt(np.pi)) * (-1) ** ((k - 1) // 2) * _dfact(k - 1) / sqrt(factorial(k))
+    return ((2 / np.sqrt(np.pi)) * (-2) ** ((k - 1) // 2) * _dfact(k - 2) / sqrt(factorial(k))
             * W ** k / (T + 2 * W * W) ** (k / 2))
 
 

@@ -6,7 +6,7 @@ Averaging a neuron's activation over the direction of its perp weight (|w_perp|�
 which still depends on x_perp through rho. Its coefficients on the orthonormal modes He_k(x0) psi_m(rho)
 (psi_m orthonormal polynomials for the law of rho) are
     c_{k,m}(w0, q) = E_rho[ e_k(w0 / sqrt(1 + 2 q rho)) psi_m(rho) ],
-    e_k(a) = normalized He_k coefficient of erf(a x0) = (2/sqrt(pi)) (-1)^((k-1)/2) (k-1)!!/sqrt(k!) a^k/(1+2a²)^{k/2}.
+    e_k(a) = normalized He_k coefficient of erf(a x0) = (2/sqrt(pi)) (-2)^((k-1)/2) (k-2)!!/sqrt(k!) a^k/(1+2a²)^{k/2}.
 m = 0 reproduces the He_k(x0) features of readin_action_theory_q up to O(1/d); m >= 1 are the radial
 modes (e.g. x0 (rho - 1)): absent from the target, present in every neuron, so they enter J and the
 residual like He5/He7. Single-neuron action, loop and convexity are as in readin_action_theory_q with
@@ -26,7 +26,7 @@ def _dfact(n):
 
 
 def e_k(a, k):
-    return (2 / np.sqrt(np.pi)) * (-1) ** ((k - 1) // 2) * _dfact(k - 1) / sqrt(factorial(k)) * a ** k / (1 + 2 * a * a) ** (k / 2)
+    return (2 / np.sqrt(np.pi)) * (-2) ** ((k - 1) // 2) * _dfact(k - 2) / sqrt(factorial(k)) * a ** k / (1 + 2 * a * a) ** (k / 2)
 
 
 def rho_quadrature(d, n=64, m_max=2):

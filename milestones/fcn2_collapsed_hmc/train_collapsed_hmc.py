@@ -30,7 +30,7 @@ from collapsed_hmc_fcn2 import CollapsedFCN2, data_fingerprint, hmc, make_data, 
 from common import (add_bookkeeping_args, add_gibbs_args, add_init_args, add_physics_args, gibbs_sweeps,
                     initial_W, langevin_comparison, print_table)
 from fast_moves import BlockGibbs, GraphedNeuronGibbs
-from neuron_gibbs import NeuronGibbs
+from neuron_gibbs import JointProposal, NeuronGibbs
 
 
 def parse_args():
@@ -77,12 +77,18 @@ def main():
     model = CollapsedFCN2(X, Y, args.N, args.T, args.s0, args.sa0, args.chi)
     gibbs = None
     if args.gibbs_every and not args.gibbs_block:
+        if getattr(args, "gibbs_graph", False) and args.gibbs_mode == "w0q":
+            raise SystemExit("--gibbs-mode w0q is implemented in NeuronGibbs only; drop --gibbs-graph")
         if getattr(args, "gibbs_graph", False):
             gibbs = GraphedNeuronGibbs(X, Y, args.N, args.T, args.s0, args.sa0, args.chi, omega=args.gibbs_omega,
                                        B=args.gibbs_cands, inv_dtype=dtype)
         else:
             gibbs = NeuronGibbs(X, Y, args.N, args.T, args.s0, args.sa0, args.chi, omega=args.gibbs_omega,
                                 s_perp=args.gibbs_sperp)
+            if args.gibbs_mode == "w0q":
+                gibbs.jprop = JointProposal.from_theory(args.d, args.N, args.P, args.T / 2, args.s0, args.sa0,
+                                                        args.eps, args.chi, omega=args.gibbs_omega)
+                gibbs.rng = np.random.default_rng(args.rng_seed + 1000)
     block = (BlockGibbs(X, Y, args.N, args.T, args.s0, args.sa0, args.chi, block=args.gibbs_block)
              if args.gibbs_every and args.gibbs_block else None)
 

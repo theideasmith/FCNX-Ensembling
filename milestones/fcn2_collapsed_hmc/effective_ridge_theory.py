@@ -5,7 +5,7 @@ kernel modes the He1/He3(x0) block leaves out.
 
 Kernel. K(x,x') = σ_A² E_w[erf(w·x) erf(w·x')], w = (w0, w_perp), w0 ~ theory p(w0), |w_perp|² = q
 frozen at the prior s0 (d-1)/d. With s = |w| and unit direction ŵ, erf(s ŵ·x) = Σ_k a_k(s) He_k(ŵ·x)/√k!,
-    a_k(s) = (2/√π) (-1)^{(k-1)/2} (k-1)!! / √k! · s^k / (1+2s²)^{k/2}       (odd k)
+    a_k(s) = (2/√π) (-2)^{(k-1)/2} (k-2)!! / √k! · s^k / (1+2s²)^{k/2}       (odd k)
 Degree-k modes split by the number j of x0 factors (m = k - j orthogonal factors). In the large-d
 diagonal approximation the family (k, j) holds n_m = C(d-2+m, m) modes, each with eigenvalue
     η_{k,j} = σ_A² E[a_k² C(k, j) ŵ0^{2j} ŵ⊥^{2m}] / n_m,
@@ -37,7 +37,7 @@ def dfact(n):
 
 
 def a_k(s, k):
-    return (2 / sqrt(np.pi)) * (-1) ** ((k - 1) // 2) * dfact(k - 1) / sqrt(factorial(k)) * s ** k / (1 + 2 * s * s) ** (k / 2)
+    return (2 / sqrt(np.pi)) * (-2) ** ((k - 1) // 2) * dfact(k - 2) / sqrt(factorial(k)) * s ** k / (1 + 2 * s * s) ** (k / 2)
 
 
 def mode_families(p, w, q, d, sa0):

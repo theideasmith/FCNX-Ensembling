@@ -8,7 +8,7 @@ from readin_action_theory import reduced_params
 from readin_action_theory_q import analyse_q, KernelQ
 dev = torch.device("cuda:0")
 def dfact(n): return 1 if n <= 0 else n * dfact(n - 2)
-def a_k(s, k): return (2 / sqrt(np.pi)) * (-1) ** ((k - 1) // 2) * dfact(k - 1) / sqrt(factorial(k)) * s ** k / (1 + 2 * s * s) ** (k / 2)
+def a_k(s, k): return (2 / sqrt(np.pi)) * (-2) ** ((k - 1) // 2) * dfact(k - 2) / sqrt(factorial(k)) * s ** k / (1 + 2 * s * s) ** (k / 2)
 groups = ["ray_k0p015_both_b1", "ray_k0p015_both_b1p41421", "ray_k0p015_both_b2", "ray_k0p015_both_b2p82843", "ray_k0p015_both_b4"]
 out = []
 for g in groups:

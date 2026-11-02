@@ -3,6 +3,7 @@
 #   N = 1500 fixed, P = 3000 (d/150)², κ = 0.015 (d/150), sa0 = (8/1500)(150/d), s0 = 0.5, ε = -0.3√6.
 # P ∝ d² makes the dominant training-set leakage (∝ d/P) fall as 1/d. d=150 is the existing pscan_d150_P3000 group.
 # Two chains per d (prior, theory-sampled start), d values one after another on one GPU.
+# NOTE: the w0-only Gibbs move used here does not mix the aligned fraction at d >= 300; use launch_large_d_w0q.sh.
 #   DS="300 600 1200" ./launch_large_d.sh        analysis: python analyze_large_d.py
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -10,7 +11,7 @@ PY=${PY:-/home/akiva/miniconda3/envs/ml_env/bin/python}
 DS=${DS:-"300 600 1200"}
 ITERS=${ITERS:-600}
 for D in $DS; do
-  read -r P T SA0 <<< "$($PY -c "d=$D; print(3000*(d//150)**2, repr(2*0.015*d/150), repr((8/1500)*150/d))")"
+  read -r P T SA0 <<< "$($PY -c "d=$D; print(round(3000*(d/150)**2), repr(2*0.015*d/150), repr((8/1500)*150/d))")"
   GROUP=larged_d$D
   COMMON="--d $D --P $P --N 1500 --T $T --s0 0.5 --sa0 $SA0 --eps -0.7348469228349533 --seed 0 \
     --dtype float32 --leapfrog 24 --step0 0.08 --target-acc 0.8 --iters $ITERS --burn 200 --obs-every 5 --save-every 4 \

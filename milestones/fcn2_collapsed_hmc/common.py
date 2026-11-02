@@ -39,7 +39,8 @@ def add_gibbs_args(ap):
     g = ap.add_argument_group("per-neuron Gibbs jumps (neuron_gibbs.py)")
     g.add_argument("--gibbs-every", type=int, default=0, help="sweep before every k-th iteration (0: off)")
     g.add_argument("--gibbs-cands", type=int, default=64, help="proposal candidates per neuron")
-    g.add_argument("--gibbs-mode", choices=["w0", "full", "both"], default="w0")
+    g.add_argument("--gibbs-mode", choices=["w0", "full", "both", "w0q"], default="w0",
+                   help="w0q: joint move of w0 and the perp norm with a theory-informed proposal (needs no --gibbs-graph)")
     g.add_argument("--gibbs-omega", type=float, default=0.6, help="std of the w0 proposal N(0, ω²)")
     g.add_argument("--gibbs-sperp", type=float, default=None, help="std of w_perp proposal in 'full' mode (default σ_W)")
     g.add_argument("--gibbs-block", type=int, default=0,
