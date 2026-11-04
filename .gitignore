@@ -26,3 +26,9 @@ FCN3Exps/**.log
 *.npz
 __pycache__/
 
+
+# LaTeX build files
+**.aux
+**.nav
+**.snm
+**.toc
