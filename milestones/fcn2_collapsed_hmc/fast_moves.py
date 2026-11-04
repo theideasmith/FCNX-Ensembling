@@ -274,6 +274,10 @@ class GraphedNeuronGibbs:
         self.zf.copy_(self.Minv @ self.b)
 
     def _capture(self):
+        with torch.cuda.device(self.X.device):        # capture stream on the tensors' GPU, not the default one
+            self._capture_on_device()
+
+    def _capture_on_device(self):
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
         saved = [t.clone() for t in (self.W, self.Phi, self.Minv, self.b, self.zf)]
