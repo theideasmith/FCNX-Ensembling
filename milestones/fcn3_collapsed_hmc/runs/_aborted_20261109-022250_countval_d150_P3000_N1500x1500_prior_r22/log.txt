@@ -1,0 +1,5 @@
+[20261109-022250_countval_d150_P3000_N1500x1500_prior_r22] d=150 P=3000 N1=1500 N2=1500 chi=1.0 kappa=0.015 eps=-0.7348469228349535 S=(1, 3) float32 chunk=44739 init=prior start=0
+  it     0 U=1.252445e+06 acc=0.52 step=3.359e-02 L=22 hmc 0.39s sweep 2.64s mid_changed=0.718 mid_crossed=0.041 in_changed=0.697 in_crossed=0.000 in_direct=1.000 n_outer=29.000 count_logA=nan | d<w0^2>=7.362 in_out=0.019 mid_out=0.055 H11=3.5178e-02 H33=3.604e-03 L3=0.549 q/q0=0.984
+  it     5 U=1.251941e+06 acc=0.75 step=3.894e-02 L=13 hmc 0.13s sweep 0.00s  | d<w0^2>=7.389 in_out=0.020 mid_out=0.057 H11=3.6571e-02 H33=3.651e-03 L3=0.551 q/q0=0.985
+  it    10 U=1.253873e+06 acc=1.00 step=4.577e-02 L=13 hmc 0.14s sweep 1.03s mid_changed=0.725 mid_crossed=0.024 in_changed=0.689 in_crossed=0.000 in_direct=1.000 | d<w0^2>=7.306 in_out=0.020 mid_out=0.057 H11=3.5108e-02 H33=3.578e-03 L3=0.547 q/q0=0.990
+  it    15 U=1.251120e+06 acc=1.00 step=4.043e-02 L=22 hmc 0.19s sweep 0.00s n_outer=30.000 count_logA=-21.036 | d<w0^2>=7.346 in_out=0.020 mid_out=0.055 H11=3.5423e-02 H33=3.583e-03 L3=0.545 q/q0=0.987

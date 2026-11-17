@@ -124,17 +124,24 @@ def main():
     ax1.set_title(r"outer-well gap in the normalized action (log-log)")
     ax1.legend(frameon=False, fontsize=9)
 
-    x = np.linspace(0, 1 / 60, 50)
-    ax2.plot(1 / dt, gt, "o", color="0.35", mfc="white", label="theory")
-    ax2.plot(x, At + Bt * x, "-", color="#2a6fdb", lw=1, alpha=0.7, label=rf"theory fit $A + B/d$: $A = {At:.3f}$, $B = {Bt:.1f}$")
+    # right: the raw gap against d, next to what non-degenerate wells would give (gap = beta * delta, i.e. gap ∝ d,
+    # anchored at the theory's gap at d = 150). A constant raw gap is the statement that the wells are degenerate.
+    np.savez(Path(__file__).resolve().parent / "plots" / "cache" / "gap_scaling.npz", dt=dt, gt=gt, dh=dh, gh=gh, eh=eh)
+    g150 = np.interp(150, dt, gt)
+    ax2.plot(dd, g150 * dd / 150, "--", color="#c0392b", lw=1.6,
+             label=rf"wells of different depth: gap $=\beta\delta$, $\beta = d/2\sigma_w^2$, $\delta = {g150/150:.4f}$" + "\n" + rf"($\delta$ = theory gap at $d=150$ / $\beta(150)$)")
+    ax2.plot(dt, gt, "o-", color="0.35", mfc="white", lw=1.4, label="theory")
     for d, g, e, _ in hm:
-        ax2.errorbar(1 / d, g, yerr=e, fmt="o", ms=8, color=plt.cm.viridis(0.9 * NORM(np.log2(d))), mec="k", mew=0.5)
+        ax2.errorbar(d, g, yerr=e, fmt="o", ms=8, color=plt.cm.viridis(0.9 * NORM(np.log2(d))), mec="k", mew=0.5,
+                     zorder=3)
     ax2.plot([], [], "o", color="0.3", ms=8, label="HMC (error: spread across chains)")
-    ax2.set_xlim(0, 1 / 60)
-    ax2.set_xlabel(r"$1/d$")
+    ax2.set_xscale("log")
+    ax2.set_xlim(60, 6000)
+    ax2.set_ylim(0, 40)
+    ax2.set_xlabel(r"$d$")
     ax2.set_ylabel(r"raw gap $-\log p(w_{\rm out}) + \log p(0)$  (nats)")
-    ax2.set_title(r"raw gap vs $1/d$ (extrapolates to $d\to\infty$ at $1/d = 0$)")
-    ax2.legend(frameon=False, fontsize=9)
+    ax2.set_title(r"raw gap stays $O(1)$: the wells are degenerate at leading order")
+    ax2.legend(frameon=False, fontsize=9, loc="upper left")
     fig.suptitle(r"$\kappa_0 = 0.015$ ray: $\kappa/(P\sigma_A^2) = 9.375\times10^{-4}$, $\hat C = 474.1$, $N = 1500$, $P \propto d^2$",
                  fontsize=12)
     fig.tight_layout()

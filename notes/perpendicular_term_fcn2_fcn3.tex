@@ -1,0 +1,228 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\newcommand{\E}{\mathbb E}
+\newcommand{\erf}{\operatorname{erf}}
+
+\title{The perpendicular term the mean-field theories drop: FCN2 against FCN3}
+\author{}
+\date{2026-11-10}
+
+\begin{document}
+\maketitle
+
+The FCN2 theory with a per-neuron perpendicular norm $q$ and the $x_0$ Hermite tower to $\mathrm{He}_{11}$ matches the
+exact posterior without any account of how a neuron's dependence on the perpendicular directions lines up with the
+rest of the network. The FCN3 theory, built the same way, misses a group of hidden neurons at strong learnability whose
+readout term comes half from exactly that. This note writes down the term both theories drop, shows where the two
+networks differ in it, and says what is measured and what is not.
+
+Notation: $x\sim\mathcal N(0,I_d)$, $x_0$ is the target direction and $x_\perp\in\mathbb R^{d-1}$ the other
+coordinates; $\langle f|g\rangle=\E_x[f(x)g(x)]$. For a function $f(x)=f(x_0,x_\perp)$, $P_\parallel f$ is its average over
+the perpendicular coordinates at fixed $x_0$,
+\begin{equation*}
+  (P_\parallel f)(x_0)=\int f(x_0,x_\perp)\,\mathcal N(x_\perp;0,I_{d-1})\,dx_\perp=\E\big[f\,\big|\,x_0\big]
+  =\sum_{n\ge0}\langle\varphi_n|f\rangle\,\varphi_n(x_0),
+\end{equation*}
+with $\varphi_n=\mathrm{He}_n/\sqrt{n!}$: the orthogonal projection of $f$ onto the functions of $x_0$ alone, i.e.\ its
+full $x_0$ Hermite expansion. For example $P_\parallel\erf(w\cdot x)=\erf\big(w_0x_0/\sqrt{1+2q}\big)$ with
+$q=|w_\perp|^2$, since $w_\perp\cdot x_\perp$ is Gaussian with variance $q$. For a unit $k$ (a neuron of FCN2, a
+second-layer hidden neuron of FCN3) with activation $g_k$, its perpendicular part is
+$\delta g_k=g_k-P_\parallel g_k$, everything in $g_k$ that $P_\parallel$ removes; it is orthogonal to
+every function of $x_0$.
+
+\section*{The dropped term is the same in both networks}
+
+Why the overlap with the residual matters. In the sampler the readout weights $a$ are integrated out exactly, and
+removing unit $k$ from the network lowers the log-posterior by
+$F_k=\frac{\sigma_A^2}{2N_2\chi}\,(g_k\cdot\alpha)^2/(1-\ell_k)$, plus a term $\frac12\log(1-\ell_k)$ that is
+0.02--0.18 nats in size here and nearly the same for every unit, with $\alpha=(y-\bar f)/(\kappa/\chi)$ on the training
+inputs, $\bar f=\sum_k\bar a_kg_k$, $\bar a$ the posterior mean of $a$, and $1-\ell_k$ the posterior variance of $a_k$ over
+its prior variance. In the theory the same term is $\frac{\tilde g}{2}(\mathbf t\cdot\mathbf e)^2$ with
+$\mathbf t=(y-\bar f)/(\kappa/P)$. In both, the unit enters through the overlap of its activation with the residual
+$r=y-\bar f$: $g_k\cdot\alpha=\frac P\kappa\cdot\frac1P\sum_\mu g_k(x_\mu)r(x_\mu)$ in the sampler (taking $\chi=1$) and
+$\mathbf t\cdot\mathbf e=\frac P\kappa\langle g_k|r\rangle$ in the theory. Below the overlap is taken over the population,
+$\langle g_k|r\rangle$, as in the theory.
+
+Splitting the overlap. The one fact needed is that a perpendicular part has zero overlap with any function of $x_0$
+alone. Take any $f$ and any $u(x_0)$, and write the overlap as an integral over $x_0$ and then over $x_\perp$, with
+$\mathcal N$ the standard normal densities. Neither $u(x_0)$ nor $(P_\parallel f)(x_0)$ depends on $x_\perp$, so both come
+out of the inner integral, and $\int\mathcal N(x_\perp)\,dx_\perp=1$:
+\begin{equation*}
+  \langle f-P_\parallel f\,|\,u\rangle
+  =\int\!\mathcal N(x_0)\,u(x_0)\left[\int\!\mathcal N(x_\perp)\,f(x_0,x_\perp)\,dx_\perp-(P_\parallel f)(x_0)\right]dx_0 .
+\end{equation*}
+The first term in the bracket is $(P_\parallel f)(x_0)$ by its definition, so the bracket is zero at every $x_0$ and the
+overlap vanishes. Now write each activation as $g_k=P_\parallel g_k+\delta g_k$. $P_\parallel$ is an integral, so it is
+linear, and the mean output splits the same way,
+\begin{equation*}
+  \bar f=P_\parallel\bar f+\bar f_\perp,\qquad
+  P_\parallel\bar f=\sum_{k'}\bar a_{k'}P_\parallel g_{k'},\qquad
+  \bar f_\perp=\sum_{k'}\bar a_{k'}\,\delta g_{k'},
+\end{equation*}
+and since the target depends on $x_0$ only ($P_\parallel y=y$), the residual is
+$r=(y-P_\parallel\bar f)-\bar f_\perp$: a function of $x_0$ minus a perpendicular part. Expanding,
+\begin{equation*}
+  \langle g_k|r\rangle
+  =\langle P_\parallel g_k\,|\,y-P_\parallel\bar f\rangle
+  -\underbrace{\langle P_\parallel g_k\,|\,\bar f_\perp\rangle}_{=0}
+  +\underbrace{\langle\delta g_k\,|\,y-P_\parallel\bar f\rangle}_{=0}
+  -\langle\delta g_k\,|\,\bar f_\perp\rangle ,
+\end{equation*}
+where both cross terms vanish because one factor is a function of $x_0$ and the other a perpendicular part. This
+leaves
+\begin{equation}
+  \langle g_k|r\rangle=\big\langle P_\parallel g_k\,\big|\,y-P_\parallel\bar f\big\rangle
+  -\big\langle\delta g_k\,\big|\,\bar f_\perp\big\rangle,
+  \qquad
+  \bar f_\perp=\sum_{k'}\bar a_{k'}\,\delta g_{k'} .
+  \label{eq:split}
+\end{equation}
+Both theories keep the first term, $\mathbf t\cdot\mathbf c(w_0,q)$ in FCN2 and $\mathbf t\cdot\mathbf e(\mathbf h,q_h)$ in
+FCN3, and both set $\bar f_\perp=0$: their single-unit distribution does not prefer any perpendicular direction, so any
+average of unit activations depends on $x_0$ only (apart from functions of $|x_\perp|$, which the FCN2 checks found
+negligible). The dropped term is therefore
+\begin{equation}
+  \big\langle\delta g_k\big|\bar f_\perp\big\rangle=\sum_{k'}\bar a_{k'}\,Q_{kk'},
+  \qquad Q_{kk'}=\langle\delta g_k|\delta g_{k'}\rangle ,
+\end{equation}
+and the two networks differ only in $Q_{kk'}$, the overlap of two units' perpendicular parts.
+
+\section*{FCN2: units overlap only through $w_\perp\cdot w'_\perp$}
+
+Here $g_k=\erf(w_k\cdot x)$ with $w_k=(w_{k0},w_{k\perp})$, $q_k=|w_{k\perp}|^2$ and $D_k=1+2|w_k|^2=1+2(w_{k0}^2+q_k)$.
+
+First, $Q_{kk'}$ reduces to two overlaps of whole functions. Expanding the product,
+\begin{equation*}
+  Q_{kk'}=\langle g_k-P_\parallel g_k\,|\,g_{k'}-P_\parallel g_{k'}\rangle
+  =\langle g_k|g_{k'}\rangle-\langle P_\parallel g_k|g_{k'}\rangle-\langle g_k|P_\parallel g_{k'}\rangle
+  +\langle P_\parallel g_k|P_\parallel g_{k'}\rangle .
+\end{equation*}
+In the second term write $g_{k'}=P_\parallel g_{k'}+\delta g_{k'}$:
+$\langle P_\parallel g_k|g_{k'}\rangle=\langle P_\parallel g_k|P_\parallel g_{k'}\rangle+\langle P_\parallel g_k|\delta g_{k'}\rangle$,
+and the last overlap is zero (a function of $x_0$ against a perpendicular part). The third term is the same with $k$
+and $k'$ exchanged. So both middle terms equal $\langle P_\parallel g_k|P_\parallel g_{k'}\rangle$, and
+\begin{equation*}
+  Q_{kk'}=\langle g_k|g_{k'}\rangle-\langle P_\parallel g_k|P_\parallel g_{k'}\rangle .
+\end{equation*}
+
+Both overlaps follow from one identity: for zero-mean jointly Gaussian $z,z'$,
+\begin{equation*}
+  \E\big[\erf(z)\erf(z')\big]=\frac2\pi\arcsin\frac{2\,\mathrm{cov}(z,z')}{\sqrt{(1+2\,\mathrm{var}\,z)(1+2\,\mathrm{var}\,z')}} .
+\end{equation*}
+For the whole activations take $z=w_k\cdot x$, $z'=w_{k'}\cdot x$ with $x\sim\mathcal N(0,I_d)$:
+$\mathrm{var}\,z=|w_k|^2$, so $1+2\,\mathrm{var}\,z=D_k$, and $\mathrm{cov}(z,z')=w_k\cdot w_{k'}=w_{k0}w_{k'0}+u_{kk'}$ with
+$u_{kk'}=w_{k\perp}\cdot w_{k'\perp}$. Hence
+\begin{equation*}
+  \langle g_k|g_{k'}\rangle=\frac2\pi\arcsin\frac{2(w_{k0}w_{k'0}+u_{kk'})}{\sqrt{D_kD_{k'}}} .
+\end{equation*}
+For the $x_0$ parts, $P_\parallel g_k=\erf(s_kx_0)$ with $s_k=w_{k0}/\sqrt{1+2q_k}$ (the example in the notation
+paragraph). Take $z=s_kx_0$, $z'=s_{k'}x_0$: $\mathrm{cov}=s_ks_{k'}$ and
+$1+2s_k^2=(1+2q_k+2w_{k0}^2)/(1+2q_k)=D_k/(1+2q_k)$, so
+\begin{gather*}
+  \frac{2s_ks_{k'}}{\sqrt{(1+2s_k^2)(1+2s_{k'}^2)}}
+  =\frac{2w_{k0}w_{k'0}}{\sqrt{(1+2q_k)(1+2q_{k'})}}\sqrt{\frac{(1+2q_k)(1+2q_{k'})}{D_kD_{k'}}}
+  =\frac{2w_{k0}w_{k'0}}{\sqrt{D_kD_{k'}}},\\
+  \langle P_\parallel g_k|P_\parallel g_{k'}\rangle=\frac2\pi\arcsin\frac{2w_{k0}w_{k'0}}{\sqrt{D_kD_{k'}}} .
+\end{gather*}
+Subtracting the two,
+\begin{equation}
+  Q_{kk'}=\frac{2}{\pi}\left[\arcsin\frac{2(w_{k0}w_{k'0}+u_{kk'})}{\sqrt{D_kD_{k'}}}
+  -\arcsin\frac{2w_{k0}w_{k'0}}{\sqrt{D_kD_{k'}}}\right].
+  \label{eq:Q2}
+\end{equation}
+The perpendicular weights of the two units enter only through $u_{kk'}$, and $Q_{kk'}=0$ when $u_{kk'}=0$.
+
+Which part of the activation each power of $u$ belongs to. At fixed $x_0$, $\xi=w_{k\perp}\cdot x_\perp$ and
+$\xi'=w_{k'\perp}\cdot x_\perp$ are jointly Gaussian with covariance $u_{kk'}$. Mehler's formula expands the average of a
+product of functions of $\xi$ and $\xi'$ in powers of that covariance, and the $u^m$ term is the overlap of the two
+functions' degree-$m$ Hermite parts in $\xi$ and $\xi'$; so Taylor-expanding \eqref{eq:Q2} in $u$,
+$Q_{kk'}=\sum_{m\ge1}b_m\,u_{kk'}^m$, the $u^m$ term is the overlap of the two units' parts of degree $m$ in $x_\perp$. A
+unit's degree-$m$ perpendicular part points along $\hat w_{k\perp}^{\otimes m}$, a direction that belongs to that unit
+alone. For independent directions $u\sim\sqrt{q_kq_{k'}/(d-1)}$, so the degree-$m$ overlap between different units falls
+as $d^{-m/2}$, whatever the units do. Only the linear part ($m=1$, the $d-1$ directions of $x_\perp$) is shared between
+units.
+
+\section*{FCN3: hidden units are built from one shared set of functions}
+
+The hidden pre-activation splits exactly into
+\begin{equation}
+  h_k(x)=a_k(x_0)+h_{k\perp}(x),\qquad h_{k\perp}=\sum_jB_{kj}\,\delta\psi_j,\qquad
+  \delta\psi_j=\erf(w_j\cdot x)-P_\parallel\erf(w_j\cdot x),
+\end{equation}
+so every hidden unit's perpendicular field is a combination, with its own Gaussian weights $B_k$, of the same $N_1$
+read-in functions $\delta\psi_j$. Treating $h_{k\perp}$ as Gaussian over $x_\perp$ at fixed $x_0$, as (E2) does, the part
+of $\delta g_k$ linear in $h_{k\perp}$ is (Stein's lemma)
+\begin{equation}
+  \delta g_k=\gamma_k(x_0)\,h_{k\perp}+\dots,\qquad
+  \gamma_k(x_0)=\E_\perp\big[\erf'(h_k(x))\,\big|\,x_0\big]
+  =\frac{2}{\sqrt\pi}\,\frac{e^{-a_k(x_0)^2/(1+2q_{h,k})}}{\sqrt{1+2q_{h,k}}},
+\end{equation}
+where the dots are of second and higher order in $h_{k\perp}$ and orthogonal to the first. At this order
+\begin{gather}
+  Q_{kk'}\simeq\sum_{i,j}B_{ki}\,\big\langle\gamma_k\delta\psi_i\big|\gamma_{k'}\delta\psi_j\big\rangle\,B_{k'j},\\
+  \big\langle\delta g_k\big|\bar f_\perp\big\rangle\simeq B_k\cdot\mathbf U,\qquad
+  U_i=\sum_{k'}\bar a_{k'}\sum_j\big\langle\gamma_k\delta\psi_i\big|\gamma_{k'}\delta\psi_j\big\rangle B_{k'j}.
+\end{gather}
+The dropped term is a linear function of the unit's own Gaussian weights. (E2) keeps two functions of $B_k$, its
+$x_0$ projections $\mathbf h_k=CB_k$ and the size of its perpendicular field $q_h=B_k^\top AB_k$
+($A_{ij}=\langle\delta\psi_i|\delta\psi_j\rangle$), and averages $B_k\cdot\mathbf U$ away.
+
+\section*{Where the networks differ}
+
+In FCN3 the diagonal entries $\langle\delta\psi_j|\delta\psi_j\rangle=P_\perp(w_j)$ are of order one, and every hidden
+unit uses every read-in neuron's whole perpendicular part, its higher-degree part included. Two hidden units' parts of
+degree $m\ge2$ in $x_\perp$ therefore overlap through $\sum_jB_{kj}B_{k'j}\,\|\delta\psi_j^{(m)}\|^2$: of order
+$N_1^{-1/2}$ for independent weight rows, of order one for a group of rows that point the same way. In FCN2 the same
+overlaps fall as $d^{-m/2}$ and no choice of parameters changes that. The output's perpendicular part
+$\bar f_\perp\simeq\gamma\sum_j\beta_j\delta\psi_j$, $\beta=\sum_{k'}\bar a_{k'}B_{k'}$, lies in the span that every hidden
+unit draws on.
+
+At linear order, however, the two networks look alike. An FCN2 unit has $d-1=149$ perpendicular directions with
+variance $q/(d-1)\approx0.0034$ each; an FCN3 hidden unit's perpendicular field has an effective number of directions
+$M=(\operatorname{tr}G_\perp)^2/\operatorname{tr}G_\perp^2\approx141$--164 (theory 164; 141--148 from the exact prior of the
+saved networks) and variance $\bar q_h/M\approx0.003$ each. In both a unit can turn its perpendicular part towards
+$\bar f_\perp$ at a Gaussian prior cost. So the equations alone do not say that FCN3 needs the dropped term and FCN2
+does not; that depends on how large $\bar f_\perp$ is in each network and whether the shared higher-degree channel
+carries it.
+
+\section*{What is measured}
+
+FCN3, onset scan at $d=150$, $N_1=N_2=1500$, $\kappa=0.015$, $P=48000$, last saved network of each of the three
+datasets. In every network the same 17 of the 1500 hidden units have $|h_3|>0.3$ for the whole run (the large-$h_3$
+group the theory does not have). On 48000 fresh inputs, with $\delta g_k$ computed from $g_k$ minus its
+$x_0$ Hermite part up to $\mathrm{He}_{21}$ (using (E2)'s $\mathbf e$ at the unit's own $\mathbf h$, $q_h$):
+\begin{center}
+\begin{tabular}{@{}lc@{}}
+\toprule
+$|\cos|$ between two units' $\delta g$: ordinary pairs & 0.065\\
+\phantom{$|\cos|$ between two units' $\delta g$:} pairs within the 17 & 0.08--0.10\\
+rms of $\bar f_\perp$ from all units except the 17 & 0.16--0.17\\
+rms of $\bar f_\perp$ from the 17 alone & 0.10--0.11\\
+cosine between those two parts & $-0.81$ to $-0.83$\\
+rms of the total $\bar f_\perp$ & 0.10\\
+\bottomrule
+\end{tabular}
+\end{center}
+The output's perpendicular part is small next to the output and not small next to its error. Fitting the mean output on
+200000 fresh inputs by functions of $x_0$ alone (Hermite degrees 0 to 31) and taking the remainder gives, in the three
+networks, a mean square of $\bar f_\perp$ of 0.0088--0.0097 against 1.47 for the whole output (0.6\%), while the test
+error $\|y-\bar f\|^2=0.032$--0.035 splits into 0.022--0.026 from the $x_0$ part and those 0.009 from $\bar f_\perp$
+(about 28\%). The theory sets that last part to zero.
+
+Pairwise the 17 are nearly independent; together they cancel a large part of what the other units put into
+$\bar f_\perp$ (mean square 0.026--0.029 from the other units, 0.010 after the 17 are added). Their readout
+term in the sampler is 470--535 nats each against 225--250 for the theory's term at the same $\mathbf h$, $q_h$, and
+about half of the sampler's comes through $\langle\delta g_k|\bar f_\perp\rangle$, which is as large on fresh data
+as on the training set.
+
+FCN2: not measured. The runs on the same line ($d=150$, $N=1500$, $\kappa_0=0.015$, $P=3000$--24000) are saved in
+\texttt{milestones/fcn2\_collapsed\_hmc/runs/*pscan\_d150*}. Measuring $\bar f_\perp$ and each unit's
+$\langle\delta g_k|\bar f_\perp\rangle$ there decides between the two readings: a comparable $\bar f_\perp$ that no
+group cancels points to the shared higher-degree channel of FCN3; a small $\bar f_\perp$ points to the strength of
+learning (FCN2 reached $L_3\approx0.38$ on this line, FCN3 $0.90$ at $P=48000$) or to something else.
+
+\end{document}

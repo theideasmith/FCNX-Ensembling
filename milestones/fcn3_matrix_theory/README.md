@@ -1,81 +1,130 @@
-# FCN3 matrix equations of state: GPU solver
+# FCN3 matrix equations of state: GPU solvers
 
-This folder solves eqs. E1–E8 of the notes *FCN3 in Hermite matrix elements* (Nov 2026): the three-layer erf
-network on the odd x0 Hermite tower S = {1, 3, …, n_max}. Both hidden layers use exact non-Gaussian actions
-(read-in in (w0, q⊥), middle in (h, q_h)) and every kernel is kept as a full matrix. The FCN2 counterpart is
-`../fcn2_collapsed_hmc/readin_action_theory_q.py`.
+## Default: `fcn3_fixed.solve_fcn3(p)`
 
+Use this one. It finds the equilibrium as the global maximum of the free energy W over the full read-in and
+hidden-field distributions (`BlazingFreeEnergy`), at n_max = 3 from the prior and then at n_max = 11 from that
+solution. It takes a few seconds per solve on a GPU (about 3 s each stage at d = 150 on an idle GPU).
+
+```python
+from fcn3_matrix_solver import Params
+from fcn3_fixed import solve_fcn3
+r = solve_fcn3(Params(...), nmax=11)        # r["L1"], r["L3"], r["d_w0sq"], r["H"], r["J"], r["M"], r["W"]
 ```
-python fcn3_matrix_solver.py                       # thesis point (Fig. 4.3), S = {1,3}, kappa = 0.1
-python fcn3_matrix_solver.py --nmax 11 --kappa 0.147
-python fcn3_matrix_solver.py --nmax 7 --sweep kappa=0.147,0.12,0.1,0.08 --out sweep.json   # warm-started
-python check_fcn3_solver.py                        # independent checks (below)
-python conv_study.py 7 0.1                         # double/halve each quadrature knob
-```
-From Python: `FCN3Solver(Params(...), Numerics(...)).solve()` returns a dict with J, H, K, G, t, f̄,
-L1, L3, d⟨w0²⟩, ⟨q_h⟩/q̄_h, M, m⊥, the eigenvalues of M_S, both barriers, and the ESS. Pass `init=other.state()`
-to warm-start.
 
-## Method
-- **Inner loop**: Newton with Armijo backtracking on the convex potential
-  Φ(t) = (κ/2P)|t|² + (N2/χ) log Z_h(t) − y·t. Its gradient is the readout condition, and its Hessian is
-  κ/P + σ_A²K + σ_A² g̃ Cov[(t·B)B]. From a warm start it takes 2–4 integral passes.
-- **Outer loop**: Anderson acceleration (depth 6) on (vech J_S normalised by the prior J, log q̄_h, log M).
-  - From a cold start it uses **continuation in χ**, because M_S ∝ χ. At the thesis point the prior J gives
-    M_11 ≈ 450, above the threshold 2β·3π/4 ≈ 354 where −½M_11c1² beats βw0², so the origin of the read-in action is unstable and no direct iteration converges.
-  - The χ step adapts: it grows ×1.5 after a success and halves when a step loses the central basin.
-  - Intermediate χ steps are solved to 1e-4; only the last is solved to 1e-8.
-- **Middle integral** (|S|+1 dims). The coordinates are whitened, h = L z with G_S = LLᵀ, and
-  z = s u + Q⊥ζ with u ∝ Lᵀt, the drive direction at h = 0.
-  - s: a uniform lattice with s ≥ 0 only. The law is exactly symmetric under h → −h, so the negative half is
-    not computed. The per-s sufficient statistics give the exact s-marginal, so the central-basin cut ("first
-    maximum of −log p") is a cut on the lattice.
-  - q_h: Gauss–Hermite in log q_h, with weights exact against the two-moment Gamma prior (eq. 16).
-  - ζ: rotated to the singular directions of ζ → erf argument. The sensitivities fall off geometrically
-    (7e-2, 6e-5, 1e-6, 3e-8, 8e-10 relative to s at the thesis point), so a product Gauss–Hermite rule with
-    24 nodes on the one active direction and 2–3 on each spectator is enough: 576 points at n_max = 11.
-    Sobol QMC with 2048 points was 1e-4–1e-3 off; it is still available as `zeta_rule="qmc"`.
-  - Corrections that are differences from the prior (H − G, ⟨q_h⟩ − q̄_h) are computed on the same nodes with
-    prior weights as a control variate.
-  - B_n is one fp64 erf block, (s·a + A_ζ)/√(1+2q_h), followed by a matmul against the 64 Gauss–Hermite
-    nodes in x0. The small |S|×|S| Gram matrices use broadcast-and-sum: fp64 tensor-core `bmm` with tiny
-    outputs was 20× slower and took 70% of a pass.
-- **Read-in**: a (w0, q⊥) tensor grid, 1201 × 256, sinh-spaced in w0 and log-uniform in q⊥, with the cut at the
-  first maximum of −log p(w0). M = (tr G⊥)²/tr G⊥² comes from eq. (18): pairs on a 160 × 40 coarse grid with
-  Gauss–Jacobi quadrature in the angle, weight (1−u²)^((d−4)/2).
+- Read-in layer: fixed (w0, log q) grid, distribution parametrised by its exponents, re-whitened every Newton step
+  (the moments r^2k are nearly collinear at n_max = 11, so a J or moment parametrisation is infeasible or stalls).
+- Hidden field: fixed importance samples from a mixture (prior, fitted near basin, each far basin and its mirror).
+- Exact Hessian by autograd; two sample-set fidelities; pruned read-in grid with a guard; M from (E8) updated inside
+  Newton in the final stage.
+- Validated with `solve_fcn3` itself: thesis point N1 = 1600, n_max = 3 gives mu1 = 0.993744, mu3 = 0.30296, far
+  read-in mass 4.848e-4 (verified lattice solution: 0.993745, 0.30310, 4.85e-4); ray d = 150, N1 = inf, n_max = 11
+  gives mu3 = 0.38556, <h1^2> = 0.03875 (lattice: 0.3856, 0.03878); ray d = 150, N1 = 1500 agrees with the
+  J-parametrised solver at n_max = 3 (mu3 0.77154); a different Monte Carlo seed changes mu3 by < 1e-4.
+- N1 = inf has no read-in degrees of freedom (the read-in distribution is the prior) and is handled by the
+  J-parametrised path, which only solves for t.
+- The FCN3 sampler (`../fcn3_collapsed_hmc/run_fcn3.py`) calls it for the theory column of summary.json.
 
-## Validation (thesis point, S = {1, 3}; `check_fcn3_solver.py`)
-- B_n(h1 e1, q_h) from quadrature equals the closed form c_n(h1, q_h): 1e-12 at q_h = 2, 1e-6 at h1 = 3 with
-  q_h = 0.46. The central basin has |h1| < 0.8, where the error is smaller still.
-- The readout identity (σ_A²K + κ/P)t = y holds to 1e-15.
-- A brute-force middle law in the original (h1, h3) coordinates (801 × 401 × 64 grid, no whitening, no
-  lattice, no control variate) matches K, H − G and ⟨q_h⟩ − q̄_h to < 5e-6 relative.
-- E_{x,x'}J² from Monte Carlo over explicit read-in vectors in R^d matches the pair quadrature within MC error.
-- Doubling or halving each quadrature knob changes the observables by ≤ 1e-7 (`conv_study.py`; n_qh = 8
-  is the worst case at 1.1e-7). The
-  barrier heights, which are diagnostics only, move by ≤ 3e-4.
+The solvers below are older (lattice integrators) and are kept for reference.
 
-Against Table 1 of the notes (central basin, S = {1, 3}):
+## Older solvers
 
-| κ | | d⟨w0²⟩ | H11 | H33 | H13 | L1 | L3 | barriers (read-in / middle) |
-|---|---|---|---|---|---|---|---|---|
-| 0.1 | notes | 1.63 | 0.852e-2 | 0.55e-6 | −0.61e-4 | 0.993 | −0.196 | +30 / +35 |
-| 0.1 | this solver | 1.632 | 0.849e-2 | 0.548e-6 | −0.605e-4 | 0.993 | −0.1965 | +29.4 / +34.6 |
-| 0.147 | notes | 1.70 | 0.889e-2 | 0.67e-6 | −0.68e-4 | 0.990 | −0.212 | +50 / +64 |
-| 0.147 | this solver | 1.693 | 0.886e-2 | 0.666e-6 | −0.680e-4 | 0.990 | −0.2123 | +48 / +60 |
+Two solvers for equations (E1)–(E8) of `notes/fcn3_matrix_eos.tex`. Both integrate over the **full** read-in and
+hidden-field distributions. There is no cut at a barrier, and the grids are wide enough that their edges hold no
+mass (`check_closed_loop.py` checks this).
 
-The tower converges: L3 is −0.1965057, −0.1965026, −0.1965025 and −0.1965024 at n_max = 3, 5, 7 and 11, and
-f̄5 = 5.35e-4, f̄7 = −3.0e-5, f̄9 = 2.2e-6, f̄11 = −2.0e-7.
-
-## Timings (RTX 4090, fp64, cold start including the χ continuation)
-| n_max | one middle pass | cold solve | warm-started neighbour (κ 0.1 → 0.09, incl. setup) |
+| solver | what | thesis point, n_max = 3 | n_max = 11 |
 |---|---|---|---|
-| 3 | 1.7 ms | 0.7 s | 0.15 s |
-| 7 | 4.8 ms | 1.0 s | 0.2 s |
-| 11 | 19 ms | 2.8 s | 1.1 s |
+| `fcn3_fast.FastSolver` | one Newton system, quadrature only where there is mass | 3.3 s | 19 s |
+| `fcn3_matrix_solver.FCN3Solver` | nested reference (Anderson + Brent + Newton), full grids | ~40–80 s | does not converge |
+
+```
+python fcn3_fast.py 3          # thesis point (d=150, P=3000, N1=N2=1600, chi=10, kappa=0.1, eps=0.074), n_max = 3
+python fcn3_fast.py 11
+python check_closed_loop.py    # independent check of every equation over the full distributions (n_max = 3)
+python conv_study.py 3         # refine/widen each grid of the reference solver
+```
+Warm start for sweeps: `FastSolver(p2).solve(init=other.state())` (~0.3–1 s per neighbouring point).
+
+## What makes the full equations hard, and what the solvers do about it
+1. **Far minima, exponentially sensitive mass.** The read-in −log p(w0, q) develops a second minimum at large w0
+   and small q (rows nearly aligned with the target). Its mass depends exponentially on the state: in (E5) the
+   He_n term carries 1/G_nn, so ~1e-4 of the rows there multiplies J_33 (and J_nn for n ≥ 5 by much more), which
+   removes the minimum again. Plain iteration jumps between "all mass far" and "none". The solvers make the
+   log mass of each far basin an unknown ell_g. The inner distributions are reweighted to those masses, and ell is
+   solved from ell_g = log P(B_g) − log P(B_0). At the root the reweighting is the identity, so the solution is that
+   of the full distributions whatever the basins are.
+2. **15 decades in J.** At n_max = 11, J_nn runs from 4e-3 to 5e-18. The iteration variables are log J_nn and the
+   atanh of the correlations. Whitening uses G = D R D with the Cholesky factor of the correlation matrix R
+   (a plain Cholesky of G loses all precision in the smallest directions).
+3. **G^-1 (G − H) G^-1 without cancellation.** By Gaussian integration by parts (Stein's lemma) twice,
+   G^-1 (G − H) G^-1 = −E[∇∇T + ∇T ∇T^T] with T = (g~/2)(t·e)^2. The right side has no G^-1 and no
+   difference of large numbers. The left side, computed as I − E[zz^T] in whitened coordinates, carries rounding
+   noise ~1e-16 multiplied by |L^-1 c|^2 ~ 1e15 at n_max = 11, i.e. O(1) noise in the read-in action. Both forms
+   agree to 7e-16 at n_max = 3.
+
+## FastSolver
+- Unknowns: x = (log J_nn, atanh correlations, log qbar_h, log M), tau = (kappa/P) t, far-basin logits ell.
+  Residual: (E6)–(E8) map minus x, (E4), and ell_g − log mass ratio.
+- Per continuation step: a pass over the full grids (one node on each spectator zeta direction) finds the basins of
+  both distributions and the cells/points within e^40 of each basin's peak. Newton then works on those only, with the
+  quadrature frozen, so the residual is smooth. A finite-difference Jacobian is computed and then updated by
+  Broyden's method. After the step another full pass checks that the cells left out hold < e^-30 of the mass and
+  that no new far basin has appeared; otherwise the quadrature is rebuilt.
+- Continuation in log chi from chi/64: secant predictor, step from how much the solution moved, at most ×√2.
+- Reductions with tiny outputs and long sums (e.g. J = Σ c c^T p over 6e4 points, per-cell 6×6 sums over 1e4 zeta
+  nodes) are written as elementwise products and sums. As cuBLAS fp64 matmuls they were ~100× slower.
+- Transverse zeta rule: default (counts [16, 4, 2, 2, 1] at n_max = 11) is within 1.5e-6 of mu_3 of a ~1e4-times
+  larger rule. `fcn3_matrix_solver.ZETA_ACCURATE` gives ~4e-7 at ~100× the cost.
+
+## Results at the thesis point (full distributions)
+| n_max | mu_1 | mu_3 | d<w0^2> | read-in mass in the far minimum |
+|---|---|---|---|---|
+| 3 | 0.993745 | 0.30310 | 1.959 | 4.85e-4 |
+| 11 | 0.993435 | 0.14879 | 1.862 | 4.17e-4 |
+
+The solver that cut the distributions at the first barrier (removed) gave mu_3 = −0.1965 at n_max = 3. That state
+is not a solution of (E1)–(E8).
+
+## Closed-loop check against the notes (`check_closed_loop.py`)
+Takes only a solver's converged state (J, q̄_h, M, t) and re-evaluates (E1)–(E8) over the full distributions with
+independent numerics: Gauss–Hermite e_n and c_n (not the closed form), a plain whitened grid for the hidden field
+(±48 standard deviations, q_h from e^-14 to e^3 × q̄_h), a plain (w0, log q) grid with both signs of w0, and Monte
+Carlo for E k². It also reports the mass on every grid edge.
+
+FastSolver at the thesis point, n_max = 3:
+- No grid edge holds mass (0 on the hidden-field grids, 2.6e-144 on the read-in q edge).
+- t agrees to 3e-12, J to 1e-9, q̄_h to 3e-13, and H and ⟨q_h⟩ in every digit shown.
+- M is within the Monte Carlo error (9e-5).
+
+The read-in mass at |w0| > 1 on the independent grid (4.848e-4) equals the solver's far-basin mass.
+
+## Convergence (`conv_study.py`, reference solver, n_max = 3)
+I halved ds, doubled the q_h points, x0 nodes and u nodes, widened s, q_h, w0 and q, and refined the pair blocks.
+mu_1, mu_3, H and the far mass move by ≤ 2e-11. M moves by ≤ 2e-4, from the read-in q resolution and the atom
+blocks for E k².
 
 ## Limitations
-- `branch="global"` (outer wells) does not solve. χ continuation from the prior follows the central branch
-  and fails where that branch ends. The outer-well state needs its own starting point (notes §7, item 5).
-- The theory's own approximations remain: the restriction to S, Gaussian h⊥ over x⊥, the two-moment q_h
-  law, and the dropped connected term χT (notes §7).
+- The checker's hidden-field grid is 2-D, so the independent check covers n_max = 3 only. At n_max = 11 the
+  evidence is the zeta-rule study above and the excluded-mass check inside FastSolver.
+- The theory's own approximations remain (notes, section "Approximations").
+
+## N1 → ∞: comparison with the FCN2 theory (`compare_fcn2_limit.py`)
+N1 enters only through rB = σ_B² N2/N1, which scales both back-couplings. At N1 = ∞ the read-in law is its prior
+and the middle layer is the FCN2 read-in problem on a fixed field: w0 variance → G11, d − 1 → M, perp mean → q̄,
+N → N2 (the readout and tilt map exactly). With G_S projected onto He1 the solver reproduces the FCN2 q-theory
+(`../fcn2_collapsed_hmc/readin_action_theory_q.py`, with that prior) to 7–9 digits at d = 75–1200, global
+branch. The full G_S also carries the first layer's He3(x0) content (√(G33/G11) ≈ 1/d, ρ13 ≈ −0.78), which moves
+L3 at every d (thesis point, N1 = ∞, global, S = {1, …, 11}; output in `compare_fcn2_limit.json`):
+
+| d | 75 | 150 | 300 | 600 | 1200 |
+|---|---|---|---|---|---|
+| L3, FCN3 | 0.0695 | −0.1290 | −0.0956 | −0.0602 | −0.0384 |
+| L3, FCN2 (mapped) = FCN3 with He1-only field | 0.1224 | −0.0869 | −0.0613 | −0.0428 | −0.0297 |
+
+The default tower is now S = {1, …, 11} (`Params.nmax = 11`). With S = {1, 3} the d = 75 values were 0.2009 / 0.2229
+(outer-well neurons there carry He5+); at d ≥ 150 the truncation moves L3 by < 0.01.
+
+At d = 150 the full field also deepens the middle outer well (2e-5 of the mass, but it carries much of K33), so
+the central and global branches differ there (L3 −0.152 vs −0.121 at S = {1, 3}); the He1-only field has outer mass 5e-14.
+At d ≥ 300 the middle law is unimodal.

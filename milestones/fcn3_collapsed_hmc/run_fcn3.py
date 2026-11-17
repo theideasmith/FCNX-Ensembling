@@ -4,8 +4,11 @@ Runner for the exact FCN3 posterior sampler (fcn3_sampler.py): collapsed HMC on 
 per-neuron jump sweeps. One chain per process.
 
 Each run gets runs/<stamp>_<tag>_d<d>_P<P>_N<N1>x<N2>_<init>_r<seed>/ with config.json, trace.csv, obs.csv,
-checkpoint.pt (for --resume) and summary.json (post-burn means with the central-branch theory from
-../fcn3_matrix_theory for comparison). Lifecycle events go to runs/registry.jsonl.
+checkpoint.pt (for --resume) and summary.json (post-burn means, then the equilibrium theory from
+../fcn3_matrix_theory/fcn3_fixed.solve_fcn3 (n_max = 11) for comparison; --theory none skips it). Lifecycle events go to runs/registry.jsonl.
+
+Uses the fast sampler (fcn3_fast.py) by default; --no-fast runs the reference implementation. See the appendix
+"The exact posterior sampler and its fast implementation" of notes/fcn3_matrix_eos.tex.
 
 Thesis point (notes Table 1), chain from the prior:
     python run_fcn3.py --d 150 --P 3000 --N1 1600 --N2 1600 --chi 10 --kappa 0.1 --eps 0.074 \
@@ -47,6 +50,18 @@ def parse():
     g.add_argument("--seed", type=int, default=0, help="data seed")
     s = ap.add_argument_group("sampler")
     s.add_argument("--init", choices=["prior", "aligned"], default="prior")
+    s.add_argument("--init-from", default=None, help="start from the final state (checkpoint.pt) of another run dir")
+    s.add_argument("--count-every", type=int, default=10,
+                   help="NCMC count move (read-in neuron in/out of the outer well, fcn3_sampler.count_move) every k "
+                        "iterations (0: none). Without it the outer-well count never changes")
+    s.add_argument("--count-K", type=int, default=40, help="count move: perturbation steps")
+    s.add_argument("--count-L", type=int, default=16, help="count move: leapfrog steps per relaxation trajectory")
+    s.add_argument("--count-step", type=float, default=0.0,
+                   help="count move: HMC step of the relaxation (0: 0.75 x the chain's current step)")
+    s.add_argument("--count-thr", type=float, default=0.18,
+                   help="count move: outer well = r^2 = w0^2/(1+2|w|^2) above this (r^2 ~ 0.24 in the outer well, "
+                        "0.07-0.13 for neurons in transit, ~0.01 inner; it must sit in an empty gap, or the outer set "
+                        "changes during the move and forces a rejection)")
     s.add_argument("--init-frac", type=float, default=0.3, help="aligned init: fraction of read-in neurons moved out")
     s.add_argument("--init-w0", type=float, default=2.4)
     s.add_argument("--rng-seed", type=int, default=1)
@@ -64,15 +79,26 @@ def parse():
                    help="read-in candidate energies; series is faster only for many candidates (~40+)")
     s.add_argument("--chunk", type=int, default=None, help="rows of X per chunk (default: ~2^26 / max(N, d))")
     s.add_argument("--dtype", choices=["float32", "float64"], default="float32")
+    s.add_argument("--fast", action=argparse.BooleanOptionalAction, default=True,
+                   help="fcn3_fast.FastFCN3 (default): float32-gradient HMC with exact end-point energies, CUDA-graphed "
+                        "sweeps with fused Triton kernels; same target and moves, ~7x faster. --no-fast runs the "
+                        "reference fcn3_sampler.FCN3")
     s.add_argument("--device", default="cuda")
     b = ap.add_argument_group("bookkeeping")
     b.add_argument("--obs-every", type=int, default=5)
     b.add_argument("--n-perp", type=int, default=4000, help="x_perp samples in the f-bar quadrature")
     b.add_argument("--checkpoint-every", type=int, default=20)
+    b.add_argument("--snap-every", type=int, default=5,
+                   help="store (w0, q = |w_perp|^2) of every read-in neuron every k iterations in snaps.npz (0: none)")
+    b.add_argument("--net-every", type=int, default=0,
+                   help="after burn-in, save the full network (ZW, ZB; W = sw ZW, B = sb ZB) every k iterations and "
+                        "at the last iteration to nets/net_<iter>.pt (0: none)")
     b.add_argument("--tag", default="fcn3")
     b.add_argument("--group", default=None)
     b.add_argument("--runs-root", default=str(HERE / "runs"))
     b.add_argument("--resume", default=None)
+    b.add_argument("--theory", choices=["fixed", "none"], default="fixed",
+                   help="theory comparison in summary.json (fcn3_fixed.solve_fcn3, n_max=11) or none")
     b.add_argument("--hot", type=float, default=80.0, help="pause between iterations at this GPU temperature (°C)")
     b.add_argument("--cool", type=float, default=70.0)
     b.add_argument("--smi-index", default="1", help="nvidia-smi index of the GPU in use (the 4090 is 1)")
@@ -109,17 +135,26 @@ def registry(root, run_id, status, **kw):
                              "status": status, **kw}) + "\n")
 
 
-def theory_central(args):
+def theory(args):
+    """Equilibrium of (E1)-(E8) at the run's parameters: global maximum of the free energy W over the full
+    distributions of both layers, from the default solver fcn3_fixed.solve_fcn3 (n_max = 11, seconds)."""
+    if args.theory == "none":
+        return {"skipped": True}
     try:
         sys.path.insert(0, str(HERE.parent / "fcn3_matrix_theory"))
-        from fcn3_matrix_solver import FCN3Solver, Params
+        from fcn3_matrix_solver import Params
+        from fcn3_fixed import solve_fcn3
         p = Params(d=args.d, P=args.P, N1=args.N1, N2=args.N2, chi=args.chi, kappa=args.kappa, eps=args.eps,
-                   sigA=args.sigA, sigB=args.sigB, sigw=args.sigw, nmax=max(args.nmax, 7))
-        r = FCN3Solver(p, verbose=False).solve()
+                   sigA=args.sigA, sigB=args.sigB, sigw=args.sigw, nmax=11)
+        r = solve_fcn3(p, nmax=11, device=args.device)
         H, J = np.array(r["H"]), np.array(r["J"])
-        return dict(d_w0sq=r["d_w0sq"], L1=r["L1"], L3=r["L3"], qh_over_qbar=r["qh_over_qbar"],
-                    q_over_q0=r["qperp_over_prior"], H11=H[0, 0], H33=H[1, 1], H13=H[0, 1], J11=J[0, 0],
-                    J33=J[1, 1], J13=J[0, 1], fbar5=r["fbar"][2], fbar7=r["fbar"][3], converged=r["converged"])
+        # d<w0^2> in the sampler's units (prior = 1) as well as the theory's (prior = sigw^2)
+        return dict(solver="fcn3_fixed.solve_fcn3 nmax=11", W=r["W"], d_w0sq=r["d_w0sq"],
+                    d_w0sq_sampler_units=r["d_w0sq"] / args.sigw ** 2, L1=r["L1"], L3=r["L3"],
+                    readin_mass_w0_gt_1=r["readin_mass_w0_gt_1"], H11=H[0, 0], H33=H[1, 1], H13=H[0, 1],
+                    J11=J[0, 0], J33=J[1, 1], J13=J[0, 1], M=r["M"], converged=r["converged"],
+                    nmax3=dict(L1=r["nmax3"]["L1"], L3=r["nmax3"]["L3"], d_w0sq=r["nmax3"]["d_w0sq"]),
+                    walltime_s=r["walltime_s"])
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
 
@@ -132,6 +167,8 @@ def main():
         iters = args.iters
         for k, v in cfg["args"].items():
             setattr(args, k, v)
+        if "fast" not in cfg["args"]:          # runs started before the fast path keep the reference sampler
+            args.fast = False
         args.iters, args.resume = max(iters, cfg["args"]["iters"]), str(run_dir)
     else:
         run_id = (f"{datetime.now():%Y%m%d-%H%M%S}_{args.tag}_d{args.d}_P{args.P}_N{args.N1}x{args.N2}"
@@ -156,7 +193,13 @@ def main():
         raise RuntimeError(f"training data differ from the run's: {fp} vs {cfg['data_fingerprint']}")
     (run_dir / "config.json").write_text(json.dumps(cfg, indent=2))
     ks = tuple(range(1, args.nmax + 1, 2))
-    m = FCN3(X, Y, args.N1, args.N2, args.chi, args.kappa, args.sigA, args.sigB, args.sigw, ks=ks, chunk=args.chunk,
+    cls = FCN3
+    if args.fast and (dev.type != "cuda" or dt != torch.float32):
+        log("  the fast sampler needs CUDA and float32: using the reference sampler")
+        args.fast = False
+    if args.fast:
+        from fcn3_fast import FastFCN3 as cls
+    m = cls(X, Y, args.N1, args.N2, args.chi, args.kappa, args.sigA, args.sigB, args.sigw, ks=ks, chunk=args.chunk,
              n_cand=args.n_cand, cg_iters=args.cg_iters, redraw_frac=args.redraw_frac, seed=args.rng_seed,
              energy=args.energy)
     xq = X0Quadrature(args.d, args.n_perp, device=dev, dtype=dt)
@@ -171,7 +214,10 @@ def main():
         g = torch.Generator(device=dev).manual_seed(args.rng_seed)
         ZW = torch.randn(args.N1, args.d, device=dev, dtype=dt, generator=g)
         ZB = torch.randn(args.N2, args.N1, device=dev, dtype=dt, generator=g)
-        if args.init == "aligned":
+        if args.init_from:
+            ck0 = torch.load(Path(args.init_from) / "checkpoint.pt", map_location="cpu", weights_only=False)
+            ZW, ZB = ck0["ZW"].to(dev, dt), ck0["ZB"].to(dev, dt)
+        elif args.init == "aligned":
             n_al = int(args.init_frac * args.N1)
             sgn = (torch.randint(0, 2, (n_al,), device=dev, generator=g) * 2 - 1).to(dt)
             ZW[:n_al, 0] = sgn * args.init_w0 / m.sw
@@ -186,17 +232,32 @@ def main():
     mode = "a" if start > 0 else "w"
     trf = open(run_dir / "trace.csv", mode, newline=""); tr = csv.writer(trf)
     obf = open(run_dir / "obs.csv", mode, newline=""); ob = None
+    cnf = open(run_dir / "count.csv", mode, newline=""); cn = csv.writer(cnf)
+    if start == 0:
+        cn.writerow(["iter", "insert", "accepted", "logA", "work", "n_outer", "hmc_acc", "t"])
     if start == 0:
         tr.writerow(["iter", "U", "acc", "step", "L", "mid_changed", "mid_crossed", "in_changed", "in_crossed",
                      "t_hmc", "t_sweep", "wall"])
-    u, gW, gB = m.U(ZW, ZB)
+    fast = args.fast
+    u, gW, gB = (None, None, None) if fast else m.U(ZW, ZB)
+    snap_path = run_dir / "snaps.npz"
+    snaps = dict(np.load(snap_path)) if (start > 0 and snap_path.exists()) else {}
+    snaps = {k: list(v) for k, v in snaps.items()}
+    snap_every = getattr(args, "snap_every", 0)
+
+    def save_snaps():
+        if snaps:
+            np.savez(snap_path, **{k: np.asarray(v) for k, v in snaps.items()})
     t_start, paused = time.time(), 0.0
     try:
         for it in range(start, args.iters):
-            paused += thermal_guard(args, log)
+            if not fast or it % 10 == 0:
+                paused += thermal_guard(args, log)
             ZW, ZB = m.flip_signs(ZW, ZB)
-            u, gW, gB = m.U(ZW, ZB)
+            if not fast:
+                u, gW, gB = m.U(ZW, ZB)
             t0 = time.time()
+            # fast: hmc_step evaluates the exact energy at both ends itself; u is the post-HMC energy
             ZW, ZB, u, gW, gB, acc, L = m.hmc_step(ZW, ZB, u, gW, gB, step, args.leapfrog)
             torch.cuda.synchronize(dev) if dev.type == "cuda" else None
             t_hmc = time.time() - t0
@@ -211,7 +272,23 @@ def main():
                 torch.cuda.synchronize(dev) if dev.type == "cuda" else None
                 t_sw = time.time() - t0
                 ZW, ZB = W / m.sw, B / m.sb
-                u, gW, gB = m.U(ZW, ZB)
+                if not fast:
+                    u, gW, gB = m.U(ZW, ZB)
+            if args.count_every and it % args.count_every == 0:
+                t0 = time.time()
+                ZW, ZB, cs = m.count_move(ZW, ZB, K=args.count_K, n_leap=args.count_L,
+                                          step=args.count_step or 0.75 * step, thr=args.count_thr)
+                if cs["count_acc"]:
+                    W, B = m.sw * ZW, m.sb * ZB
+                    a = m.draw_a(W, B)
+                    if not fast:
+                        u, gW, gB = m.U(ZW, ZB)
+                cn.writerow([it, cs["count_insert"], cs["count_acc"], f"{cs['count_logA']:.3f}",
+                             f"{cs.get('count_work', float('nan')):.3f}", cs["count_n"],
+                             f"{cs.get('count_hmc_acc', float('nan')):.3f}", f"{time.time() - t0:.1f}"])
+                cnf.flush()
+                st["n_outer"] = cs["count_n"]
+                st["count_logA"] = cs["count_logA"]
             tr.writerow([it, f"{u:.8e}", f"{acc:.4f}", f"{step:.5e}", L] +
                         [f"{st[k]:.4f}" if k in st else "" for k in ("mid_changed", "mid_crossed", "in_changed",
                                                                       "in_crossed")]
@@ -228,15 +305,26 @@ def main():
                     + " ".join(f"{k}={v:.3f}" for k, v in st.items())
                     + f" | d<w0^2>={o['d_w0sq']:.3f} in_out={o['frac_in_out']:.3f} mid_out={o['frac_mid_out']:.3f}"
                       f" H11={o['H11']:.4e} H33={o['H33']:.3e} L3={o['fbar3'] / args.eps:.3f} q/q0={o['q_over_q0']:.3f}")
+            if snap_every and it % snap_every == 0:
+                Wd = W.double()
+                snaps.setdefault("iter", []).append(it)
+                snaps.setdefault("w0", []).append(Wd[:, 0].float().cpu().numpy())
+                snaps.setdefault("q", []).append((Wd[:, 1:] ** 2).sum(1).float().cpu().numpy())
+            net_every = getattr(args, "net_every", 0)
+            if net_every and it >= args.burn and ((it - args.burn) % net_every == 0 or it == args.iters - 1):
+                (run_dir / "nets").mkdir(exist_ok=True)
+                torch.save(dict(ZW=ZW.float().cpu(), ZB=ZB.float().cpu(), iter=it, sw=float(m.sw), sb=float(m.sb)),
+                           run_dir / "nets" / f"net_{it:05d}.pt")
             if (it + 1) % args.checkpoint_every == 0 or it == args.iters - 1:
-                trf.flush(); obf.flush()
+                trf.flush(); obf.flush(); cnf.flush()
+                save_snaps()
                 torch.save(dict(ZW=ZW.cpu(), ZB=ZB.cpu(), step=step, iter=it, gen=m.gen.get_state(),
                                 np_rng=m.np_rng.bit_generator.state), ck_path)
     except BaseException as e:
-        trf.close(); obf.close()
+        trf.close(); obf.close(); cnf.close()
         registry(args.runs_root, run_id, "failed", error=f"{type(e).__name__}: {e}")
         raise
-    trf.close(); obf.close()
+    trf.close(); obf.close(); cnf.close()
     # summary: post-burn means and stderr (batch means over 10 batches)
     rows = [r for r in csv.DictReader(open(run_dir / "obs.csv")) if r["burn"] == "0"]
     summ = {}
@@ -251,13 +339,15 @@ def main():
     summ["L3"] = [summ["fbar3"][0] / args.eps, summ["fbar3"][1] / abs(args.eps)]
     trace = [r for r in csv.DictReader(open(run_dir / "trace.csv")) if int(r["iter"]) >= args.burn]
     summary = dict(run_id=run_id, wall_s=time.time() - t_start - paused, n_obs=len(rows), posterior=summ,
-                   acc=float(np.mean([float(r["acc"]) for r in trace])), theory_central=theory_central(args))
+                   acc=float(np.mean([float(r["acc"]) for r in trace])))
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=1))      # written before the theory solve
+    summary["theory"] = theory(args)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=1))
     registry(args.runs_root, run_id, "done", wall_s=round(summary["wall_s"], 1),
              d_w0sq=summ["d_w0sq"][0], L3=summ["L3"][0], H11=summ["H11"][0], frac_in_out=summ["frac_in_out"][0])
     log(json.dumps({k: summ[k] for k in ("d_w0sq", "L1", "L3", "H11", "H33", "H13", "qh_over_qbar", "q_over_q0",
                                          "frac_in_out", "frac_mid_out")}, indent=1))
-    log("theory (central branch): " + json.dumps(summary["theory_central"]))
+    log("theory (fcn3_fixed.solve_fcn3, n_max=11): " + json.dumps(summary["theory"]))
 
 
 if __name__ == "__main__":

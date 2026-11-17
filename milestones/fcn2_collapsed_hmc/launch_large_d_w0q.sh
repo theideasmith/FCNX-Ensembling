@@ -6,15 +6,21 @@
 # the equilibrium ~0.04), so agreement between them shows convergence from both sides. Groups: w0q_d<d>.
 # One chain at a time on GPU $DEV under the thermal governor (gpu_governor.py), which pauses it at >= 76 °C.
 #   DS="600 800" DEV=cuda:1 ./launch_large_d_w0q.sh        analysis: chains.py, plot_large_d_actions.py
+# RSEED (default 1): --rng-seed; run directories end in _r<seed>, so a new seed gives new chains.
+# SKIP_PRIOR=1: run only the over-aligned chain. On a GPU that is not a 4090, set HMC_DATA_RNG=remap
+# (collapsed_hmc_fcn2.make_data) so the training data match; check data_fingerprint in config.json.
 set -uo pipefail
 cd "$(dirname "$0")"
 PY=${PY:-/home/akiva/miniconda3/envs/ml_env/bin/python}
 DS=${DS:-"300 600 800 1200"}
 DEV=${DEV:-cuda:1}
 ITERS=${ITERS:-600}
+RSEED=${RSEED:-1}
+SKIP_PRIOR=${SKIP_PRIOR:-0}
+RUNS=${RUNS:-runs}   # run folders, registry.jsonl and logs (init files always under runs/inits)
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-mkdir -p runs/logs runs/inits
-LOG=runs/logs/launch_large_d_w0q.log
+mkdir -p $RUNS/logs runs/inits
+LOG=$RUNS/logs/launch_large_d_w0q.log
 say() { echo "$(date '+%m-%d %H:%M:%S')  $*" | tee -a "$LOG"; }
 
 overaligned_init() {   # theory-sampled start with extra neurons moved into the outer wells
@@ -44,20 +50,21 @@ run_chain() {   # d init [init-file] tag
   local d=$1 INIT=$2 FILE=$3 TAG=$4 G=w0q_d$1
   read -r P T SA0 <<< "$($PY -c "r=$d/150; print(round(3000*r*r), repr(2*0.015*r), repr((8/1500)/r))")"
   local extra=""; [ -n "$FILE" ] && extra="--init-file $FILE"
-  say "start $G $TAG (P=$P)"
+  say "start $G $TAG r$RSEED (P=$P, HMC_DATA_RNG=${HMC_DATA_RNG:-native})"
   $PY train_collapsed_hmc.py --d $d --P $P --N 1500 --T $T --s0 0.5 --sa0 $SA0 --eps -0.7348469228349533 --seed 0 \
     --dtype float32 --leapfrog 24 --step0 0.08 --target-acc 0.8 --iters $ITERS --burn 200 --obs-every 5 --save-every 4 \
     --chains 1 --gibbs-every 6 --gibbs-mode w0q --group $G --tag ${G}_$TAG --device $DEV \
-    --init $INIT $extra --rng-seed 1 > runs/logs/${G}_${TAG}.log 2>&1 &
+    --init $INIT $extra --rng-seed $RSEED --runs-root $RUNS > $RUNS/logs/${G}_${TAG}_r${RSEED}.log 2>&1 &
   local pid=$!
-  $PY gpu_governor.py --pids $pid --hot 76 --cool 68 --poll 0.1 --log runs/logs/${G}_governor.log > /dev/null 2>&1 &
-  wait $pid; wait
-  if grep -q Traceback runs/logs/${G}_${TAG}.log; then say "FAILED $G $TAG"; else say "done $G $TAG"; fi
+  $PY gpu_governor.py --pids $pid --hot 76 --cool 68 --poll 0.1 --log $RUNS/logs/${G}_governor_r${RSEED}.log > /dev/null 2>&1 &
+  wait $pid; local rc=$?; wait
+  local clog=$RUNS/logs/${G}_${TAG}_r${RSEED}.log
+  if [ $rc -ne 0 ] || [ ! -s $clog ] || grep -q Traceback $clog; then say "FAILED $G $TAG r$RSEED (exit $rc)"; else say "done $G $TAG r$RSEED"; fi
 }
 
 for d in $DS; do
   [ -f runs/inits/w0q_d${d}_overaligned_init.pt ] || overaligned_init $d
-  run_chain $d prior "" prior
+  [ "$SKIP_PRIOR" = 1 ] || run_chain $d prior "" prior
   run_chain $d file runs/inits/w0q_d${d}_overaligned_init.pt overaligned
 done
 say "finished"

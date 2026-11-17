@@ -1,0 +1,618 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,bm}
+\usepackage{mathtools}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\title{Three-layer erf networks: equations of state in Hermite matrix elements\\
+\large with a non-Gaussian hidden field}
+\author{Akiva Lipshitz}
+\date{\today}
+
+\newtheorem{remark}{Remark}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\erf}{\operatorname{erf}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\He}{\mathrm{He}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We derive mean-field equations of state for the Bayesian posterior of a three-layer erf network trained on a target
+$\He_1+\varepsilon\He_3$.
+We work in the subspace spanned by the odd Hermite polynomials $\He_1,\He_3,\dots,\He_{n_{\max}}$ of the target direction, and keep every kernel as a full matrix in this subspace.
+The second hidden layer's field $h$ keeps its exact, non-Gaussian distribution, and the read-in weights keep their exact distribution
+in the two coordinates (aligned component, perpendicular norm) that the equations depend on.
+The term that the hidden layer adds to the action of each read-in row has the form $J^{-1}(J-H)J^{-1}$ whether or not $h$ is Gaussian.
+Making every kernel diagonal and linearising the hidden nonlinearity reduces the system to three scalar equations.
+Finally, we show why the equations at infinite first-layer width do not reduce to those of a two-layer network.
+\end{abstract}
+
+%% ================================================================
+\section{Model and notation}
+%% ================================================================
+\paragraph{Network.}
+\begin{equation}
+  f(x)=\sum_{k=1}^{N_2}a_k\,\erf\big(h_k(x)\big),\qquad
+  h_k(x)=\sum_{j=1}^{N_1}B_{kj}\,\erf(w_j\cdot x),\qquad x\in\mathbb R^d .
+  \label{eq:net}
+\end{equation}
+The inputs are $x\sim\mathcal N(0,I_d)$.
+The target is $y(x)=\He_1(x_0)+\varepsilon\He_3(x_0)$, where $x_0=v_*\cdot x$ for a unit vector $v_*$, and
+$\He_3(z)=(z^3-3z)/\sqrt6$.
+We write $\Phi=\erf$ when it acts as an activation.
+
+\paragraph{Posterior.}
+We use the dataset-averaged form of the likelihood, in which the sum over $P$ training points is replaced by $P$ times the population
+average. The posterior is then $p\propto e^{-S_0}$ with
+\begin{equation}
+  S_0=\frac{N_2\chi}{2\sigma_A^2}\|a\|^2+\frac{N_1}{2\sigma_B^2}\|B\|^2+\frac{d}{2\sigma_w^2}\|W\|^2
+  +\frac{P\chi}{2\kappa}\,\|f-y\|_x^2 .
+  \label{eq:S0}
+\end{equation}
+
+\paragraph{Inner products.}
+We write $\langle g\mid h\rangle_x=\int d\mu_x\,g(x)h(x)$ and $\|g\|_x^2=\langle g|g\rangle_x$, with $d\mu_x$ the Gaussian input measure.
+A kernel acts as $\langle g\mid A\mid h\rangle=\iint d\mu_xd\mu_{x'}\,g(x)A(x,x')h(x')$.
+
+\paragraph{The Hermite subspace.}
+Let $\varphi_n(x)=\He_n(x_0)/\sqrt{n!}$.
+These are orthonormal, $\langle\varphi_m|\varphi_n\rangle_x=\delta_{mn}$.
+We work in the subspace of functions
+\begin{equation*}
+  \mathrm{span}\{\varphi_1,\varphi_3,\dots,\varphi_{n_{\max}}\}
+  =\mathrm{span}\{\He_1(x_0),\He_3(x_0),\dots,\He_{n_{\max}}(x_0)\}.
+\end{equation*}
+Its index set is $S=\{1,3,\dots,n_{\max}\}$ and its dimension is $s=(n_{\max}+1)/2$.
+The target lies in this subspace.
+The part of a function orthogonal to the subspace is marked with $\perp$.
+For a kernel $A(x,x')$, the bold symbol $\mathbf A$ denotes the $s\times s$ matrix of its elements in the subspace,
+\begin{equation*}
+  A_{mn}=\langle\varphi_m|A|\varphi_n\rangle,\qquad m,n\in S.
+\end{equation*}
+All entries are kept, \emph{including} those with $m\neq n$.
+Bold lower-case letters are column vectors of length $s$, with one entry per $n\in S$; for the target,
+$\mathbf y=(y_1,y_3,\dots,y_{n_{\max}})^\top=(1,\varepsilon,0,\dots,0)^\top$.
+
+\paragraph{Shorthands.}
+\begin{equation}
+  \beta=\frac{d}{2\sigma_w^2},\qquad \tilde g=\frac{\sigma_A^2\chi}{N_2},\qquad r_B=\sigma_B^2\,\frac{N_2}{N_1}.
+\end{equation}
+$\beta$ is the coefficient of $|w|^2$ in the prior of a read-in row.
+$\tilde g$ sets how strongly the data term acts on each hidden field $h_k$ (Section~2, eq.~\eqref{eq:Sh}).
+$r_B$ sets how strongly the $N_2$ hidden fields act back on each read-in row (eq.~\eqref{eq:oneW}):
+each of the $N_2$ hidden fields couples to a given read-in row through one weight $B_{kj}$ of variance $\sigma_B^2/N_1$,
+so the total is $N_2\cdot\sigma_B^2/N_1$.
+It vanishes when $N_1\to\infty$ at fixed $N_2$.
+
+%% ================================================================
+\section{Field theory and mean-field decoupling}
+%% ================================================================
+\paragraph{Fields.}
+Insert functional delta functions to define the output field $f$ and the hidden fields $h_k$, and represent them with conjugate fields
+$\tau$ and $\nu_k$.
+The weights $a$ and $B$ then appear linearly in the exponent, and the Gaussian integrals over them give
+\begin{multline}
+  S=\frac{d}{2\sigma_w^2}\|W\|^2-i\langle\tau|f\rangle-i\sum_{k}\langle\nu_k|h_k\rangle+\frac{P\chi}{2\kappa}\|f-y\|_x^2\\
+  +\frac{\sigma_A^2}{2N_2\chi}\sum_{k=1}^{N_2}\langle\tau\mid\Phi\circ h_k\rangle^2
+  +\frac{\sigma_B^2}{2N_1}\sum_{k=1}^{N_2}\sum_{j=1}^{N_1}\langle\nu_k\mid\Phi\circ W_j\rangle^2 ,
+  \label{eq:S}
+\end{multline}
+where $W_j$ is row $j$ of $W$ and $(\Phi\circ W_j)(x)=\erf(w_j\cdot x)$.
+The last two terms are quartic and couple the layers.
+
+\paragraph{Mean-field decoupling.}
+Each quartic term has the form $\frac12\iint X(x)X(x')\,Y(x)Y(x')$.
+We replace it by $\frac12\iint\big(\E[XX]\,YY+XX\,\E[YY]\big)$.
+This drops the product of the two fluctuations and a constant.
+Five kernels appear:
+\begin{equation}
+\begin{gathered}
+  J(x,x')=\E\big[\erf(w\cdot x)\erf(w\cdot x')\big],\qquad
+  K(x,x')=\E\big[\erf(h(x))\erf(h(x'))\big],\\
+  H(x,x')=\E[h(x)h(x')],\qquad
+  \mathcal V(x,x')=\E[\nu(x)\nu(x')],\qquad
+  \mathcal T(x,x')=\E[\tau(x)\tau(x')].
+\end{gathered}
+\label{eq:kernels}
+\end{equation}
+All neurons in a layer have the same distribution (the action is unchanged if they are permuted), so we drop the neuron indices.
+Each expectation is taken with the decoupled action, and that action itself contains the kernels; the kernels are therefore found
+by solving equations in which they appear on both sides (Section~5).
+After decoupling, the action is a sum of separate terms, each containing a single read-in row, a single hidden field, or the output:
+\begin{align}
+  &\text{read-in $W_j$:}&& \frac{d}{2\sigma_w^2}|W_j|^2+\frac{r_B}{2}\,\langle\Phi\circ W_j\mid\mathcal V\mid\Phi\circ W_j\rangle,
+  \label{eq:oneW}\\
+  &\text{hidden $h_k$:}&& -i\langle\nu_k|h_k\rangle+\frac{\sigma_B^2}{2}\langle\nu_k|J|\nu_k\rangle
+     +\frac{\sigma_A^2}{2N_2\chi}\langle\Phi\circ h_k\mid\mathcal T\mid\Phi\circ h_k\rangle,
+  \label{eq:oneh}\\
+  &\text{output:}&& -i\langle\tau|f\rangle+\frac{\sigma_A^2}{2\chi}\langle\tau|K|\tau\rangle+\frac{P\chi}{2\kappa}\|f-y\|_x^2 .
+  \label{eq:onef}
+\end{align}
+The factor $r_B=\sigma_B^2N_2/N_1$ in \eqref{eq:oneW} comes from $\sum_{k=1}^{N_2}\nu_k\nu_k\to N_2\mathcal V$.
+\emph{This is the only place where $N_1$ appears.}
+
+\paragraph{Output.}
+Integrating $f$ out of \eqref{eq:onef} leaves a Gaussian action for $\tau$,
+\begin{equation*}
+  -i\langle\tau|y\rangle+\tfrac1{2\chi}\langle\tau|\sigma_A^2K+\tfrac\kappa P|\tau\rangle .
+\end{equation*}
+Hence
+\begin{equation}
+  \E\tau=i\chi\,t,\qquad \big(\sigma_A^2K+\tfrac\kappa P\big)\,t=y,\qquad
+  \bar f=\E f=y-\tfrac\kappa P\,t=\sigma_A^2K\,t,
+  \label{eq:readout}
+\end{equation}
+and $\mathcal T=\chi(\sigma_A^2K+\tfrac\kappa P)^{-1}-\chi^2\,t(x)t(x')$.
+We keep the leading $O(\chi^2)$ part, $\mathcal T(x,x')\simeq-\chi^2\,t(x)t(x')$.
+The learnability of mode $n$ is $\mu_n=\bar f_n/y_n$.
+
+\paragraph{Hidden field.}
+In \eqref{eq:oneh}, $\nu_k$ appears only quadratically, so it can be integrated out:
+\begin{equation}
+  \int\!\mathcal D\nu\;\exp\!\big(i\langle\nu|h\rangle-\tfrac12\langle\nu|G|\nu\rangle\big)\;\propto\;\exp\!\big(-\tfrac12\langle h|G^{-1}|h\rangle\big),
+  \qquad G=\sigma_B^2J .
+  \label{eq:G}
+\end{equation}
+Inserting $\mathcal T(x,x')\simeq-\chi^2t(x)t(x')$, the action of one hidden field is
+\begin{equation}
+  S[h]=\tfrac12\langle h|G^{-1}|h\rangle-\frac{\tilde g}{2}\,\langle t\mid\erf\circ h\rangle^2 .
+  \label{eq:Sh}
+\end{equation}
+This action is \emph{not} quadratic in $h$, and we do not approximate it as quadratic.
+
+\paragraph{The kernel $\mathcal V$ acting on the read-in rows.}
+Given $h$, the action for $\nu$ is $-i\langle\nu|h\rangle+\frac12\langle\nu|G|\nu\rangle$.
+So $\nu$ is Gaussian with mean $iG^{-1}h$ and covariance $G^{-1}$, and
+$\E[\nu\nu\mid h]=G^{-1}-G^{-1}h\,h^\top G^{-1}$.
+The second term of \eqref{eq:Sh}, $-\frac{\tilde g}{2}\langle t|\erf\circ h\rangle^2$, depends on $h$ and not on $\nu$.
+So averaging over the distribution of $h$ gives, exactly,
+\begin{equation}
+  \mathcal V=G^{-1}(G-H)G^{-1},\qquad H=\E[hh].
+  \label{eq:V}
+\end{equation}
+This holds for any distribution of $h$, Gaussian or not.
+
+%% ================================================================
+\section{Reduction to Hermite matrix elements}
+%% ================================================================
+\paragraph{Read-in features.}
+Write a read-in row as $w=(w_0,w_\perp)$, where $w_0=w\cdot v_*$ and $q=|w_\perp|^2$, and let $D_w=1+2(w_0^2+q)$.
+At fixed $x_0$, $w\cdot x=w_0x_0+w_\perp\cdot x_\perp$ is exactly Gaussian over $x_\perp$, with variance $q$.
+Hence $\E_{x_\perp}\erf(w\cdot x)=\erf\big(w_0x_0/\sqrt{1+2q}\big)$.
+Gaussian integration by parts, $\E[g(x_0)\He_n(x_0)]=\E[g^{(n)}(x_0)]$, then gives
+\begin{gather}
+  c_n(w_0,q):=\langle\varphi_n\mid\erf(w\cdot x)\rangle_x
+  =\frac{2}{\sqrt\pi}\,\frac{(-2)^{\frac{n-1}{2}}(n-2)!!}{\sqrt{n!}}\;\frac{w_0^{\,n}}{D_w^{n/2}},
+  \label{eq:cn}\\
+  c_1=\frac{2}{\sqrt\pi}\frac{w_0}{D_w^{1/2}},\qquad
+  c_3=-\frac{4}{\sqrt{6\pi}}\frac{w_0^3}{D_w^{3/2}} . \nonumber
+\end{gather}
+The sign of $c_3$ is negative.
+It cancels in $\E c_3^2$, but it fixes the sign of $\E[c_1c_3]$.
+The arcsine identity $\E[\erf(u)\erf(u')]=\frac2\pi\arcsin\frac{2\,\mathrm{cov}(u,u')}{\sqrt{(1+2\,\mathrm{var}\,u)(1+2\,\mathrm{var}\,u')}}$ for jointly
+Gaussian $(u,u')$, applied over $x$, gives
+\begin{gather}
+  \|\erf(w\cdot x)\|_x^2=\frac2\pi\arcsin\frac{2|w|^2}{1+2|w|^2}, \nonumber\\
+  k(w,w'):=\langle\erf(w\cdot x)\mid\erf(w'\cdot x)\rangle_x
+  =\frac2\pi\arcsin\frac{2\,w\cdot w'}{\sqrt{(1+2|w|^2)(1+2|w'|^2)}} .
+  \label{eq:kww}
+\end{gather}
+The part of a feature outside the subspace has squared norm $P_\perp(w)=\|\erf(w\cdot x)\|_x^2-\sum_{n\in S}c_n^2$.
+
+\paragraph{First-layer kernel.}
+Collect the read-in features into the vector
+\begin{equation*}
+  \mathbf c(w)=\big(c_1(w),\,c_3(w),\,\dots,\,c_{n_{\max}}(w)\big)^\top\in\mathbb R^{s}.
+\end{equation*}
+Projecting $J$ in \eqref{eq:kernels} onto the subspace gives $J_{mn}=\E_w[c_m(w)c_n(w)]$, that is,
+\begin{equation}
+  \mathbf J=\E_w\big[\mathbf c\,\mathbf c^\top\big],\qquad \mathbf G=\sigma_B^2\mathbf J ,
+  \label{eq:JS}
+\end{equation}
+where $\E_w$ is over the distribution of read-in weights, which is non-Gaussian in the feature-learning regime \eqref{eq:readin}.
+
+\paragraph{The hidden field in the subspace.}
+Expand $h(x)=\sum_{n\in S}h_n\varphi_n(x)+h_\perp(x)$ with $h_n=\langle\varphi_n|h\rangle_x$, and write
+$\mathbf h=(h_1,h_3,\dots,h_{n_{\max}})^\top$.
+Under the prior \eqref{eq:G}, $\mathbf h\sim\mathcal N(0,\mathbf G)$.
+Here $\mathbf h$ holds the $s$ components of $h$ in the subspace and $h_\perp$ is the rest of $h$.
+We take the covariance of $h_\perp$ to be $G$ with its block in the subspace removed:
+\begin{equation}
+  G_\perp(x,x')=G(x,x')-\sum_{m,n\in S}\varphi_m(x)\,G_{mn}\,\varphi_n(x').
+  \label{eq:Gperp}
+\end{equation}
+\paragraph{Hermite coefficients of the hidden activation.}
+Since $y$ lies in the subspace, so does $t$ in \eqref{eq:readout}, which is then the vector $\mathbf t=(t_1,t_3,\dots,t_{n_{\max}})^\top$.
+The second term of \eqref{eq:Sh} then involves the activation $\erf\circ h$ only through its Hermite coefficients
+\begin{equation*}
+  e_n:=\langle\varphi_n\mid\erf\circ h\rangle_x,\qquad n\in S,\qquad
+  \mathbf e=(e_1,e_3,\dots,e_{n_{\max}})^\top,
+\end{equation*}
+since $\langle t\mid\erf\circ h\rangle=\mathbf t\cdot\mathbf e$.
+They play for the hidden field the role that $c_n$ plays for a read-in row.
+To compute them, split $h(x)=a(x_0)+h_\perp(x)$ with $a(x_0)=\sum_{m\in S}h_m\varphi_m(x_0)$.
+The remaining part $h_\perp$ enters only through one number, its squared norm
+\begin{equation}
+  q_h:=\|h_\perp\|_x^2=\int d\mu_x\,h_\perp(x)^2 ,
+\end{equation}
+because at fixed $x_0$ we treat $h_\perp(x)$ as a Gaussian variable over $x_\perp$ with variance $q_h$.
+The identity $\E_\xi\erf(a+\sqrt q\,\xi)=\erf\big(a/\sqrt{1+2q}\big)$ for $\xi\sim\mathcal N(0,1)$, already used for $c_n$, then gives
+\begin{equation}
+  e_n(\mathbf h,q_h)
+  =\E_{x_0}\!\Big[\varphi_n(x_0)\,\erf\Big(\frac{\sum_{m\in S}h_m\varphi_m(x_0)}{\sqrt{1+2q_h}}\Big)\Big],
+  \qquad x_0\sim\mathcal N(0,1).
+  \label{eq:Psi}
+\end{equation}
+This keeps the full dependence on $\mathbf h$; it is not linearised.
+For $\mathbf h=(h_1,0,0,\dots)^\top$ it reduces to $e_n=c_n(h_1,q_h)$.
+
+\paragraph{The distribution of $q_h$.}
+Let $G_\perp(x,x')=\sum_\ell\lambda^\perp_\ell\,\psi_\ell(x)\psi_\ell(x')$ be the eigen-expansion of $G_\perp$.
+Its eigenfunctions $\psi_\ell$ are orthonormal and orthogonal to every $\varphi_n$.
+Under the prior, $h_\perp=\sum_\ell\sqrt{\lambda^\perp_\ell}\,g_\ell\psi_\ell$ with independent $g_\ell\sim\mathcal N(0,1)$, so
+\begin{equation*}
+  q_h=\|h_\perp\|_x^2=\sum_\ell\lambda^\perp_\ell\,g_\ell^2,\qquad
+  \E q_h=\sum_\ell\lambda^\perp_\ell=\tr G_\perp,\qquad
+  \operatorname{Var}q_h=2\sum_\ell(\lambda^\perp_\ell)^2=2\tr G_\perp^2 ,
+\end{equation*}
+using $\E g^2=1$ and $\operatorname{Var}g^2=2$.
+
+\emph{Equal eigenvalues.}
+Suppose $G_\perp$ had exactly $M$ nonzero eigenvalues, all equal to $\lambda$.
+Then $q_h=\lambda\sum_{\ell=1}^Mg_\ell^2$ is $\lambda$ times a chi-squared variable with $M$ degrees of freedom, and its density is
+\begin{equation*}
+  p(q_h)=\frac{q_h^{M/2-1}\,e^{-q_h/(2\lambda)}}{\Gamma(M/2)\,(2\lambda)^{M/2}},
+  \qquad \E q_h=M\lambda,\quad \operatorname{Var}q_h=2M\lambda^2,
+\end{equation*}
+where $\Gamma(\cdot)$ is the Gamma function.
+
+\emph{General eigenvalues.}
+For unequal $\lambda^\perp_\ell$, the density of $\sum_\ell\lambda^\perp_\ell g_\ell^2$ has no closed form.
+We approximate it by the density of the same form, written in terms of its mean $\bar q_h=M\lambda$:
+\begin{equation}
+  p(q_h)\;\propto\;q_h^{M/2-1}\exp\!\Big(-\frac{M\,q_h}{2\bar q_h}\Big),
+  \qquad \E q_h=\bar q_h,\quad \operatorname{Var}q_h=\frac{2\bar q_h^{\,2}}{M}.
+  \label{eq:gamma}
+\end{equation}
+Here $M$ is allowed to be any real number $M>0$.
+We fix $\bar q_h$ and $M$ by requiring the mean and the variance to match the exact ones:
+\begin{equation}
+  \bar q_h=\tr G_\perp,\qquad
+  \frac{2\bar q_h^{\,2}}{M}=2\tr G_\perp^2
+  \quad\Longrightarrow\quad
+  M=\frac{(\tr G_\perp)^2}{\tr G_\perp^2}=\frac{\big(\sum_\ell\lambda^\perp_\ell\big)^2}{\sum_\ell(\lambda^\perp_\ell)^2}.
+  \label{eq:M}
+\end{equation}
+$M$ is the effective number of directions in which $h_\perp$ fluctuates.
+It equals the number of nonzero eigenvalues when they are all equal, and is smaller when they are spread out.
+
+\paragraph{The traces.}
+Using $\langle\varphi_m|\varphi_n\rangle=\delta_{mn}$ and exchanging the $x$- and $w$-averages,
+\begin{align}
+  \bar q_h&=\sigma_B^2\Big(\E_w\|\erf(w\cdot x)\|_x^2-\tr \mathbf J\Big),
+  \label{eq:qbar}\\
+  \tr G_\perp^2&=\sigma_B^4\Big(\E_{w,w'}\big[k(w,w')^2\big]-\|\mathbf J\|_F^2\Big).
+  \label{eq:trG2}
+\end{align}
+The second line uses $\iint J(x,x')^2=\E_{w,w'}\langle\erf(w\cdot x)|\erf(w'\cdot x)\rangle_x^2$, with $w,w'$ independent draws from the distribution of read-in weights.
+Writing $w\cdot w'=w_0w_0'+\sqrt{qq'}\,u$, the cosine $u$ between two independent directions in $\mathbb R^{d-1}$ has density
+$\propto(1-u^2)^{(d-4)/2}$.
+
+\begin{remark}
+Equation \eqref{eq:Gperp} treats $\mathbf h$ and $h_\perp$ as independent.
+The exact covariance of $h_\perp=h-\sum_{n\in S}h_n\varphi_n$ also subtracts the cross terms:
+\begin{equation*}
+  G(x,x')-\sum_{n\in S}\Big[\varphi_n(x)\,(G\varphi_n)(x')+(G\varphi_n)(x)\,\varphi_n(x')\Big]+\sum_{m,n\in S}\varphi_m(x)\,G_{mn}\,\varphi_n(x'),
+\end{equation*}
+where $(G\varphi_n)(x)=\int d\mu_{x'}\,G(x,x')\varphi_n(x')$.
+It has the same trace, but its squared trace norm is smaller by
+$2\sum_{n\in S}\big(\|G\varphi_n\|_x^2-\sum_{m\in S}G_{mn}^2\big)\ge0$.
+So \eqref{eq:Gperp} slightly underestimates $M$; $\bar q_h$ is unaffected.
+\end{remark}
+
+%% ================================================================
+\section{The distribution of each layer}
+%% ================================================================
+\paragraph{Hidden field.}
+The action \eqref{eq:Sh} governs the hidden field $h$.
+After the steps of Section~3, $h$ is described by $s+1$ numbers: its $s$ components $\mathbf h=(h_1,h_3,\dots,h_{n_{\max}})^\top$
+in the subspace, and the squared norm $q_h$ of its part outside the subspace.
+Combining the Gaussian prior of $\mathbf h$, the distribution \eqref{eq:gamma} of $q_h$, and the second term of \eqref{eq:Sh},
+their joint distribution is
+\begin{equation}
+  -\log p(\mathbf h,q_h)=\tfrac12\,\mathbf h^\top \mathbf G^{-1}\mathbf h
+  -\big(\tfrac M2-1\big)\log q_h+\tfrac{M}{2\bar q_h}\,q_h
+  -\frac{\tilde g}{2}\,\big(\mathbf t\cdot\mathbf e(\mathbf h,q_h)\big)^2 .
+  \label{eq:middle}
+\end{equation}
+$\mathbf e$ is bounded and nonlinear in $\mathbf h$, so the distribution is not Gaussian, and $-\log p$ can have local minima away from the origin.
+All expectations in this note are over the full distributions, including any such minima.
+
+Its moments give the matrices in the subspace of the kernels \eqref{eq:kernels}:
+\begin{equation}
+  \mathbf K=\E\big[\mathbf e\,\mathbf e^\top\big],\qquad
+  \mathbf H=\E\big[\mathbf h\,\mathbf h^\top\big],\qquad
+  \langle q_h\rangle=\E[q_h].
+  \label{eq:moments}
+\end{equation}
+
+\paragraph{Read-in layer.}
+Split $\Phi\circ w=\sum_{n\in S}c_n\varphi_n+(\Phi\circ w)_\perp$, and treat $\mathcal V$ as having no elements that connect the subspace to its
+orthogonal complement.
+In the subspace, \eqref{eq:V} gives $\boldsymbol{\mathcal V}=\mathbf G^{-1}(\mathbf G-\mathbf H)\mathbf G^{-1}$.
+Outside the subspace, we again treat $G_\perp$ as having $M$ equal eigenvalues, as in \eqref{eq:gamma}: take $G_\perp\simeq\frac{\bar q_h}{M}\Pi_M$ and
+$H_\perp\simeq\frac{\langle q_h\rangle}{M}\Pi_M$, where $\Pi_M$ projects onto $M$ of the $\psi_\ell$.
+These have the trace $\bar q_h$ and the effective number of directions $M$ of \eqref{eq:M}.
+This gives $\mathcal V_\perp\simeq\frac{M(\bar q_h-\langle q_h\rangle)}{\bar q_h^{\,2}}\Pi_M$.
+In the coordinates $(w_0,q)$, with the Jacobian $q^{(d-3)/2}$ of $w_\perp\mapsto q$, the action \eqref{eq:oneW} of a read-in row becomes
+\begin{multline}
+  -\log p(w_0,q)=\beta(w_0^2+q)-\tfrac{d-3}{2}\log q
+  +\frac{r_B}{2}\,\mathbf c^\top \mathbf G^{-1}\big(\mathbf G-\mathbf H\big)\mathbf G^{-1}\mathbf c\\
+  +\frac{r_B}{2}\,\frac{M\big(\bar q_h-\langle q_h\rangle\big)}{\bar q_h^{\,2}}\,P_\perp(w)
+  +\text{const}.
+  \label{eq:readin}
+\end{multline}
+The first $r_B$ term contains $c_1^2\propto w_0^2/D_w$, $c_3^2\propto w_0^6/D_w^3$, and the cross term $c_1c_3\propto w_0^4/D_w^2$.
+None of them is dropped.
+
+\begin{remark}[Variational form of the readout]
+Let $Z_h(\mathbf t)$ be the normaliser of \eqref{eq:middle}.
+Then $\nabla_{\mathbf t}\log Z_h=\tilde g\,\mathbf K\mathbf t$, so the readout condition \eqref{eq:readout} is the stationarity condition of the convex potential
+\begin{equation}
+  \mathcal F(\mathbf t)=\frac{\kappa}{2P}|\mathbf t|^2+\frac{N_2}{\chi}\log Z_h(\mathbf t)-\mathbf y\cdot \mathbf t,
+  \qquad
+  \nabla^2\mathcal F=\tfrac\kappa P+\sigma_A^2\big(\mathbf K+\tilde g\,\operatorname{Cov}[(\mathbf t\cdot\mathbf e)\mathbf e]\big).
+\end{equation}
+\end{remark}
+
+%% ================================================================
+\section{The closed system}
+%% ================================================================
+The unknowns are $(\mathbf J,\bar q_h,M)$ for the read-in layer and $\mathbf t=(t_1,t_3,\dots,t_{n_{\max}})^\top$ for the readout.
+The constants are $\beta=d/(2\sigma_w^2)$, $\tilde g=\sigma_A^2\chi/N_2$ and $r_B=\sigma_B^2N_2/N_1$.
+The variables and functions that appear are the following.
+\begin{itemize}
+  \item A read-in row is $w=(w_0,w_\perp)$, with $w_0=w\cdot v_*$ its component along the target direction and
+    $q=|w_\perp|^2$ the squared norm of the rest. Let $D_w=1+2(w_0^2+q)$.
+  \item $\mathbf c(w_0,q)=(c_1,c_3,\dots,c_{n_{\max}})^\top$ are the Hermite coefficients of the first-layer activation,
+    $c_n=\langle\varphi_n|\erf(w\cdot x)\rangle_x
+    =\frac{2}{\sqrt\pi}\frac{(-2)^{(n-1)/2}(n-2)!!}{\sqrt{n!}}\frac{w_0^n}{D_w^{n/2}}$, eq.~\eqref{eq:cn}.
+  \item $\mathbf h=(h_1,h_3,\dots,h_{n_{\max}})^\top$, with $h_n=\langle\varphi_n|h\rangle_x$, are the components of the hidden field
+    $h$ in the subspace, and $q_h=\|h_\perp\|_x^2$ is the squared norm of its part outside the subspace.
+  \item $\mathbf e(\mathbf h,q_h)=(e_1,e_3,\dots,e_{n_{\max}})^\top$ are the Hermite coefficients of the hidden activation,
+    $e_n=\langle\varphi_n|\erf\circ h\rangle_x
+    =\E_{x_0}\big[\varphi_n(x_0)\,\erf\big(\sum_{m\in S}h_m\varphi_m(x_0)/\sqrt{1+2q_h}\big)\big]$, eq.~\eqref{eq:Psi}.
+  \item $k(w,w')=\frac2\pi\arcsin\frac{2\,w\cdot w'}{\sqrt{(1+2|w|^2)(1+2|w'|^2)}}$ is the overlap of two first-layer
+    activations, eq.~\eqref{eq:kww}, and $\|\erf(w\cdot x)\|_x^2=k(w,w)$.
+  \item $P_\perp(w)=k(w,w)-|\mathbf c(w)|^2$ is the squared norm of the first-layer activation outside the subspace.
+\end{itemize}
+\begin{align}
+  &\text{(E1)}\quad \mathbf G=\sigma_B^2\mathbf J, \nonumber\\
+  &\text{(E2)}\quad p(\mathbf h,q_h)\propto e^{-\frac12\mathbf h^\top\mathbf G^{-1}\mathbf h}\,q_h^{\frac M2-1}e^{-\frac{Mq_h}{2\bar q_h}}\,
+      \exp\!\big[\tfrac{\tilde g}{2}(\mathbf t\cdot\mathbf e(\mathbf h,q_h))^2\big], \nonumber\\
+  &\text{(E3)}\quad \mathbf K=\E[\mathbf e\mathbf e^\top],\quad \mathbf H=\E[\mathbf h\mathbf h^\top],\quad\langle q_h\rangle=\E q_h, \nonumber\\
+  &\text{(E4)}\quad (\sigma_A^2\mathbf K+\kappa/P)\,\mathbf t=\mathbf y,\qquad \bar{\mathbf f}=\sigma_A^2\mathbf K\mathbf t, \nonumber\\
+  &\text{(E5)}\quad p(w_0,q)\propto q^{\frac{d-3}{2}}\exp[-\beta(w_0^2+q)]
+      \exp\Big[-\tfrac{r_B}{2}\mathbf c^\top \mathbf G^{-1}(\mathbf G-\mathbf H)\mathbf G^{-1}\mathbf c
+      -\tfrac{r_B}{2}\tfrac{M(\bar q_h-\langle q_h\rangle)}{\bar q_h^2}P_\perp\Big], \nonumber\\
+  &\text{(E6)}\quad \mathbf J=\E[\mathbf c\mathbf c^\top], \nonumber\\
+  &\text{(E7)}\quad \bar q_h=\sigma_B^2\big(\E\|\erf(w\cdot x)\|_x^2-\tr \mathbf J\big), \nonumber\\
+  &\text{(E8)}\quad M=\bar q_h^{\,2}\big/\sigma_B^4\big(\E_{w,w'}k(w,w')^2-\|\mathbf J\|_F^2\big). \nonumber
+\end{align}
+
+%% ================================================================
+\section{The diagonal, Gaussian limit}\label{sec:reduce}
+%% ================================================================
+Three further approximations reduce (E1)--(E8) to three scalar equations.
+Define $\gamma(A)=\frac{2}{\sqrt\pi}(1+2\tr A)^{-1/2}$, and write $\gamma_H=\gamma(H)$ and $\gamma_\Sigma=\gamma(\Sigma)$, where $\Sigma$ is
+the covariance of a read-in row.
+
+\paragraph{(a) Linearise $\mathbf e$.}
+Set $e_n\approx\gamma_H h_n$, with $q_h\to\tr H$.
+Then (E2) is Gaussian, $\mathbf K=\gamma_H^2\mathbf H$, and
+\begin{equation}
+  \mathbf H=\big(\mathbf G^{-1}-\tilde g\gamma_H^2\,\mathbf t\mathbf t^\top\big)^{-1}
+     =\mathbf G+\frac{\tilde g\gamma_H^2\,\mathbf G\mathbf t\,\mathbf t^\top \mathbf G}{1-\tilde g\gamma_H^2\,\mathbf t^\top \mathbf G\mathbf t}.
+  \label{eq:Hgauss}
+\end{equation}
+
+\paragraph{(b) Keep only the diagonal.}
+Write $\lambda^H_n=H_{nn}$, and keep $H_{nn}=[G_{nn}^{-1}-\tilde g\gamma_H^2t_n^2]^{-1}$ with $t_n=y_n/(\kappa/P+\sigma_A^2\gamma_H^2\lambda^H_n)$:
+\begin{equation}
+  \lambda^H_n=\Big[\frac{1}{G_{nn}}-\tilde g\,\frac{\gamma_H^2\,y_n^2}{\big(\kappa/P+\sigma_A^2\gamma_H^2\lambda^H_n\big)^2}\Big]^{-1},
+  \qquad n=1,3 .
+  \label{eq:lamH}
+\end{equation}
+Step (b) is separate from step (a).
+Even when $\mathbf G$ is diagonal, \eqref{eq:Hgauss} has
+\begin{equation}
+  H_{13}=\frac{\tilde g\gamma_H^2\,G_{11}G_{33}\,t_1t_3}{1-\tilde g\gamma_H^2(G_{11}t_1^2+G_{33}t_3^2)}\neq0 .
+\end{equation}
+
+\paragraph{(c) Gaussian read-in.}
+Take $w\sim\mathcal N(0,\Sigma)$, with eigenvalue $\lambda^\Sigma$ along $v_*$.
+Keep only the $c_1^2$ term of (E5), with $D_w\to1+2\tr\Sigma$, so that $c_1^2=\gamma_\Sigma^2w_0^2$.
+Then $J_{11}=\gamma_\Sigma^2\lambda^\Sigma$ and, from $\E w_0^6=15(\lambda^\Sigma)^3$,
+$J_{33}=\frac{40(\lambda^\Sigma)^3}{\pi(1+2\tr\Sigma)^3}$.
+The precision along $v_*$ is $2\beta+r_B\gamma_\Sigma^2\mathcal V_{11}$, with
+$\mathcal V_{11}=(G_{11}-H_{11})/G_{11}^2$.
+At $\sigma_B=\sigma_w=1$ this is
+\begin{equation}
+  \lambda^\Sigma=\Big[d+\frac{N_2}{N_1}\,\frac{1}{\gamma_\Sigma^2}\,
+  \frac{\gamma_\Sigma^2\lambda^\Sigma-\lambda^H_1}{(\lambda^\Sigma)^2}\Big]^{-1}.
+  \label{eq:lamS}
+\end{equation}
+Equations \eqref{eq:lamH} (for $n=1,3$, with $G_{nn}=J_{nn}$) and \eqref{eq:lamS} form a closed system for
+$(\lambda^H_1,\lambda^H_3,\lambda^\Sigma)$.
+
+%% ================================================================
+\section{Infinite first layer is not a two-layer network}\label{sec:limit}
+%% ================================================================
+By \eqref{eq:oneW}, $N_1$ enters only through $r_B=\sigma_B^2N_2/N_1$.
+At $N_1=\infty$ the term $\frac{r_B}{2}\langle\Phi\circ W_j|\mathcal V|\Phi\circ W_j\rangle$ in \eqref{eq:oneW} vanishes: (E5) becomes the prior, and in the diagonal limit \eqref{eq:lamS} gives $\lambda^\Sigma=\sigma_w^2/d$.
+What remains is (E2)--(E4), the distribution of $h$ with a \emph{fixed} prior.
+That prior has covariance $\mathbf G^0=\sigma_B^2\E_{\rm prior}[\mathbf c\mathbf c^\top]$, perpendicular mean $\bar q^{\,0}_h$, and dimension $M^0$.
+
+\paragraph{Two-layer network in the same variables.}
+For $f=\sum_ka_k\erf(w_k\cdot x)$ the same construction gives a single-neuron distribution for $w$:
+\begin{equation}
+  -\log p(w_0,q)=\beta(w_0^2+q)-\tfrac{d-3}{2}\log q-\frac{\tilde g}{2}\big(\mathbf t\cdot\mathbf c(w_0,q)\big)^2 .
+\end{equation}
+Because $e_n(h_1,0,\dots;q)=c_n(h_1,q)$, this is (E2) with $\mathbf h=(w_0,0,0,\dots)$, $q_h=q$, and
+\begin{equation}
+  \mathbf G^{\rm 2L}=\mathrm{diag}\big(\tfrac{\sigma_w^2}{d},0,0,\dots\big),\qquad
+  \bar q^{\,\rm 2L}=\sigma_w^2\tfrac{d-1}{d},\qquad M^{\rm 2L}=d-1 .
+\end{equation}
+Here $q=|w_\perp|^2$ is $\sigma_w^2/d$ times a sum of $d-1$ squared standard normals, so \eqref{eq:gamma} with $M=d-1$ is exact.
+So the three-layer equations at $N_1=\infty$ coincide with the two-layer ones if and only if
+$(\mathbf G^0,\bar q^{\,0}_h,M^0)=(\mathbf G^{\rm 2L},\bar q^{\,\rm 2L},M^{\rm 2L})$.
+
+\paragraph{The infinite first layer.}
+From \eqref{eq:cn}, with $w_0\sim\mathcal N(0,\sigma_w^2/d)$ and $D_w\approx D_0=1+2\sigma_w^2$, and with
+$\E w_0^2=\sigma_w^2/d$, $\E w_0^4=3\sigma_w^4/d^2$, $\E w_0^6=15\sigma_w^6/d^3$:
+\begin{equation}
+  J^0_{11}\simeq\frac{4}{\pi}\frac{\sigma_w^2}{dD_0},\qquad
+  J^0_{13}\simeq-\frac{24}{\sqrt6\,\pi}\frac{\sigma_w^4}{d^2D_0^2},\qquad
+  J^0_{33}\simeq\frac{40}{\pi}\frac{\sigma_w^6}{d^3D_0^3},\qquad
+  \rho_{13}=\frac{J^0_{13}}{\sqrt{J^0_{11}J^0_{33}}}=-\frac{3}{\sqrt{15}} .
+\end{equation}
+$\mathbf G^0$ is therefore not of the two-layer form.
+It carries He$_3$ content $\sqrt{G^0_{33}/G^0_{11}}\sim1/d$, with a fixed negative correlation $\rho_{13}=-0.775$ for every $d$.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{@{}rrrrrrr@{}}
+\toprule
+$d$ & $M^0$ & $d-1$ & $\bar q^{\,0}_h/G^0_{11}$ & $\sqrt{G^0_{33}/G^0_{11}}$ & $\mu_3$, 3 layers, $N_1=\infty$ & $\mu_3$, 2 layers\\
+\midrule
+75  & 88.4  & 74  & 81.1  & 0.0135 & 0.0695  & 0.1224\\
+150 & 178.2 & 149 & 163.2 & 0.0069 & $-0.1290$ & $-0.0869$\\
+300 &       &     &       &        & $-0.0956$ & $-0.0613$\\
+600 &       &     &       &        & $-0.0602$ & $-0.0428$\\
+1200&       &     &       &        & $-0.0384$ & $-0.0297$\\
+\bottomrule
+\end{tabular}
+\caption{Numerical solutions of (E1)--(E8) at $r_B=0$, with $P=3000$, $N_2=1600$, $\chi=10$, $\kappa=0.1$, $\varepsilon=0.074$,
+$\sigma_A=\sigma_B=\sigma_w=1$, $n_{\max}=11$.
+``2 layers'' is the two-layer distribution with its prior values $(\sigma_w^2/d,\ \sigma_w^2(d-1)/d,\ d-1)$ replaced by $(G^0_{11},\bar q^{\,0}_h,M^0)$.
+It agrees to 7--9 digits with (E1)--(E8) at $r_B=0$ with $G_{13}=G_{33}=0$.
+So the remaining difference is the He$_3$ content $G^0_{13},G^0_{33}$ of the infinite first layer.}
+\label{tab:limit}
+\end{table}
+
+\paragraph{Where the He$_3$ eigenvalue of $H$ comes from.}
+\begin{itemize}
+  \item \emph{Diagonal, Gaussian limit.} By \eqref{eq:lamH}, the only source of $\lambda^H_3$ is $1/G_{33}$, which is inherited from the first layer.
+    The two-layer network in the same limit has $G_{33}=0$, hence $\lambda^H_3=0$.
+    So every He$_3$ quantity differs between the models: $\lambda^H_3$ is nonzero for one and zero for the other.
+  \item \emph{Exact $\mathbf e$.} By \eqref{eq:Psi}, $e_3$ also contains a self-generated term,
+    $e_3\ni c_3(h_1,q_h)\propto-h_1^3/(1+2q_h)^{3/2}$.
+    This is the term the two-layer network uses.
+    It has size $\sim G_{11}^{3/2}\sim\sqrt{G_{11}}/d$, the same order as the inherited $\sqrt{G_{33}}\sim\sqrt{G_{11}}/d$.
+    The inherited part is correlated with $h_1$ with correlation $\rho_{13}<0$, so the two parts of $e_3$ partly cancel.
+    The models therefore differ in $\mu_3$ already at the order of $e_3$ itself.
+  \item $M^0\neq d-1$ and $\bar q^{\,0}_h/G^0_{11}\neq d-1$ (Table~\ref{tab:limit}) contribute further, through the distribution of $q_h$.
+\end{itemize}
+
+
+%% ================================================================
+\section{Approximations}
+%% ================================================================
+\begin{enumerate}
+  \item Dataset-averaged likelihood.
+  \item Mean-field decoupling of the quartic terms in \eqref{eq:S}, keeping the $O(\chi^2)$ part of $\mathcal T$.
+  \item Restriction to the subspace spanned by $\varphi_n$, $n\in S$; everything outside it enters only through $q_h$ and $P_\perp$.
+  \item At fixed $x_0$, $h_\perp$ is Gaussian over $x_\perp$, which gives \eqref{eq:Psi}.
+  \item The mean-and-variance approximation \eqref{eq:gamma}--\eqref{eq:M} for the distribution of $q_h$; the covariance \eqref{eq:Gperp} of $h_\perp$; and the equal-eigenvalue treatment of $\mathcal V$ outside the subspace.
+\end{enumerate}
+
+%% ================================================================
+\appendix
+\section{The exact posterior sampler and its fast implementation}\label{sec:sampler}
+%% ================================================================
+The equations of state are compared with samples from the exact posterior of \eqref{eq:net} on a fixed training set
+$\{x_\mu,y_\mu\}_{\mu=1}^P$, i.e.\ \eqref{eq:S0} with $P\|f-y\|_x^2$ replaced by $\sum_\mu(f(x_\mu)-y_\mu)^2$
+(code: \texttt{milestones/fcn3\_collapsed\_hmc}).
+
+\paragraph{Moves.}
+Each iteration leaves the posterior invariant.
+\begin{enumerate}
+  \item HMC on $(W,B)$ with the readout $a$ integrated out. Given $(W,B)$, $a$ is Gaussian, so the collapsed potential
+    $U(W,B)$ needs one $N_2\times N_2$ Cholesky factorisation of $M=G/v+I/s_a^2$, with $G=F_2^\top F_2$, $F_2=\erf(\erf(XW^\top)B^\top)$, $v=\kappa/\chi$, $s_a^2=\sigma_A^2/(N_2\chi)$.
+  \item $a\sim p(a\mid W,B)$, drawn exactly.
+  \item Every second iteration, a sweep of per-neuron jump moves.
+    A middle neuron $k$ moves $(B_k,a_k)$ jointly, with $a_k$ integrated out.
+    A read-in neuron $j$ moves $(w_j,B_{:,j})$ jointly, in the coordinates (aligned component $w_0$, perpendicular norm $q$) of Section~\ref{sec:reduce}.
+    Each is a multiple-try independence sampler whose proposal depends only on the other neurons.
+  \item The exact sign symmetries $(w_j,B_{:,j})\to-(w_j,B_{:,j})$ and $(B_k,a_k)\to-(B_k,a_k)$.
+\end{enumerate}
+
+\paragraph{Fast implementation.}
+The fast path (\texttt{fcn3\_fast.py}, the default since 2026-11-09) changes how these moves are computed, not the moves themselves.
+\begin{itemize}
+  \item \emph{HMC gradient in float32.} A leapfrog step built from any deterministic force $F(q)$,
+    \[p\to p+\epsilon F(q),\qquad q\to q+\epsilon p,\]
+    is a composition of shears. It is therefore volume preserving and, with the momentum flip, time reversible, whether or not $F=-\nabla U$.
+    HMC stays exact if the Metropolis test uses the exact $U$.
+    So the leapfrog uses a float32 gradient, and the float64 energy is evaluated only at the two ends of each trajectory.
+    On the RTX~5090, float64 runs at $1/64$ of the float32 rate, and the float64 Cholesky factorisation and inverse took about 90\% of the HMC time.
+  \item \emph{Sweeps without host synchronisation.}
+    One neuron update is captured in a CUDA graph and replayed $N_1$ or $N_2$ times.
+    The random numbers of a sweep are drawn in advance from the sampler's generator.
+    The choice among candidates is a Gumbel argmax, which has the same law as sampling from the softmax of the candidate weights.
+    The selected candidate is written back unconditionally; candidate 0 is the current state.
+  \item \emph{Fused kernels for the read-in move.}
+    For each candidate $c$, the predictions $\sum_k a_k\erf(h^0_k+\phi_c B_{kc})$ are summed without forming the
+    (candidates $\times P\times N_2$) array. Here $h^0=H-\erf(Xw_j)B_{:,j}^\top$ is the hidden pre-activation with neuron $j$ removed.
+    The conditional mean of $B_{:,j}$, which enters only the proposal, is computed in bfloat16.
+    Any deterministic function of the rest of the state is a valid proposal, so this precision affects the acceptance rate only.
+    All candidate energies keep the reference precision: float32 data terms, accumulated in float64.
+\end{itemize}
+
+\paragraph{Validation.}
+\begin{enumerate}
+  \item The fused kernels agree with direct float64 evaluation to $\sim10^{-7}$ (relative).
+    The float32 gradient agrees with the float64 one to $8\times10^{-7}$.
+    The graphed sweep makes bit-identical decisions to the eager one.
+  \item On a tiny network ($d=5$, $P=12$, $N_1=4$, $N_2=3$; $2\times10^4$ iterations each), three samplers of the same posterior agree:
+    reference HMC, fast HMC alone, and fast jump moves alone (no HMC).
+    Over eight statistics (moments of $w_0$, $|w_\perp|$, $B$, $a$ and of $f$ at test points), the 16 comparisons give $\max|z|=1.81$ (batch means).
+  \item Table~\ref{tab:fast} compares full chains at the $\kappa_0=0.015$ ray point.
+\end{enumerate}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+ & fast, prior start & reference, prior start & reference, aligned start\\
+\midrule
+$d\langle w_0^2\rangle$ & $7.07\pm0.01$ & $7.14\pm0.02$ & $7.43\pm0.02$\\
+$L_1$ & $1.029$ & $1.029$ & $1.030$\\
+$L_3$ & $0.5462$ & $0.5455$ & $0.5486$\\
+$H_{11}$ & $0.0348$ & $0.0350$ & $0.0359$\\
+$H_{33}$ & $0.0036$ & $0.0036$ & $0.0036$\\
+read-in mass at $|w_0|>0.5$ & $0.0185$ & $0.0188$ & $0.0200$\\
+HMC acceptance & $0.82$ & $0.73$ & $0.65$\\
+wall time (1000 iterations) & 452\,s & 2938\,s & 2541\,s\\
+\bottomrule
+\end{tabular}
+\caption{Fast and reference samplers at $d=150$, $P=3000$, $N_1=N_2=1500$, $\chi=1$, $\kappa=0.015$, $\varepsilon=-0.3\sqrt6$,
+$\sigma_A^2=8/1500$, $\sigma_B=1.2554$, $\sigma_w^2=1/2$. Each chain ran 1000 iterations with a burn-in of 300.
+Errors are batch means over 10 batches; they underestimate the spread between chains, since the two reference chains differ in $d\langle w_0^2\rangle$ by 0.29.
+The fast chain shared its GPU with another job; the reference chains did not.}
+\label{tab:fast}
+\end{table}
+
+\paragraph{Cost.}
+At the point of Table~\ref{tab:fast}, on an otherwise idle RTX~5090, one sweep (middle and read-in layers) takes $0.47$\,s and one HMC trajectory $0.07$\,s, against $4.2$\,s and $0.29$\,s for the reference implementation.
+With a sweep every second iteration this is $0.31$\,s per iteration, so about 5 minutes per 1000 iterations instead of 49.
+The read-in move costs $O(P N_2 n_c)$ per neuron, with $n_c=16$ candidates. A sweep therefore scales as $P N_1 N_2$, and doubling $N$ at fixed $P$ makes it about four times slower.
+The remaining cost is set mainly by the $P N_2 n_c$ erf evaluations per read-in neuron.
+A Taylor-series evaluation in $\phi_c B_{kc}$ with a rigorous remainder bound was tried and was not faster.
+\texttt{run\_fcn3.py --no-fast} runs the reference implementation.
+
+\end{document}

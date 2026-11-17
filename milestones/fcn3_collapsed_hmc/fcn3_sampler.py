@@ -24,6 +24,8 @@ One iteration (every step leaves the joint posterior invariant; this is a partia
      neurons of the same layer (they are exchangeable, so their population estimates the single-neuron law and
      carries jumps to wells other neurons have found), the prior, and a broad component that discovers new wells.
   4. Exact sign symmetries: (w_j, B[:, j]) -> -(w_j, B[:, j]) and B_k -> -B_k (a_k -> -a_k).
+  5. (every --count-every iterations) count_move: NCMC insert/delete of a read-in neuron in the outer well, with
+     the outgoing load shared among the outer neurons. The jumps of 3 never change that count (see count_move).
 """
 
 import math
@@ -481,6 +483,195 @@ class FCN3:
         return {"in_changed": changed / self.N1, "in_crossed": crossed / self.N1, "in_direct": n_direct / self.N1}
 
     # ---------------------------------------------------------------------------------------------- observables
+    # ---------------------------------------------------------------------------------------------- count move
+    # The read-in jump above never changes the number of read-in neurons in the outer (aligned) well: the benefit of
+    # an extra aligned neuron is that all aligned neurons share the outgoing load (prior cost of the load ~ L^2/2n),
+    # which a one-neuron move cannot realise (measured at d = 150: ~ -150 nats either way). This move changes the
+    # count by one with non-equilibrium candidate Monte Carlo (NCMC):
+    #   * neuron j's feature is interpolated alchemically, phi_lam = (1-lam) erf(X w_a) + lam erf(X w_b), and its prior
+    #     term likewise (endpoints = the two real states; no intermediate w0 between the wells is visited);
+    #   * with each lam step, 1/K of the load-sharing map is applied to the outgoing columns of the other outer
+    #     neurons O (fixed set) and j: insert B_O -> B_O - c s mu, B_j -> B_j + s_j eps n/(n+1) mu, with
+    #     mu = mean_k s_k B_k, c = eps/(n+1) (Jacobian (1-c)^N2); delete applies the exact inverse;
+    #   * between lam steps, one HMC trajectory on everything except w_j (reversible for the intermediate target).
+    # The protocol is palindromic (P M P ... M P), so the reverse of an insert is a delete with the reversed schedule,
+    # and log A = -work + sum log|det| + log q(reverse)/q(forward) (neuron selection, target density in (w0, log q)
+    # with sign symmetry, Cartesian Jacobian q^-(d-1)/2; the new perp direction is uniform both ways).
+
+    def _U_alch(self, ZW, ZB, j, phi, prior_j):
+        """Collapsed U with read-in neuron j's feature replaced by phi (P,) and its prior term by prior_j. Returns
+        (u, dU/dZW with row j zeroed, dU/dZB)."""
+        W, B = self.sw * ZW, self.sb * ZB
+        G = torch.zeros(self.N2, self.N2, dtype=F64, device=self.dev)
+        r = torch.zeros(self.N2, dtype=F64, device=self.dev)
+        for sl in self._chunks():
+            F1 = torch.erf(self.X[sl] @ W.T)
+            F1[:, j] = phi[sl]
+            F2 = torch.erf(F1 @ B.T)
+            G += (F2.T @ F2).double()
+            r += (F2.T @ self.Y[sl]).double()
+        M, L, z, b, ok = self._solve(G, r)
+        if not ok:
+            return float("inf"), None, None
+        logdet = 2 * torch.log(torch.diagonal(L)).sum() + self.P * math.log(self.v) + self.N2 * math.log(self.sa2)
+        zw2 = ZW.double().pow(2).sum(1)
+        zw2[j] = 0
+        u = (0.5 * zw2.sum() + prior_j + 0.5 * ZB.double().pow(2).sum() + 0.5 * (self.yy / self.v - b @ z)
+             + 0.5 * logdet)
+        Minv = torch.cholesky_inverse(L)
+        Gbar = (0.5 * (torch.outer(z, z) + Minv) / self.v).to(self.dt)
+        rbar = (-z / self.v).to(self.dt)
+        gW = torch.zeros_like(W)
+        gB = torch.zeros_like(B)
+        for sl in self._chunks():
+            A1 = self.X[sl] @ W.T
+            F1 = torch.erf(A1)
+            F1[:, j] = phi[sl]
+            Hc = F1 @ B.T
+            F2 = torch.erf(Hc)
+            dH = (2 * F2 @ Gbar + self.Y[sl][:, None] * rbar[None, :]) * (SQPI * torch.exp(-Hc * Hc))
+            gB += dH.T @ F1
+            dA1 = (dH @ B) * (SQPI * torch.exp(-A1 * A1))
+            dA1[:, j] = 0
+            gW += dA1.T @ self.X[sl]
+        gW = ZW + self.sw * gW
+        gW[j] = 0
+        return float(u), gW, ZB + self.sb * gB
+
+    def _hmc_masked(self, ZW, ZB, j, phi, pj, u, gW, gB, step, n_leap):
+        pW = torch.randn(ZW.shape, dtype=self.dt, device=self.dev, generator=self.gen)
+        pW[j] = 0
+        pB = torch.randn(ZB.shape, dtype=self.dt, device=self.dev, generator=self.gen)
+        H0 = u + 0.5 * float(pW.double().pow(2).sum() + pB.double().pow(2).sum())
+        zW, zB, gw, gb = ZW, ZB, gW, gB
+        pW = pW - 0.5 * step * gw
+        pB = pB - 0.5 * step * gb
+        un = u
+        for li in range(n_leap):
+            zW = zW + step * pW
+            zB = zB + step * pB
+            un, gw, gb = self._U_alch(zW, zB, j, phi, pj)
+            if gw is None:
+                return ZW, ZB, u, gW, gB, 0.0
+            if li < n_leap - 1:
+                pW = pW - step * gw
+                pB = pB - step * gb
+        pW = pW - 0.5 * step * gw
+        pB = pB - 0.5 * step * gb
+        H1 = un + 0.5 * float(pW.double().pow(2).sum() + pB.double().pow(2).sum())
+        acc = math.exp(min(0.0, H0 - H1)) if math.isfinite(H1) else 0.0
+        if float(torch.rand(1, device=self.dev, generator=self.gen)) < acc:
+            return zW, zB, un, gw, gb, acc
+        return ZW, ZB, u, gW, gB, acc
+
+    def _r2(self, ZW):
+        """r^2 = w0^2 / (1 + 2|w|^2) per read-in neuron: the read-in coefficients are c_n = a_n r^n. Separates the outer
+        well (r^2 ~ 0.24) from neurons in transit (|w0| similar but large q, r^2 ~ 0.07-0.13) and the inner well."""
+        w = ZW.double() * self.sw
+        return w[:, 0] ** 2 / (1 + 2 * (w * w).sum(1))
+
+    def _outer(self, ZW, thr):
+        return torch.nonzero(self._r2(ZW) > thr)[:, 0]
+
+    def _logq_inner(self, w0, lq):
+        s1, s2 = self.sw, math.sqrt(2 / (self.d - 1))
+        return -0.5 * (w0 / s1) ** 2 - 0.5 * ((lq - self.t0_w) / s2) ** 2 - math.log(2 * math.pi * s1 * s2)
+
+    def _logq_outer(self, w0, lq, ZW, idx, bw):
+        w = ZW[idx].double() * self.sw
+        p0, p1 = w[:, 0], torch.log(w[:, 1:].pow(2).sum(1))
+        k = torch.cat([-0.5 * ((w0 - s * p0) / bw[0]) ** 2 - 0.5 * ((lq - p1) / bw[1]) ** 2 for s in (1.0, -1.0)])
+        return float(torch.logsumexp(k, 0)) - math.log(2 * len(idx)) - math.log(2 * math.pi * bw[0] * bw[1])
+
+    @torch.no_grad()
+    def count_move(self, ZW, ZB, K=40, n_leap=16, step=0.03, thr=0.18, bw=(0.05, 0.05)):
+        """One NCMC insert or delete of a read-in neuron in the outer well (see the comment above): outer means
+        r^2 = w0^2/(1 + 2|w|^2) > thr. Returns (ZW, ZB, stats); the state is unchanged if the move is rejected."""
+        d, sw, N2 = self.d, self.sw, self.N2
+        gen, dev = self.gen, self.dev
+        O = self._outer(ZW, thr)
+        I = torch.nonzero(self._r2(ZW) <= thr)[:, 0]
+        insert = float(torch.rand(1, device=dev, generator=gen)) < 0.5
+        st = dict(count_insert=int(insert), count_acc=0, count_logA=float("nan"), count_n=len(O))
+        if (insert and (len(O) == 0 or len(I) == 0)) or (not insert and len(O) <= 1):
+            return ZW, ZB, st
+        nb = torch.randn(d - 1, dtype=F64, device=dev, generator=gen)
+        nb = nb / nb.norm()
+        if insert:
+            j = int(I[torch.randint(len(I), (1,), device=dev, generator=gen)])
+            k = int(O[torch.randint(len(O), (1,), device=dev, generator=gen)])
+            wk = ZW[k].double() * sw
+            sgn = 1.0 if float(torch.rand(1, device=dev, generator=gen)) < 0.5 else -1.0
+            w0b = sgn * abs(float(wk[0])) + bw[0] * float(torch.randn(1, dtype=F64, device=dev, generator=gen))
+            lqb = math.log(float(wk[1:].pow(2).sum())) + bw[1] * float(torch.randn(1, dtype=F64, device=dev, generator=gen))
+            if w0b ** 2 / (1 + 2 * (w0b ** 2 + math.exp(lqb))) <= thr:
+                return ZW, ZB, st
+            Ofix = O
+        else:
+            j = int(O[torch.randint(len(O), (1,), device=dev, generator=gen)])
+            w0b = sw * float(torch.randn(1, dtype=F64, device=dev, generator=gen))
+            lqb = self.t0_w + math.sqrt(2 / (d - 1)) * float(torch.randn(1, dtype=F64, device=dev, generator=gen))
+            if w0b ** 2 / (1 + 2 * (w0b ** 2 + math.exp(lqb))) > thr:
+                return ZW, ZB, st
+            Ofix = O[O != j]
+        wa = ZW[j].double() * sw
+        w0a, lqa = float(wa[0]), math.log(float(wa[1:].pow(2).sum()))
+        za = ZW[j].clone()
+        zb = (torch.cat([torch.tensor([w0b], dtype=F64, device=dev), nb * math.exp(0.5 * lqb)]) / sw).to(self.dt)
+        # NCMC
+        pa, pb = torch.erf(self.X @ (za * sw)), torch.erf(self.X @ (zb * sw))
+        qa, qb = 0.5 * float(za.double().pow(2).sum()), 0.5 * float(zb.double().pow(2).sum())
+        n = len(Ofix)
+        sO = torch.sign(ZW[Ofix, 0]).to(self.dt)
+        sj = math.copysign(1.0, w0b if insert else w0a)
+        eps = 1.0 / K
+        c = eps / (n + 1)
+        ZW2, ZB2 = ZW.clone(), ZB.clone()
+        work, logdet, hacc = 0.0, 0.0, []
+        u, gW, gB = self._U_alch(ZW2, ZB2, j, pa, qa)
+        for i in range(K):
+            lam = (i + 1) / K
+            phi, pj = (1 - lam) * pa + lam * pb, (1 - lam) * qa + lam * qb
+            if insert:
+                mu = (ZB2[:, Ofix] * sO[None]).mean(1)
+                ZB2[:, Ofix] -= c * sO[None] * mu[:, None]
+                ZB2[:, j] += sj * eps * n / (n + 1) * mu
+                logdet += N2 * math.log(1 - c)
+            else:
+                mu = (ZB2[:, Ofix] * sO[None]).mean(1) / (1 - c)
+                ZB2[:, Ofix] += c * sO[None] * mu[:, None]
+                ZB2[:, j] -= sj * eps * n / (n + 1) * mu
+                logdet -= N2 * math.log(1 - c)
+            un, gW, gB = self._U_alch(ZW2, ZB2, j, phi, pj)
+            if not math.isfinite(un):
+                return ZW, ZB, st
+            work += un - u
+            u = un
+            if i < K - 1:
+                ZW2, ZB2, u, gW, gB, acc = self._hmc_masked(ZW2, ZB2, j, phi, pj, u, gW, gB, step, n_leap)
+                hacc.append(acc)
+        ZW2[j] = zb
+        # the reverse move must see the same fixed outer set: reject if any other neuron crossed the threshold
+        O2 = self._outer(ZW2, thr)
+        O2ex = O2[O2 != j]
+        if not torch.equal(torch.sort(O2ex).values, torch.sort(Ofix).values):
+            st["count_hmc_acc"] = float(np.mean(hacc)) if hacc else float("nan")
+            return ZW, ZB, st
+        nI2 = self.N1 - len(O2)
+        if insert:
+            lfwd = -math.log(len(I)) + self._logq_outer(w0b, lqb, ZW, O, bw) - 0.5 * (d - 1) * lqb
+            lrev = -math.log(len(O2)) + self._logq_inner(w0a, lqa) - 0.5 * (d - 1) * lqa
+        else:
+            lfwd = -math.log(len(O)) + self._logq_inner(w0b, lqb) - 0.5 * (d - 1) * lqb
+            lrev = -math.log(nI2) + self._logq_outer(w0a, lqa, ZW2, O2ex, bw) - 0.5 * (d - 1) * lqa
+        logA = -work + logdet + lrev - lfwd
+        st.update(count_logA=logA, count_work=work, count_hmc_acc=float(np.mean(hacc)) if hacc else float("nan"))
+        if math.log(max(float(torch.rand(1, dtype=F64, device=dev, generator=gen)), 1e-300)) < logA:
+            st["count_acc"] = 1
+            st["count_n"] = len(O2)
+            return ZW2, ZB2, st
+        return ZW, ZB, st
+
     @torch.no_grad()
     def observables(self, W, B, a, xq):
         """Exact population quantities of the current weights, plus f-bar from the x0-quadrature test set xq."""

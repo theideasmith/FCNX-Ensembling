@@ -1,0 +1,244 @@
+[20261110-130358_ptheory_d150_P24000_N1500x1500_prior_r10] d=150 P=24000 N1=1500 N2=1500 chi=1.0 kappa=0.03 eps=-0.7348469228349535 S=(1, 3) float32 chunk=44739 init=prior start=0
+  it     0 U=1.371956e+06 acc=1.00 step=5.674e-02 L=22 hmc 0.47s sweep 7.20s mid_changed=0.761 mid_crossed=0.257 in_changed=0.739 in_crossed=0.229 in_direct=1.000 | d<w0^2>=41.358 in_out=0.124 mid_out=0.101 H11=2.7055e-01 H33=1.040e-02 L3=0.789 q/q0=0.961
+  it     5 U=1.230288e+06 acc=0.00 step=3.930e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=17.173 in_out=0.084 mid_out=0.194 H11=3.5457e-02 H33=4.923e-03 L3=0.815 q/q0=0.926
+  it    10 U=1.227394e+06 acc=0.46 step=2.660e-02 L=13 hmc 0.20s sweep 2.66s mid_changed=0.554 mid_crossed=0.055 in_changed=0.302 in_crossed=0.000 in_direct=1.000 | d<w0^2>=16.901 in_out=0.083 mid_out=0.191 H11=3.4681e-02 H33=4.981e-03 L3=0.815 q/q0=0.929
+  it    15 U=1.229168e+06 acc=1.00 step=2.803e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=16.749 in_out=0.082 mid_out=0.186 H11=3.4167e-02 H33=4.943e-03 L3=0.819 q/q0=0.930
+  it    20 U=1.229685e+06 acc=1.00 step=2.607e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.541 mid_crossed=0.061 in_changed=0.323 in_crossed=0.000 in_direct=1.000 | d<w0^2>=16.597 in_out=0.081 mid_out=0.193 H11=3.2428e-02 H33=4.936e-03 L3=0.816 q/q0=0.929
+  it    25 U=1.228879e+06 acc=0.96 step=3.633e-02 L=19 hmc 0.28s sweep 0.00s  | d<w0^2>=16.364 in_out=0.079 mid_out=0.185 H11=3.4419e-02 H33=4.948e-03 L3=0.819 q/q0=0.929
+  it    30 U=1.231003e+06 acc=0.22 step=2.837e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.566 mid_crossed=0.063 in_changed=0.303 in_crossed=0.000 in_direct=1.000 | d<w0^2>=16.269 in_out=0.079 mid_out=0.183 H11=3.0401e-02 H33=4.826e-03 L3=0.819 q/q0=0.928
+  it    35 U=1.229505e+06 acc=1.00 step=3.390e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=16.243 in_out=0.077 mid_out=0.188 H11=3.4618e-02 H33=4.903e-03 L3=0.818 q/q0=0.930
+  it    40 U=1.230198e+06 acc=1.00 step=3.046e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.542 mid_crossed=0.056 in_changed=0.309 in_crossed=0.000 in_direct=1.000 | d<w0^2>=16.074 in_out=0.075 mid_out=0.182 H11=3.2204e-02 H33=5.002e-03 L3=0.820 q/q0=0.932
+  it    45 U=1.229289e+06 acc=1.00 step=2.776e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=16.061 in_out=0.075 mid_out=0.177 H11=3.2866e-02 H33=4.924e-03 L3=0.816 q/q0=0.931
+  it    50 U=1.229279e+06 acc=0.69 step=3.089e-02 L=20 hmc 0.29s sweep 2.68s mid_changed=0.535 mid_crossed=0.057 in_changed=0.337 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.959 in_out=0.075 mid_out=0.180 H11=3.2316e-02 H33=4.918e-03 L3=0.817 q/q0=0.928
+  it    55 U=1.227982e+06 acc=1.00 step=3.442e-02 L=19 hmc 0.28s sweep 0.00s  | d<w0^2>=15.846 in_out=0.075 mid_out=0.183 H11=3.1010e-02 H33=4.922e-03 L3=0.819 q/q0=0.931
+  it    60 U=1.230753e+06 acc=0.65 step=2.699e-02 L=16 hmc 0.24s sweep 2.67s mid_changed=0.556 mid_crossed=0.061 in_changed=0.303 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.726 in_out=0.074 mid_out=0.189 H11=3.2461e-02 H33=4.894e-03 L3=0.816 q/q0=0.930
+  it    65 U=1.230605e+06 acc=0.60 step=2.380e-02 L=23 hmc 0.34s sweep 0.00s  | d<w0^2>=15.585 in_out=0.073 mid_out=0.183 H11=3.1603e-02 H33=4.841e-03 L3=0.817 q/q0=0.928
+  it    70 U=1.228963e+06 acc=0.84 step=2.122e-02 L=18 hmc 0.27s sweep 2.67s mid_changed=0.546 mid_crossed=0.059 in_changed=0.314 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.697 in_out=0.073 mid_out=0.187 H11=3.2210e-02 H33=5.009e-03 L3=0.820 q/q0=0.930
+  it    75 U=1.229064e+06 acc=0.69 step=2.334e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=15.533 in_out=0.073 mid_out=0.178 H11=3.0314e-02 H33=4.875e-03 L3=0.816 q/q0=0.930
+  it    80 U=1.227970e+06 acc=0.83 step=2.418e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.555 mid_crossed=0.061 in_changed=0.316 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.361 in_out=0.072 mid_out=0.186 H11=3.0369e-02 H33=4.820e-03 L3=0.819 q/q0=0.928
+  it    85 U=1.229566e+06 acc=1.00 step=2.472e-02 L=16 hmc 0.25s sweep 0.00s  | d<w0^2>=15.462 in_out=0.071 mid_out=0.183 H11=3.2258e-02 H33=4.922e-03 L3=0.817 q/q0=0.930
+  it    90 U=1.229628e+06 acc=1.00 step=2.255e-02 L=16 hmc 0.24s sweep 2.67s mid_changed=0.547 mid_crossed=0.057 in_changed=0.317 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.376 in_out=0.072 mid_out=0.190 H11=3.3191e-02 H33=4.906e-03 L3=0.817 q/q0=0.929
+  it    95 U=1.229610e+06 acc=0.50 step=2.486e-02 L=16 hmc 0.25s sweep 0.00s  | d<w0^2>=15.472 in_out=0.072 mid_out=0.195 H11=3.3011e-02 H33=4.886e-03 L3=0.818 q/q0=0.932
+  it   100 U=1.229596e+06 acc=0.25 step=2.549e-02 L=22 hmc 0.32s sweep 2.68s mid_changed=0.539 mid_crossed=0.051 in_changed=0.343 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.500 in_out=0.072 mid_out=0.198 H11=3.2067e-02 H33=4.929e-03 L3=0.817 q/q0=0.935
+  it   105 U=1.228070e+06 acc=1.00 step=2.850e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=15.546 in_out=0.071 mid_out=0.189 H11=3.1388e-02 H33=4.948e-03 L3=0.818 q/q0=0.928
+  it   110 U=1.228783e+06 acc=1.00 step=2.631e-02 L=19 hmc 0.28s sweep 2.67s mid_changed=0.555 mid_crossed=0.063 in_changed=0.295 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.495 in_out=0.071 mid_out=0.179 H11=3.0580e-02 H33=4.921e-03 L3=0.816 q/q0=0.932
+  it   115 U=1.229912e+06 acc=1.00 step=2.945e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=15.422 in_out=0.071 mid_out=0.181 H11=3.0296e-02 H33=4.928e-03 L3=0.816 q/q0=0.932
+  it   120 U=1.230521e+06 acc=1.00 step=2.919e-02 L=12 hmc 0.19s sweep 2.68s mid_changed=0.552 mid_crossed=0.071 in_changed=0.330 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.318 in_out=0.070 mid_out=0.189 H11=3.3349e-02 H33=4.902e-03 L3=0.815 q/q0=0.933
+  it   125 U=1.230225e+06 acc=0.61 step=2.681e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=15.319 in_out=0.070 mid_out=0.184 H11=3.0998e-02 H33=4.856e-03 L3=0.814 q/q0=0.936
+  it   130 U=1.230281e+06 acc=1.00 step=2.733e-02 L=17 hmc 0.25s sweep 2.67s mid_changed=0.547 mid_crossed=0.056 in_changed=0.318 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.406 in_out=0.071 mid_out=0.170 H11=3.0712e-02 H33=4.861e-03 L3=0.818 q/q0=0.933
+  it   135 U=1.229741e+06 acc=0.73 step=2.793e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=15.301 in_out=0.070 mid_out=0.197 H11=3.2807e-02 H33=4.932e-03 L3=0.816 q/q0=0.930
+  it   140 U=1.226789e+06 acc=0.46 step=2.524e-02 L=19 hmc 0.28s sweep 2.67s mid_changed=0.537 mid_crossed=0.061 in_changed=0.307 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.214 in_out=0.070 mid_out=0.182 H11=3.1295e-02 H33=4.922e-03 L3=0.817 q/q0=0.927
+  it   145 U=1.228020e+06 acc=0.84 step=2.459e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=15.225 in_out=0.070 mid_out=0.180 H11=2.9842e-02 H33=4.908e-03 L3=0.814 q/q0=0.934
+  it   150 U=1.230358e+06 acc=0.84 step=2.698e-02 L=14 hmc 0.21s sweep 2.67s mid_changed=0.538 mid_crossed=0.065 in_changed=0.316 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.127 in_out=0.070 mid_out=0.191 H11=3.1715e-02 H33=4.942e-03 L3=0.818 q/q0=0.939
+  it   155 U=1.231182e+06 acc=0.64 step=2.832e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=15.137 in_out=0.069 mid_out=0.183 H11=3.1922e-02 H33=4.897e-03 L3=0.819 q/q0=0.929
+  it   160 U=1.230016e+06 acc=1.00 step=2.809e-02 L=18 hmc 0.27s sweep 2.67s mid_changed=0.546 mid_crossed=0.057 in_changed=0.295 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.163 in_out=0.069 mid_out=0.185 H11=3.0907e-02 H33=4.855e-03 L3=0.817 q/q0=0.935
+  it   165 U=1.230274e+06 acc=0.83 step=2.860e-02 L=20 hmc 0.30s sweep 0.00s  | d<w0^2>=15.185 in_out=0.069 mid_out=0.183 H11=3.2002e-02 H33=4.941e-03 L3=0.818 q/q0=0.932
+  it   170 U=1.229028e+06 acc=0.63 step=3.011e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.561 mid_crossed=0.071 in_changed=0.317 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.157 in_out=0.069 mid_out=0.185 H11=3.1529e-02 H33=4.937e-03 L3=0.819 q/q0=0.937
+  it   175 U=1.229081e+06 acc=1.00 step=3.259e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=15.206 in_out=0.069 mid_out=0.185 H11=3.1108e-02 H33=4.892e-03 L3=0.818 q/q0=0.933
+  it   180 U=1.229126e+06 acc=0.93 step=2.790e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.537 mid_crossed=0.053 in_changed=0.301 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.202 in_out=0.069 mid_out=0.185 H11=3.2009e-02 H33=4.940e-03 L3=0.818 q/q0=0.941
+  it   185 U=1.230960e+06 acc=0.95 step=3.011e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=15.048 in_out=0.068 mid_out=0.177 H11=3.3039e-02 H33=4.866e-03 L3=0.815 q/q0=0.935
+  it   190 U=1.229299e+06 acc=0.92 step=2.832e-02 L=21 hmc 0.31s sweep 2.67s mid_changed=0.552 mid_crossed=0.063 in_changed=0.320 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.048 in_out=0.067 mid_out=0.193 H11=3.0025e-02 H33=4.942e-03 L3=0.819 q/q0=0.938
+  it   195 U=1.230114e+06 acc=0.38 step=2.609e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=15.114 in_out=0.068 mid_out=0.192 H11=3.2170e-02 H33=4.936e-03 L3=0.819 q/q0=0.932
+  it   200 U=1.228268e+06 acc=1.00 step=2.975e-02 L=23 hmc 0.33s sweep 2.67s mid_changed=0.557 mid_crossed=0.069 in_changed=0.323 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.099 in_out=0.068 mid_out=0.187 H11=3.1399e-02 H33=4.972e-03 L3=0.821 q/q0=0.937
+  it   205 U=1.229970e+06 acc=1.00 step=2.613e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=15.034 in_out=0.068 mid_out=0.188 H11=3.0334e-02 H33=4.886e-03 L3=0.819 q/q0=0.936
+  it   210 U=1.229158e+06 acc=0.97 step=2.838e-02 L=13 hmc 0.20s sweep 2.68s mid_changed=0.535 mid_crossed=0.054 in_changed=0.349 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.896 in_out=0.068 mid_out=0.184 H11=3.0590e-02 H33=4.852e-03 L3=0.817 q/q0=0.933
+  it   215 U=1.231243e+06 acc=0.65 step=2.626e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.952 in_out=0.068 mid_out=0.203 H11=3.2167e-02 H33=5.046e-03 L3=0.820 q/q0=0.933
+  it   220 U=1.230069e+06 acc=0.85 step=2.483e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.527 mid_crossed=0.061 in_changed=0.309 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.879 in_out=0.067 mid_out=0.186 H11=3.0653e-02 H33=4.892e-03 L3=0.820 q/q0=0.940
+  it   225 U=1.230027e+06 acc=1.00 step=2.448e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=15.040 in_out=0.067 mid_out=0.185 H11=3.0679e-02 H33=4.988e-03 L3=0.822 q/q0=0.936
+  it   230 U=1.227820e+06 acc=0.43 step=2.488e-02 L=20 hmc 0.29s sweep 2.67s mid_changed=0.541 mid_crossed=0.059 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.935 in_out=0.067 mid_out=0.177 H11=3.1423e-02 H33=4.897e-03 L3=0.816 q/q0=0.936
+  it   235 U=1.228834e+06 acc=0.57 step=2.382e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.872 in_out=0.067 mid_out=0.179 H11=3.1015e-02 H33=4.900e-03 L3=0.815 q/q0=0.933
+  it   240 U=1.228521e+06 acc=1.00 step=2.458e-02 L=12 hmc 0.19s sweep 2.67s mid_changed=0.531 mid_crossed=0.062 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=15.070 in_out=0.067 mid_out=0.193 H11=3.0685e-02 H33=5.038e-03 L3=0.820 q/q0=0.935
+  it   245 U=1.228619e+06 acc=1.00 step=2.578e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.956 in_out=0.067 mid_out=0.179 H11=3.1076e-02 H33=4.874e-03 L3=0.818 q/q0=0.934
+  it   250 U=1.229673e+06 acc=1.00 step=2.836e-02 L=17 hmc 0.25s sweep 2.67s mid_changed=0.527 mid_crossed=0.051 in_changed=0.315 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.790 in_out=0.067 mid_out=0.197 H11=2.9018e-02 H33=4.883e-03 L3=0.819 q/q0=0.936
+  it   255 U=1.229245e+06 acc=0.35 step=2.568e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.640 in_out=0.067 mid_out=0.211 H11=3.1685e-02 H33=4.858e-03 L3=0.819 q/q0=0.933
+  it   260 U=1.228405e+06 acc=0.82 step=2.803e-02 L=21 hmc 0.31s sweep 2.68s mid_changed=0.549 mid_crossed=0.067 in_changed=0.341 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.753 in_out=0.067 mid_out=0.193 H11=3.1142e-02 H33=4.827e-03 L3=0.814 q/q0=0.936
+  it   265 U=1.229745e+06 acc=0.51 step=2.633e-02 L=17 hmc 0.26s sweep 0.00s  | d<w0^2>=14.832 in_out=0.067 mid_out=0.187 H11=3.2231e-02 H33=4.909e-03 L3=0.820 q/q0=0.933
+  it   270 U=1.227723e+06 acc=0.45 step=2.510e-02 L=16 hmc 0.24s sweep 2.68s mid_changed=0.542 mid_crossed=0.062 in_changed=0.345 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.887 in_out=0.067 mid_out=0.193 H11=3.1589e-02 H33=4.885e-03 L3=0.815 q/q0=0.935
+  it   275 U=1.229350e+06 acc=1.00 step=2.443e-02 L=14 hmc 0.22s sweep 0.00s  | d<w0^2>=14.896 in_out=0.067 mid_out=0.183 H11=3.0064e-02 H33=4.931e-03 L3=0.820 q/q0=0.934
+  it   280 U=1.229913e+06 acc=1.00 step=2.614e-02 L=18 hmc 0.27s sweep 2.67s mid_changed=0.543 mid_crossed=0.057 in_changed=0.315 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.840 in_out=0.067 mid_out=0.201 H11=2.9537e-02 H33=4.895e-03 L3=0.818 q/q0=0.938
+  it   285 U=1.229005e+06 acc=0.59 step=2.457e-02 L=23 hmc 0.34s sweep 0.00s  | d<w0^2>=14.799 in_out=0.067 mid_out=0.185 H11=2.9869e-02 H33=4.834e-03 L3=0.814 q/q0=0.936
+  it   290 U=1.228066e+06 acc=0.95 step=2.742e-02 L=23 hmc 0.33s sweep 2.68s mid_changed=0.557 mid_crossed=0.071 in_changed=0.330 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.810 in_out=0.067 mid_out=0.191 H11=3.0215e-02 H33=4.885e-03 L3=0.818 q/q0=0.930
+  it   295 U=1.230428e+06 acc=1.00 step=2.774e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=14.675 in_out=0.067 mid_out=0.197 H11=3.1084e-02 H33=4.822e-03 L3=0.811 q/q0=0.934
+  it   300 U=1.229300e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 2.67s mid_changed=0.533 mid_crossed=0.064 in_changed=0.313 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.789 in_out=0.067 mid_out=0.185 H11=3.1032e-02 H33=4.900e-03 L3=0.819 q/q0=0.933
+  it   305 U=1.228476e+06 acc=1.00 step=2.825e-02 L=14 hmc 0.22s sweep 0.00s  | d<w0^2>=14.760 in_out=0.067 mid_out=0.195 H11=3.0537e-02 H33=4.864e-03 L3=0.816 q/q0=0.931
+  it   310 U=1.229595e+06 acc=0.29 step=2.825e-02 L=16 hmc 0.24s sweep 2.68s mid_changed=0.533 mid_crossed=0.054 in_changed=0.331 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.596 in_out=0.067 mid_out=0.194 H11=2.9643e-02 H33=4.826e-03 L3=0.817 q/q0=0.932
+  it   315 U=1.227130e+06 acc=0.80 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.768 in_out=0.067 mid_out=0.193 H11=3.0142e-02 H33=4.880e-03 L3=0.817 q/q0=0.932
+  it   320 U=1.227807e+06 acc=0.43 step=2.825e-02 L=12 hmc 0.19s sweep 2.67s mid_changed=0.538 mid_crossed=0.064 in_changed=0.314 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.644 in_out=0.067 mid_out=0.197 H11=2.9068e-02 H33=4.874e-03 L3=0.815 q/q0=0.928
+  it   325 U=1.229451e+06 acc=1.00 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.681 in_out=0.067 mid_out=0.194 H11=3.0671e-02 H33=4.819e-03 L3=0.815 q/q0=0.933
+  it   330 U=1.230774e+06 acc=0.61 step=2.825e-02 L=16 hmc 0.24s sweep 2.67s mid_changed=0.532 mid_crossed=0.051 in_changed=0.319 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.793 in_out=0.067 mid_out=0.190 H11=3.0360e-02 H33=4.938e-03 L3=0.815 q/q0=0.934
+  it   335 U=1.229866e+06 acc=0.94 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.789 in_out=0.067 mid_out=0.184 H11=3.0680e-02 H33=4.872e-03 L3=0.816 q/q0=0.937
+  it   340 U=1.231625e+06 acc=1.00 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.545 mid_crossed=0.063 in_changed=0.311 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.756 in_out=0.067 mid_out=0.195 H11=3.3569e-02 H33=4.933e-03 L3=0.815 q/q0=0.933
+  it   345 U=1.229071e+06 acc=1.00 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.761 in_out=0.067 mid_out=0.189 H11=2.9676e-02 H33=4.873e-03 L3=0.817 q/q0=0.932
+  it   350 U=1.229049e+06 acc=0.84 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.544 mid_crossed=0.057 in_changed=0.323 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.810 in_out=0.067 mid_out=0.193 H11=3.1162e-02 H33=4.931e-03 L3=0.816 q/q0=0.933
+  it   355 U=1.228095e+06 acc=0.53 step=2.825e-02 L=20 hmc 0.30s sweep 0.00s  | d<w0^2>=14.774 in_out=0.067 mid_out=0.190 H11=3.0699e-02 H33=4.903e-03 L3=0.815 q/q0=0.929
+  it   360 U=1.232289e+06 acc=0.95 step=2.825e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.543 mid_crossed=0.050 in_changed=0.300 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.803 in_out=0.067 mid_out=0.192 H11=3.1034e-02 H33=4.924e-03 L3=0.814 q/q0=0.934
+  it   365 U=1.230034e+06 acc=0.27 step=2.825e-02 L=14 hmc 0.22s sweep 0.00s  | d<w0^2>=14.778 in_out=0.067 mid_out=0.199 H11=3.2246e-02 H33=5.005e-03 L3=0.818 q/q0=0.938
+  it   370 U=1.230109e+06 acc=1.00 step=2.825e-02 L=12 hmc 0.19s sweep 2.67s mid_changed=0.547 mid_crossed=0.069 in_changed=0.322 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.761 in_out=0.067 mid_out=0.202 H11=3.1838e-02 H33=4.885e-03 L3=0.820 q/q0=0.933
+  it   375 U=1.229084e+06 acc=0.56 step=2.825e-02 L=20 hmc 0.30s sweep 0.00s  | d<w0^2>=14.836 in_out=0.067 mid_out=0.200 H11=3.1269e-02 H33=4.868e-03 L3=0.818 q/q0=0.937
+  it   380 U=1.229085e+06 acc=1.00 step=2.825e-02 L=13 hmc 0.20s sweep 2.68s mid_changed=0.549 mid_crossed=0.062 in_changed=0.330 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.809 in_out=0.067 mid_out=0.203 H11=3.1223e-02 H33=4.904e-03 L3=0.816 q/q0=0.934
+  it   385 U=1.229583e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.927 in_out=0.067 mid_out=0.199 H11=3.0924e-02 H33=4.966e-03 L3=0.819 q/q0=0.936
+  it   390 U=1.230191e+06 acc=1.00 step=2.825e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.564 mid_crossed=0.067 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.801 in_out=0.067 mid_out=0.187 H11=3.3006e-02 H33=4.929e-03 L3=0.821 q/q0=0.936
+  it   395 U=1.227300e+06 acc=0.90 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.846 in_out=0.067 mid_out=0.189 H11=3.2484e-02 H33=4.956e-03 L3=0.821 q/q0=0.933
+  it   400 U=1.229138e+06 acc=0.57 step=2.825e-02 L=15 hmc 0.23s sweep 2.68s mid_changed=0.551 mid_crossed=0.059 in_changed=0.343 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.802 in_out=0.066 mid_out=0.183 H11=3.1421e-02 H33=4.914e-03 L3=0.818 q/q0=0.935
+  it   405 U=1.229590e+06 acc=0.41 step=2.825e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=14.784 in_out=0.066 mid_out=0.191 H11=3.2884e-02 H33=4.955e-03 L3=0.817 q/q0=0.934
+  it   410 U=1.229930e+06 acc=0.59 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.540 mid_crossed=0.061 in_changed=0.311 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.882 in_out=0.066 mid_out=0.193 H11=3.1683e-02 H33=4.911e-03 L3=0.818 q/q0=0.932
+  it   415 U=1.228928e+06 acc=0.79 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.743 in_out=0.066 mid_out=0.187 H11=2.9563e-02 H33=4.881e-03 L3=0.819 q/q0=0.929
+  it   420 U=1.229939e+06 acc=0.93 step=2.825e-02 L=24 hmc 0.35s sweep 2.67s mid_changed=0.562 mid_crossed=0.051 in_changed=0.313 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.658 in_out=0.065 mid_out=0.186 H11=3.0299e-02 H33=4.860e-03 L3=0.819 q/q0=0.933
+  it   425 U=1.228828e+06 acc=1.00 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.629 in_out=0.065 mid_out=0.192 H11=2.9809e-02 H33=4.931e-03 L3=0.820 q/q0=0.935
+  it   430 U=1.232019e+06 acc=0.55 step=2.825e-02 L=17 hmc 0.25s sweep 2.67s mid_changed=0.559 mid_crossed=0.057 in_changed=0.319 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.646 in_out=0.065 mid_out=0.182 H11=3.0156e-02 H33=4.902e-03 L3=0.820 q/q0=0.938
+  it   435 U=1.228452e+06 acc=1.00 step=2.825e-02 L=23 hmc 0.34s sweep 0.00s  | d<w0^2>=14.647 in_out=0.065 mid_out=0.181 H11=3.1873e-02 H33=4.867e-03 L3=0.819 q/q0=0.935
+  it   440 U=1.230595e+06 acc=0.95 step=2.825e-02 L=19 hmc 0.28s sweep 2.67s mid_changed=0.553 mid_crossed=0.072 in_changed=0.315 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.690 in_out=0.065 mid_out=0.193 H11=3.0295e-02 H33=4.950e-03 L3=0.818 q/q0=0.937
+  it   445 U=1.230030e+06 acc=0.40 step=2.825e-02 L=14 hmc 0.22s sweep 0.00s  | d<w0^2>=14.546 in_out=0.065 mid_out=0.185 H11=2.8733e-02 H33=4.887e-03 L3=0.818 q/q0=0.939
+  it   450 U=1.229101e+06 acc=1.00 step=2.825e-02 L=24 hmc 0.35s sweep 2.67s mid_changed=0.563 mid_crossed=0.065 in_changed=0.315 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.663 in_out=0.065 mid_out=0.191 H11=3.1135e-02 H33=4.904e-03 L3=0.816 q/q0=0.937
+  it   455 U=1.228178e+06 acc=0.97 step=2.825e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=14.590 in_out=0.065 mid_out=0.189 H11=3.1143e-02 H33=4.883e-03 L3=0.820 q/q0=0.933
+  it   460 U=1.229247e+06 acc=0.80 step=2.825e-02 L=16 hmc 0.24s sweep 2.68s mid_changed=0.537 mid_crossed=0.054 in_changed=0.341 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.610 in_out=0.065 mid_out=0.177 H11=2.8690e-02 H33=4.846e-03 L3=0.818 q/q0=0.935
+  it   465 U=1.229840e+06 acc=0.58 step=2.825e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=14.427 in_out=0.065 mid_out=0.192 H11=3.0953e-02 H33=4.869e-03 L3=0.816 q/q0=0.929
+  it   470 U=1.231092e+06 acc=0.43 step=2.825e-02 L=20 hmc 0.29s sweep 2.68s mid_changed=0.565 mid_crossed=0.068 in_changed=0.345 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.750 in_out=0.065 mid_out=0.191 H11=3.2589e-02 H33=4.968e-03 L3=0.815 q/q0=0.934
+  it   475 U=1.227102e+06 acc=1.00 step=2.825e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=14.591 in_out=0.065 mid_out=0.194 H11=2.9633e-02 H33=4.984e-03 L3=0.818 q/q0=0.929
+  it   480 U=1.229560e+06 acc=1.00 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.563 mid_crossed=0.067 in_changed=0.328 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.693 in_out=0.065 mid_out=0.198 H11=2.9720e-02 H33=4.962e-03 L3=0.818 q/q0=0.935
+  it   485 U=1.230507e+06 acc=1.00 step=2.825e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=14.713 in_out=0.065 mid_out=0.197 H11=3.0858e-02 H33=5.000e-03 L3=0.819 q/q0=0.934
+  it   490 U=1.231398e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 2.67s mid_changed=0.558 mid_crossed=0.055 in_changed=0.314 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.665 in_out=0.065 mid_out=0.197 H11=3.2321e-02 H33=4.945e-03 L3=0.816 q/q0=0.934
+  it   495 U=1.229260e+06 acc=0.39 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.567 in_out=0.065 mid_out=0.177 H11=3.1398e-02 H33=4.834e-03 L3=0.816 q/q0=0.936
+  it   500 U=1.230637e+06 acc=0.45 step=2.825e-02 L=16 hmc 0.24s sweep 2.68s mid_changed=0.549 mid_crossed=0.055 in_changed=0.337 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.698 in_out=0.065 mid_out=0.189 H11=3.1137e-02 H33=4.934e-03 L3=0.820 q/q0=0.941
+  it   505 U=1.229008e+06 acc=0.76 step=2.825e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=14.565 in_out=0.065 mid_out=0.183 H11=3.0178e-02 H33=4.839e-03 L3=0.817 q/q0=0.934
+  it   510 U=1.230401e+06 acc=1.00 step=2.825e-02 L=20 hmc 0.29s sweep 2.67s mid_changed=0.553 mid_crossed=0.071 in_changed=0.327 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.554 in_out=0.065 mid_out=0.193 H11=3.1882e-02 H33=4.875e-03 L3=0.817 q/q0=0.929
+  it   515 U=1.228804e+06 acc=0.83 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.579 in_out=0.065 mid_out=0.205 H11=3.0545e-02 H33=4.874e-03 L3=0.816 q/q0=0.929
+  it   520 U=1.229109e+06 acc=0.95 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.525 mid_crossed=0.057 in_changed=0.313 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.647 in_out=0.065 mid_out=0.195 H11=2.8005e-02 H33=4.856e-03 L3=0.821 q/q0=0.935
+  it   525 U=1.229301e+06 acc=1.00 step=2.825e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=14.534 in_out=0.065 mid_out=0.189 H11=3.0703e-02 H33=4.884e-03 L3=0.818 q/q0=0.939
+  it   530 U=1.229060e+06 acc=0.86 step=2.825e-02 L=14 hmc 0.21s sweep 2.67s mid_changed=0.538 mid_crossed=0.061 in_changed=0.309 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.587 in_out=0.065 mid_out=0.189 H11=2.9973e-02 H33=4.841e-03 L3=0.817 q/q0=0.939
+  it   535 U=1.232247e+06 acc=1.00 step=2.825e-02 L=17 hmc 0.26s sweep 0.00s  | d<w0^2>=14.524 in_out=0.065 mid_out=0.197 H11=2.9660e-02 H33=4.841e-03 L3=0.817 q/q0=0.939
+  it   540 U=1.231489e+06 acc=0.60 step=2.825e-02 L=21 hmc 0.31s sweep 2.67s mid_changed=0.554 mid_crossed=0.060 in_changed=0.329 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.531 in_out=0.064 mid_out=0.179 H11=2.9014e-02 H33=4.898e-03 L3=0.817 q/q0=0.942
+  it   545 U=1.228765e+06 acc=0.85 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.520 in_out=0.064 mid_out=0.189 H11=2.9725e-02 H33=4.868e-03 L3=0.816 q/q0=0.938
+  it   550 U=1.231570e+06 acc=0.52 step=2.825e-02 L=20 hmc 0.29s sweep 2.67s mid_changed=0.557 mid_crossed=0.067 in_changed=0.327 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.546 in_out=0.064 mid_out=0.194 H11=3.2638e-02 H33=4.876e-03 L3=0.817 q/q0=0.936
+  it   555 U=1.232816e+06 acc=0.47 step=2.825e-02 L=17 hmc 0.26s sweep 0.00s  | d<w0^2>=14.583 in_out=0.064 mid_out=0.196 H11=2.9442e-02 H33=4.899e-03 L3=0.819 q/q0=0.944
+  it   560 U=1.227990e+06 acc=1.00 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.549 mid_crossed=0.064 in_changed=0.302 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.417 in_out=0.064 mid_out=0.195 H11=3.0083e-02 H33=4.891e-03 L3=0.819 q/q0=0.939
+  it   565 U=1.230155e+06 acc=0.63 step=2.825e-02 L=17 hmc 0.26s sweep 0.00s  | d<w0^2>=14.453 in_out=0.064 mid_out=0.183 H11=2.9803e-02 H33=4.846e-03 L3=0.820 q/q0=0.934
+  it   570 U=1.229514e+06 acc=0.84 step=2.825e-02 L=23 hmc 0.33s sweep 2.67s mid_changed=0.543 mid_crossed=0.061 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.369 in_out=0.064 mid_out=0.199 H11=3.0820e-02 H33=4.863e-03 L3=0.816 q/q0=0.935
+  it   575 U=1.227116e+06 acc=1.00 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.502 in_out=0.064 mid_out=0.187 H11=2.9731e-02 H33=4.855e-03 L3=0.822 q/q0=0.938
+  it   580 U=1.227926e+06 acc=1.00 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.569 mid_crossed=0.063 in_changed=0.328 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.513 in_out=0.064 mid_out=0.196 H11=3.0237e-02 H33=4.847e-03 L3=0.817 q/q0=0.935
+  it   585 U=1.229109e+06 acc=0.86 step=2.825e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.393 in_out=0.064 mid_out=0.191 H11=2.9904e-02 H33=4.840e-03 L3=0.816 q/q0=0.934
+  it   590 U=1.229041e+06 acc=1.00 step=2.825e-02 L=14 hmc 0.21s sweep 2.68s mid_changed=0.531 mid_crossed=0.066 in_changed=0.329 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.415 in_out=0.064 mid_out=0.197 H11=3.0421e-02 H33=4.898e-03 L3=0.818 q/q0=0.932
+  it   595 U=1.230843e+06 acc=0.66 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.414 in_out=0.064 mid_out=0.193 H11=3.0511e-02 H33=4.864e-03 L3=0.816 q/q0=0.934
+  it   600 U=1.227338e+06 acc=1.00 step=2.825e-02 L=19 hmc 0.28s sweep 2.67s mid_changed=0.530 mid_crossed=0.061 in_changed=0.325 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.377 in_out=0.064 mid_out=0.198 H11=3.1884e-02 H33=4.939e-03 L3=0.817 q/q0=0.936
+  it   605 U=1.229297e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.399 in_out=0.064 mid_out=0.199 H11=3.1296e-02 H33=4.894e-03 L3=0.819 q/q0=0.936
+  it   610 U=1.231189e+06 acc=0.69 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.538 mid_crossed=0.053 in_changed=0.323 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.386 in_out=0.064 mid_out=0.191 H11=3.0061e-02 H33=4.814e-03 L3=0.817 q/q0=0.935
+  it   615 U=1.228865e+06 acc=0.29 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.448 in_out=0.064 mid_out=0.191 H11=3.1645e-02 H33=4.869e-03 L3=0.820 q/q0=0.937
+  it   620 U=1.230030e+06 acc=0.77 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.545 mid_crossed=0.065 in_changed=0.329 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.462 in_out=0.064 mid_out=0.187 H11=3.1058e-02 H33=4.950e-03 L3=0.818 q/q0=0.941
+  it   625 U=1.231318e+06 acc=0.73 step=2.825e-02 L=19 hmc 0.28s sweep 0.00s  | d<w0^2>=14.379 in_out=0.064 mid_out=0.179 H11=2.9678e-02 H33=4.819e-03 L3=0.815 q/q0=0.934
+  it   630 U=1.230662e+06 acc=1.00 step=2.825e-02 L=18 hmc 0.27s sweep 2.67s mid_changed=0.558 mid_crossed=0.073 in_changed=0.327 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.456 in_out=0.064 mid_out=0.199 H11=3.0129e-02 H33=4.821e-03 L3=0.816 q/q0=0.937
+  it   635 U=1.229913e+06 acc=0.47 step=2.825e-02 L=14 hmc 0.22s sweep 0.00s  | d<w0^2>=14.464 in_out=0.064 mid_out=0.182 H11=2.9336e-02 H33=4.891e-03 L3=0.819 q/q0=0.936
+  it   640 U=1.228579e+06 acc=0.18 step=2.825e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.543 mid_crossed=0.062 in_changed=0.310 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.401 in_out=0.064 mid_out=0.205 H11=2.8533e-02 H33=4.899e-03 L3=0.820 q/q0=0.934
+  it   645 U=1.228989e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.466 in_out=0.064 mid_out=0.197 H11=3.0565e-02 H33=4.915e-03 L3=0.817 q/q0=0.939
+  it   650 U=1.228363e+06 acc=0.65 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.545 mid_crossed=0.061 in_changed=0.313 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.427 in_out=0.064 mid_out=0.196 H11=3.1790e-02 H33=4.894e-03 L3=0.820 q/q0=0.937
+  it   655 U=1.230016e+06 acc=0.96 step=2.825e-02 L=21 hmc 0.31s sweep 0.00s  | d<w0^2>=14.359 in_out=0.064 mid_out=0.195 H11=2.9973e-02 H33=4.866e-03 L3=0.818 q/q0=0.933
+  it   660 U=1.227987e+06 acc=0.49 step=2.825e-02 L=24 hmc 0.35s sweep 2.67s mid_changed=0.555 mid_crossed=0.057 in_changed=0.326 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.426 in_out=0.064 mid_out=0.197 H11=2.9246e-02 H33=4.896e-03 L3=0.818 q/q0=0.934
+  it   665 U=1.231393e+06 acc=1.00 step=2.825e-02 L=19 hmc 0.28s sweep 0.00s  | d<w0^2>=14.502 in_out=0.064 mid_out=0.171 H11=3.1455e-02 H33=4.813e-03 L3=0.817 q/q0=0.936
+  it   670 U=1.230530e+06 acc=0.23 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.547 mid_crossed=0.067 in_changed=0.325 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.325 in_out=0.064 mid_out=0.191 H11=2.8568e-02 H33=4.855e-03 L3=0.815 q/q0=0.934
+  it   675 U=1.229262e+06 acc=0.66 step=2.825e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=14.569 in_out=0.064 mid_out=0.191 H11=3.0356e-02 H33=4.871e-03 L3=0.818 q/q0=0.938
+  it   680 U=1.226785e+06 acc=0.56 step=2.825e-02 L=14 hmc 0.21s sweep 2.68s mid_changed=0.531 mid_crossed=0.057 in_changed=0.333 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.559 in_out=0.064 mid_out=0.185 H11=3.0076e-02 H33=4.871e-03 L3=0.817 q/q0=0.934
+  it   685 U=1.229013e+06 acc=0.62 step=2.825e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.431 in_out=0.064 mid_out=0.192 H11=3.0316e-02 H33=4.817e-03 L3=0.816 q/q0=0.932
+  it   690 U=1.226813e+06 acc=0.88 step=2.825e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.555 mid_crossed=0.063 in_changed=0.332 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.473 in_out=0.064 mid_out=0.183 H11=3.0316e-02 H33=4.879e-03 L3=0.819 q/q0=0.932
+  it   695 U=1.230021e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.472 in_out=0.064 mid_out=0.195 H11=3.0695e-02 H33=4.987e-03 L3=0.820 q/q0=0.937
+  it   700 U=1.228425e+06 acc=0.51 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.544 mid_crossed=0.053 in_changed=0.327 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.532 in_out=0.064 mid_out=0.185 H11=2.9999e-02 H33=4.860e-03 L3=0.817 q/q0=0.934
+  it   705 U=1.229411e+06 acc=0.68 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.332 in_out=0.064 mid_out=0.189 H11=3.1158e-02 H33=4.828e-03 L3=0.816 q/q0=0.935
+  it   710 U=1.229336e+06 acc=0.94 step=2.825e-02 L=13 hmc 0.20s sweep 2.67s mid_changed=0.559 mid_crossed=0.063 in_changed=0.319 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.430 in_out=0.064 mid_out=0.189 H11=2.9868e-02 H33=4.890e-03 L3=0.816 q/q0=0.935
+  it   715 U=1.229553e+06 acc=0.95 step=2.825e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=14.485 in_out=0.064 mid_out=0.189 H11=3.0517e-02 H33=4.889e-03 L3=0.815 q/q0=0.937
+  it   720 U=1.229614e+06 acc=0.71 step=2.825e-02 L=21 hmc 0.31s sweep 2.67s mid_changed=0.547 mid_crossed=0.059 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.432 in_out=0.064 mid_out=0.183 H11=3.0261e-02 H33=4.874e-03 L3=0.817 q/q0=0.936
+  it   725 U=1.230085e+06 acc=0.85 step=2.825e-02 L=14 hmc 0.22s sweep 0.00s  | d<w0^2>=14.489 in_out=0.064 mid_out=0.188 H11=3.0515e-02 H33=4.888e-03 L3=0.813 q/q0=0.938
+  it   730 U=1.229594e+06 acc=0.25 step=2.825e-02 L=18 hmc 0.27s sweep 2.68s mid_changed=0.536 mid_crossed=0.065 in_changed=0.338 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.513 in_out=0.064 mid_out=0.207 H11=3.1474e-02 H33=4.941e-03 L3=0.817 q/q0=0.938
+  it   735 U=1.230734e+06 acc=0.70 step=2.825e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.488 in_out=0.064 mid_out=0.195 H11=3.0536e-02 H33=4.895e-03 L3=0.817 q/q0=0.937
+  it   740 U=1.229451e+06 acc=1.00 step=2.825e-02 L=19 hmc 0.28s sweep 2.68s mid_changed=0.538 mid_crossed=0.059 in_changed=0.338 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.542 in_out=0.064 mid_out=0.192 H11=2.8773e-02 H33=4.881e-03 L3=0.818 q/q0=0.936
+  it   745 U=1.229800e+06 acc=1.00 step=2.825e-02 L=20 hmc 0.30s sweep 0.00s  | d<w0^2>=14.511 in_out=0.064 mid_out=0.195 H11=3.0305e-02 H33=4.945e-03 L3=0.819 q/q0=0.936
+  it   750 U=1.230290e+06 acc=0.92 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.548 mid_crossed=0.051 in_changed=0.307 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.504 in_out=0.064 mid_out=0.191 H11=3.2337e-02 H33=4.948e-03 L3=0.815 q/q0=0.941
+  it   755 U=1.230574e+06 acc=0.50 step=2.825e-02 L=20 hmc 0.30s sweep 0.00s  | d<w0^2>=14.507 in_out=0.064 mid_out=0.195 H11=3.1746e-02 H33=4.963e-03 L3=0.820 q/q0=0.942
+  it   760 U=1.229328e+06 acc=0.64 step=2.825e-02 L=24 hmc 0.35s sweep 2.67s mid_changed=0.548 mid_crossed=0.073 in_changed=0.328 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.516 in_out=0.064 mid_out=0.201 H11=2.9725e-02 H33=4.951e-03 L3=0.818 q/q0=0.937
+  it   765 U=1.229593e+06 acc=0.62 step=2.825e-02 L=20 hmc 0.30s sweep 0.00s  | d<w0^2>=14.482 in_out=0.064 mid_out=0.201 H11=3.0557e-02 H33=4.903e-03 L3=0.818 q/q0=0.935
+  it   770 U=1.231019e+06 acc=0.79 step=2.825e-02 L=15 hmc 0.23s sweep 2.67s mid_changed=0.547 mid_crossed=0.059 in_changed=0.328 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.396 in_out=0.064 mid_out=0.188 H11=3.1454e-02 H33=4.880e-03 L3=0.817 q/q0=0.936
+  it   775 U=1.227847e+06 acc=0.44 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.482 in_out=0.064 mid_out=0.201 H11=3.1174e-02 H33=4.895e-03 L3=0.817 q/q0=0.932
+  it   780 U=1.230425e+06 acc=0.80 step=2.825e-02 L=17 hmc 0.25s sweep 2.67s mid_changed=0.564 mid_crossed=0.068 in_changed=0.314 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.373 in_out=0.064 mid_out=0.197 H11=3.2281e-02 H33=4.916e-03 L3=0.816 q/q0=0.928
+  it   785 U=1.228697e+06 acc=0.66 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.394 in_out=0.064 mid_out=0.196 H11=3.1656e-02 H33=4.879e-03 L3=0.814 q/q0=0.933
+  it   790 U=1.228852e+06 acc=0.32 step=2.825e-02 L=20 hmc 0.29s sweep 2.67s mid_changed=0.538 mid_crossed=0.062 in_changed=0.310 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.490 in_out=0.064 mid_out=0.189 H11=3.1623e-02 H33=4.931e-03 L3=0.818 q/q0=0.935
+  it   795 U=1.229220e+06 acc=1.00 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.473 in_out=0.064 mid_out=0.191 H11=2.9874e-02 H33=4.895e-03 L3=0.816 q/q0=0.933
+  it   800 U=1.229182e+06 acc=0.82 step=2.825e-02 L=20 hmc 0.29s sweep 2.67s mid_changed=0.533 mid_crossed=0.059 in_changed=0.325 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.478 in_out=0.063 mid_out=0.191 H11=3.0642e-02 H33=4.884e-03 L3=0.818 q/q0=0.942
+  it   805 U=1.230378e+06 acc=1.00 step=2.825e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=14.491 in_out=0.063 mid_out=0.186 H11=3.0145e-02 H33=5.009e-03 L3=0.818 q/q0=0.942
+  it   810 U=1.229669e+06 acc=1.00 step=2.825e-02 L=18 hmc 0.27s sweep 2.67s mid_changed=0.561 mid_crossed=0.068 in_changed=0.324 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.364 in_out=0.063 mid_out=0.185 H11=3.1058e-02 H33=4.856e-03 L3=0.818 q/q0=0.934
+  it   815 U=1.230792e+06 acc=1.00 step=2.825e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=14.212 in_out=0.063 mid_out=0.195 H11=3.2401e-02 H33=4.934e-03 L3=0.819 q/q0=0.937
+  it   820 U=1.231927e+06 acc=0.57 step=2.825e-02 L=17 hmc 0.25s sweep 2.67s mid_changed=0.551 mid_crossed=0.064 in_changed=0.323 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.184 in_out=0.063 mid_out=0.194 H11=2.9737e-02 H33=4.836e-03 L3=0.817 q/q0=0.942
+  it   825 U=1.230229e+06 acc=0.88 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.337 in_out=0.063 mid_out=0.191 H11=3.1651e-02 H33=4.926e-03 L3=0.818 q/q0=0.938
+  it   830 U=1.228100e+06 acc=0.92 step=2.825e-02 L=20 hmc 0.29s sweep 2.68s mid_changed=0.537 mid_crossed=0.050 in_changed=0.339 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.284 in_out=0.063 mid_out=0.184 H11=2.9667e-02 H33=4.868e-03 L3=0.815 q/q0=0.939
+  it   835 U=1.230360e+06 acc=0.60 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.349 in_out=0.063 mid_out=0.180 H11=2.9901e-02 H33=4.878e-03 L3=0.818 q/q0=0.934
+  it   840 U=1.228420e+06 acc=0.75 step=2.825e-02 L=12 hmc 0.19s sweep 2.67s mid_changed=0.545 mid_crossed=0.057 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.256 in_out=0.063 mid_out=0.174 H11=3.0013e-02 H33=4.895e-03 L3=0.814 q/q0=0.937
+  it   845 U=1.228953e+06 acc=0.91 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.177 in_out=0.063 mid_out=0.191 H11=2.8945e-02 H33=4.838e-03 L3=0.818 q/q0=0.933
+  it   850 U=1.230078e+06 acc=0.51 step=2.825e-02 L=14 hmc 0.21s sweep 2.68s mid_changed=0.537 mid_crossed=0.061 in_changed=0.337 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.255 in_out=0.063 mid_out=0.188 H11=2.9575e-02 H33=4.878e-03 L3=0.817 q/q0=0.935
+  it   855 U=1.229562e+06 acc=0.97 step=2.825e-02 L=15 hmc 0.23s sweep 0.00s  | d<w0^2>=14.250 in_out=0.063 mid_out=0.196 H11=3.0354e-02 H33=4.901e-03 L3=0.817 q/q0=0.943
+  it   860 U=1.229307e+06 acc=1.00 step=2.825e-02 L=21 hmc 0.31s sweep 2.68s mid_changed=0.554 mid_crossed=0.063 in_changed=0.344 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.381 in_out=0.063 mid_out=0.186 H11=3.0683e-02 H33=4.861e-03 L3=0.817 q/q0=0.937
+  it   865 U=1.228499e+06 acc=1.00 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.256 in_out=0.063 mid_out=0.193 H11=2.9749e-02 H33=4.818e-03 L3=0.814 q/q0=0.934
+  it   870 U=1.228605e+06 acc=0.44 step=2.825e-02 L=19 hmc 0.28s sweep 2.67s mid_changed=0.545 mid_crossed=0.064 in_changed=0.319 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.263 in_out=0.063 mid_out=0.194 H11=2.9986e-02 H33=4.824e-03 L3=0.819 q/q0=0.936
+  it   875 U=1.230660e+06 acc=1.00 step=2.825e-02 L=18 hmc 0.27s sweep 0.00s  | d<w0^2>=14.204 in_out=0.063 mid_out=0.194 H11=2.9917e-02 H33=4.897e-03 L3=0.820 q/q0=0.937
+  it   880 U=1.231026e+06 acc=0.73 step=2.825e-02 L=18 hmc 0.27s sweep 2.67s mid_changed=0.533 mid_crossed=0.058 in_changed=0.306 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.306 in_out=0.063 mid_out=0.191 H11=3.1511e-02 H33=4.874e-03 L3=0.819 q/q0=0.931
+  it   885 U=1.230653e+06 acc=0.64 step=2.825e-02 L=23 hmc 0.34s sweep 0.00s  | d<w0^2>=14.172 in_out=0.063 mid_out=0.195 H11=3.0557e-02 H33=4.862e-03 L3=0.814 q/q0=0.935
+  it   890 U=1.229535e+06 acc=0.78 step=2.825e-02 L=24 hmc 0.35s sweep 2.68s mid_changed=0.541 mid_crossed=0.061 in_changed=0.345 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.276 in_out=0.063 mid_out=0.187 H11=3.1392e-02 H33=4.869e-03 L3=0.818 q/q0=0.934
+  it   895 U=1.230588e+06 acc=0.74 step=2.825e-02 L=23 hmc 0.34s sweep 0.00s  | d<w0^2>=14.188 in_out=0.063 mid_out=0.199 H11=2.9947e-02 H33=4.916e-03 L3=0.817 q/q0=0.938
+  it   900 U=1.232527e+06 acc=0.65 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.559 mid_crossed=0.072 in_changed=0.325 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.114 in_out=0.063 mid_out=0.188 H11=3.0412e-02 H33=4.899e-03 L3=0.814 q/q0=0.934
+  it   905 U=1.228606e+06 acc=1.00 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.172 in_out=0.063 mid_out=0.188 H11=3.0093e-02 H33=4.931e-03 L3=0.819 q/q0=0.937
+  it   910 U=1.229323e+06 acc=0.44 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.557 mid_crossed=0.065 in_changed=0.315 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.321 in_out=0.063 mid_out=0.203 H11=3.0123e-02 H33=4.877e-03 L3=0.815 q/q0=0.933
+  it   915 U=1.229491e+06 acc=0.98 step=2.825e-02 L=13 hmc 0.21s sweep 0.00s  | d<w0^2>=14.216 in_out=0.063 mid_out=0.193 H11=3.1126e-02 H33=4.946e-03 L3=0.817 q/q0=0.939
+  it   920 U=1.231596e+06 acc=1.00 step=2.825e-02 L=21 hmc 0.31s sweep 2.68s mid_changed=0.539 mid_crossed=0.056 in_changed=0.335 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.360 in_out=0.063 mid_out=0.179 H11=2.9226e-02 H33=4.793e-03 L3=0.818 q/q0=0.940
+  it   925 U=1.229280e+06 acc=0.97 step=2.825e-02 L=16 hmc 0.24s sweep 0.00s  | d<w0^2>=14.176 in_out=0.063 mid_out=0.197 H11=3.0224e-02 H33=4.824e-03 L3=0.818 q/q0=0.937
+  it   930 U=1.229574e+06 acc=0.94 step=2.825e-02 L=21 hmc 0.31s sweep 2.67s mid_changed=0.553 mid_crossed=0.056 in_changed=0.317 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.200 in_out=0.063 mid_out=0.195 H11=3.1425e-02 H33=4.865e-03 L3=0.817 q/q0=0.935
+  it   935 U=1.230542e+06 acc=1.00 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.281 in_out=0.063 mid_out=0.179 H11=3.0314e-02 H33=4.801e-03 L3=0.818 q/q0=0.938
+  it   940 U=1.230197e+06 acc=1.00 step=2.825e-02 L=16 hmc 0.24s sweep 2.68s mid_changed=0.562 mid_crossed=0.063 in_changed=0.339 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.179 in_out=0.063 mid_out=0.205 H11=2.9535e-02 H33=4.902e-03 L3=0.820 q/q0=0.936
+  it   945 U=1.229308e+06 acc=0.78 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.197 in_out=0.063 mid_out=0.198 H11=3.0419e-02 H33=4.875e-03 L3=0.819 q/q0=0.937
+  it   950 U=1.230451e+06 acc=0.32 step=2.825e-02 L=24 hmc 0.35s sweep 2.67s mid_changed=0.539 mid_crossed=0.072 in_changed=0.321 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.277 in_out=0.063 mid_out=0.196 H11=3.1095e-02 H33=4.939e-03 L3=0.819 q/q0=0.938
+  it   955 U=1.229537e+06 acc=0.32 step=2.825e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.296 in_out=0.063 mid_out=0.185 H11=2.9295e-02 H33=4.926e-03 L3=0.819 q/q0=0.940
+  it   960 U=1.228964e+06 acc=1.00 step=2.825e-02 L=14 hmc 0.21s sweep 2.68s mid_changed=0.538 mid_crossed=0.066 in_changed=0.350 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.254 in_out=0.063 mid_out=0.195 H11=2.9316e-02 H33=4.888e-03 L3=0.818 q/q0=0.936
+  it   965 U=1.229003e+06 acc=1.00 step=2.825e-02 L=12 hmc 0.19s sweep 0.00s  | d<w0^2>=14.216 in_out=0.063 mid_out=0.201 H11=2.9718e-02 H33=4.877e-03 L3=0.816 q/q0=0.936
+  it   970 U=1.228963e+06 acc=0.98 step=2.825e-02 L=20 hmc 0.29s sweep 2.67s mid_changed=0.551 mid_crossed=0.063 in_changed=0.329 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.267 in_out=0.063 mid_out=0.190 H11=3.0449e-02 H33=4.922e-03 L3=0.817 q/q0=0.933
+  it   975 U=1.229783e+06 acc=1.00 step=2.825e-02 L=17 hmc 0.26s sweep 0.00s  | d<w0^2>=14.221 in_out=0.063 mid_out=0.188 H11=3.1159e-02 H33=4.897e-03 L3=0.820 q/q0=0.936
+  it   980 U=1.230170e+06 acc=0.28 step=2.825e-02 L=23 hmc 0.33s sweep 2.67s mid_changed=0.537 mid_crossed=0.054 in_changed=0.328 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.303 in_out=0.063 mid_out=0.186 H11=2.8907e-02 H33=4.925e-03 L3=0.817 q/q0=0.939
+  it   985 U=1.228951e+06 acc=0.93 step=2.825e-02 L=24 hmc 0.35s sweep 0.00s  | d<w0^2>=14.261 in_out=0.063 mid_out=0.183 H11=2.9366e-02 H33=4.885e-03 L3=0.818 q/q0=0.936
+  it   990 U=1.227732e+06 acc=1.00 step=2.825e-02 L=22 hmc 0.32s sweep 2.67s mid_changed=0.537 mid_crossed=0.058 in_changed=0.311 in_crossed=0.000 in_direct=1.000 | d<w0^2>=14.259 in_out=0.063 mid_out=0.195 H11=3.0547e-02 H33=4.884e-03 L3=0.815 q/q0=0.932
+  it   995 U=1.230071e+06 acc=0.34 step=2.825e-02 L=22 hmc 0.32s sweep 0.00s  | d<w0^2>=14.409 in_out=0.063 mid_out=0.183 H11=2.9394e-02 H33=4.880e-03 L3=0.816 q/q0=0.940
+{
+ "d_w0sq": [
+  14.485296964285713,
+  0.058835082442140675
+ ],
+ "L1": [
+  1.0071696078571428,
+  0.00016243670716615223
+ ],
+ "L3": [
+  0.8173490952140801,
+  0.00023573688253088407
+ ],
+ "H11": [
+  0.030525817721428573,
+  0.00012054833680298502
+ ],
+ "H33": [
+  0.004890460368571429,
+  5.572645805000479e-06
+ ],
+ "H13": [
+  -0.009586162265,
+  1.5411159334542043e-05
+ ],
+ "qh_over_qbar": [
+  0.9734911793571428,
+  0.0003148503028777128
+ ],
+ "q_over_q0": [
+  0.9355179993571427,
+  0.00044721635952750657
+ ],
+ "frac_in_out": [
+  0.06423333347142858,
+  0.00043321701926959743
+ ],
+ "frac_mid_out": [
+  0.1913999997142857,
+  0.0006367513325159908
+ ]
+}
+theory (fcn3_fixed.solve_fcn3, n_max=11): {"solver": "fcn3_fixed.solve_fcn3 nmax=11", "W": -49419.30430113832, "d_w0sq": 6.825406927271093, "d_w0sq_sampler_units": 13.650813854542182, "L1": 1.0060963459346173, "L3": 0.8551112431427265, "readin_mass_w0_gt_1": 0.0003750560971436242, "H11": 0.02827074910216026, "H33": 0.004453563119393695, "H13": -0.008420403230939063, "J11": 0.023253765727590425, "J33": 0.0003972118807004685, "J13": -0.002374783148976206, "M": 164.14991969673085, "converged": true, "nmax3": {"L1": 1.0053875628055413, "L3": 0.9440896275774718, "d_w0sq": 5.258185044055831}, "walltime_s": 5.95423698425293}

@@ -1,0 +1,205 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{hyperref}
+
+% outcome of each item: colour and symbol both carry it
+\definecolor{worked}{HTML}{1A7F37}
+\definecolor{failed}{HTML}{C62828}
+\definecolor{unclear}{HTML}{B26A00}
+\definecolor{running}{HTML}{2A78D6}
+\definecolor{neutral}{HTML}{6B6B66}
+\newcommand{\mworked}{\textcolor{worked}{\Large$\bm\checkmark$}}
+\newcommand{\mfailed}{\textcolor{failed}{\Large$\bm\times$}}
+\newcommand{\munclear}{\textcolor{unclear}{\Large\textbf{?}}}
+\newcommand{\mrunning}{\textcolor{running}{\Large$\boxminus$}}
+\newcommand{\mtodo}{\textcolor{neutral}{\Large$\square$}}
+\newcommand{\msetup}{\textcolor{neutral}{\Large$\boxtimes$}}
+\newcommand{\worked}{\item[\mworked]}
+\newcommand{\failed}{\item[\mfailed]}
+\newcommand{\unclear}{\item[\munclear]}
+\newcommand{\running}{\item[\mrunning]}
+\newcommand{\todo}{\item[\mtodo]}
+\newcommand{\setup}{\item[\msetup]}
+\setlist[itemize]{leftmargin=1.8em, itemsep=0.35em}
+
+\title{Debugging the FCN3 theory}
+\author{}
+\date{started 2026-11-10}
+
+\begin{document}
+\sloppy
+\maketitle
+
+The three-layer network's mean-field theory reproduces the exact posterior along the $\kappa_0=0.015$ ray at large $d$,
+but at $d=150$ its $L_3$ sits 0.05--0.075 above the sampler's at every $P$, and at large $P$ it misses part of the
+second hidden layer. This list tracks what has been tested to find out why. Scripts and runs are in
+\texttt{milestones/fcn3\_collapsed\_hmc}; the details behind each number are in \texttt{FINDINGS\_onset.md}, and the
+plots are indexed in \texttt{plots/README.md}.
+
+\begin{center}
+\begin{tabular}{@{}cp{0.9\textwidth}@{}}
+\mworked & worked: a clear answer that the theory holds, a fix worked, or the suspected cause is confirmed\\
+\mfailed & failed: a clear answer the other way: the theory fails, or the suspected cause is ruled out\\
+\munclear & indecisive\\
+\msetup & done, not a test (runs, solves)\\
+\mrunning & running\\
+\mtodo & to do
+\end{tabular}
+\end{center}
+
+Setting throughout: $d=150$, $N_1=N_2=1500$, $\chi=1$, $\sigma_A^2=8/1500$, $\sigma_B=1.2554$, $\sigma_w^2=0.5$,
+$\epsilon=-0.3\sqrt6$, runs started from the prior, 1000 iterations with 300 of burn-in.
+
+\section*{Scaling up $P$ at fixed $\kappa=0.015$}
+\begin{itemize}
+\setup Sampler at $P=750$, 1500, 3000, 6000, 12000, 24000, 48000, three datasets each, 15 full networks saved per run
+  (\texttt{queue\_onset.sh}, runs in group \texttt{onset\_d150}).
+\worked Theory at the same $P$, solved from several starts and keeping the largest $W$ (at $P=750$ the default start
+  lands on a lower maximum) (\texttt{plot\_onset.py}, \texttt{theory\_phase\_check.py}).
+\begin{center}
+\begin{tabular}{@{}rccccccc@{}}
+\toprule
+$P$ & 750 & 1500 & 3000 & 6000 & 12000 & 24000 & 48000\\
+\midrule
+$L_3$, theory  & 0.294 & 0.428 & 0.617 & 0.758 & 0.855 & 0.913 & 0.947\\
+$L_3$, sampler & 0.209 & 0.374 & 0.554 & 0.684 & 0.782 & 0.839 & 0.899\\
+outer read-in neurons, theory  & 16.7 & 17.7 & 28.1 & 48.7 & 77.6 & 108 & 150\\
+outer read-in neurons, sampler & 14 & 18 & 28 & 43 & 70 & 50 & 57\\
+\bottomrule
+\end{tabular}
+\end{center}
+\worked Agreement: $L_1$ at every $P$; the read-in wells and their splitting; the second hidden layer up to $P=12000$
+  ($h|\mathrm{He}_1$ to 24000).
+\failed Disagreement: $L_3$ at every $P$; at $P\ge 24000$ the outer read-in count (sampler about half the theory's)
+  and the second hidden layer: a far $\mathrm{He}_1$ group of 1--3 neurons, and at $P=48000$ a group of 17 neurons
+  per network with $|h_3|\approx0.43$ that the theory does not have (no theory well out to $|h_3|=3$)
+  (\texttt{plot\_hidden\_wide.py}, \texttt{outer\_he3\_group.py}).
+\end{itemize}
+
+\section*{EK limit: $P\to\infty$ with $\kappa\propto P$}
+With $\kappa/P$ fixed every parameter of the theory is unchanged, so only the training set relative to the
+population changes. If the gap is a finite-training-set effect it must close.
+\begin{itemize}
+\worked Theory point $P=3000$ (dataset 2): $L_3$ gap 0.087, 0.030, 0.017 at $P=3000$, 6000, 12000. Closes.
+\unclear Theory point $P=24000$ (dataset 0, \texttt{queue\_fixedtheory.sh}): $L_3$ 0.839, 0.874, 0.876 at $P=24000$,
+  48000, 96000 against 0.913; gap 0.074, 0.039, 0.037. Halves, then stops; one dataset.
+\worked Theory point $P=12000$ (dataset 0): $L_3$ 0.788, 0.817, 0.834 at $P=12000$, 24000, 48000 against 0.855;
+  gap 0.068, 0.038, 0.021. Keeps closing.
+\failed Hidden layer in these runs (\texttt{plot\_ek\_actions.py}): at theory point $P=12000$ the actions match the
+  theory at every $P$ (widths drift slightly above it: sd $h_1$ 0.165, 0.176, 0.182 against 0.168). At theory point
+  $P=24000$ the far $\mathrm{He}_1$ group goes 2.0, 4.6, 0 per network, but a large-$h_3$ group ($|h_3|>0.25$, not far
+  $\mathrm{He}_1$) appears and grows, 0, 9, 11 per network, like the 17-neuron group at $P=48000$. More data at fixed
+  theory does not remove it: the large-$h_3$ group is not a finite-training-set effect.
+\todo A second dataset at the theory point $P=24000$, to check that the leftover 0.037 is not one dataset.
+\end{itemize}
+At the theory point $P=12000$ the gap keeps closing with more data; at $P=24000$ about half of it survives.
+
+\section*{Possible causes}
+
+\subsection*{The finite training set}
+The theory replaces the training loss by its population average. Explains the first half of the gap.
+\begin{itemize}
+\worked The networks overfit: test MSE / training MSE 2.5--3.5 on the $P$ scan; the $\mathrm{He}_3$ residual on the
+  training set is about half the population residual (\texttt{overfit\_check.py}).
+\worked Each hidden neuron is pulled by the training residual: its exact pull is 92--99\% correlated with the theory's
+  form but 0.44--0.93 of the size the population residual implies (\texttt{hidden\_equation\_test2.py}).
+\worked Along the ray the overfitting closes with $d$ as the $L_3$ gap does: test/train 2.75, 1.67, 1.39 at $d=150$,
+  300, 600 (\texttt{ray\_overfit\_check.py}).
+\worked The overfitting is in the learned features, not the readout: a readout on fixed features has at most 1500
+  degrees of freedom, too few to give a 2$\times$ residual ratio at these $P$.
+\worked Where: an ordinary hidden neuron's dependence on the perpendicular directions correlates with the training
+  residual (22--29 nats of fit gain on the training set, 1--2 on fresh data) (\texttt{outer\_he3\_fresh.py}). At
+  $P=750$ and 1500 the hidden layer also picks out one training-set direction, $\sum_\mu y_\mu x_{\perp,\mu}$
+  (overlap 0.4--0.66), which is zero in the population; gone by $P=6000$ (\texttt{plot\_perp\_projections.py}).
+\worked The mass between the read-in wells (the flat shelf at 6--8 nats in the read-in action plots; 0.6--4.6 neurons
+  per network against 0.002--0.004 in the theory). It is made of brief inward excursions of outer neurons, neurons
+  crossing while the count drifts ($P=6000$), and 1--3 neurons per network that sit in the middle of the barrier for
+  most of the run with large $q\approx0.6$--0.75. Those neurons' perpendicular weights point along the training set's
+  residual direction $\sum_\mu r_\mu x_{\perp,\mu}$ ($|\cos|$ 0.16--0.24, and 0.10--0.12 with $\sum_\mu y_\mu x_{\perp,\mu}$)
+  against 0.065 for inner neurons and for random directions, at $P=1500$--6000. The theory's read-in action depends on
+  $w_\perp$ only through $q$, so it cannot hold a neuron there. With the theory fixed and $P$ doubled twice the barrier
+  empties: 1.3--1.7, 0, 0.02 neurons per network at theory point $P=3000$ (dataset 2); fractions 0.0009, 0.0001, 0 at
+  theory point 12000. The neurons choose a side, but not in the theory's proportion: the outer count goes 26--27, 37, 39
+  at theory point 3000 (theory 28) and 47, 55, 60 at theory point 24000 (theory 108).
+\todo Theory averaged over random training sets of size $P$ instead of the population.
+\end{itemize}
+
+\subsection*{Finite width, $N=1500$}
+Candidate for the half of the gap that survives more data.
+\begin{itemize}
+\unclear The $\mathrm{He}_3$ learning sits on few neurons: 50--120 outer read-in neurons, 17 large-$h_3$ hidden
+  neurons, 1--3 far $\mathrm{He}_1$ neurons. The theory treats each as a smooth density. The read-in $\mathrm{He}_3$
+  kernel then fluctuates by about $1/\sqrt{55}\approx13\%$, and (E2) changes shape for 10--20\% changes in its input
+  (\texttt{hidden\_equation\_test.py}).
+\unclear The 17-neuron group at $P=48000$: all of their $h_3$ comes from the $\sim$55 outer read-in neurons; fit gain
+  470--535 nats each against the theory's 225--250 at the same neurons and its prior cost 420--460. Half of their
+  pull comes through the perpendicular directions, from the network's own mean output, and is as large on fresh
+  data, so not overfitting. The theory treats each hidden neuron's perpendicular dependence as independent noise;
+  with $\sim$55 shared read-in neurons it is not (\texttt{outer\_he3\_group.py}, \texttt{outer\_he3\_fresh.py}).
+\unclear Earlier width checks: on the ray at $d=600$ doubling $N$ (with $\chi=2$, theory unchanged) raises $L_3$ from
+  0.694 to 0.705--0.707 and halves the gap; at $d=150$, $P=3000$ it changes $L_3$ by less than 0.001, but those
+  $N=3000$ runs stopped at iterations 415 and 355 of 1000 (115 and 55 after burn-in). Not tested at $d=300$, nor at
+  strong learnability at $d=150$.
+\unclear The perpendicular part of the network's mean output, which the theory sets to zero (mean square of the
+  output minus its best fit by functions of $x_0$, on fresh inputs; \texttt{notes/perpendicular\_term\_fcn2\_fcn3.tex}):
+  on the ray at $d=600$, $P=48000$, same dataset, 0.0148--0.0154 at $N=1500$ and 0.0110--0.0111 at $N=3000$
+  ($\chi=2$). It shrinks with width, but by 27\%, not by half; it is also larger at small $P$ (0.028 at $d=150$,
+  $P=3000$; 0.009 at $d=150$, $P=48000$), so part of it looks like the finite training set.
+\todo $N_1=N_2=3000$, $\chi=2$ at $P=24000$, $\kappa=0.015$ and at $P=48000$, $\kappa=0.03$. Finite width if the
+  leftover gap and the 17-neuron group shrink.
+\end{itemize}
+
+\subsection*{The sampler's read-in count is not in equilibrium}
+Not a theory error, but it would look like one.
+\begin{itemize}
+\worked The number of outer read-in neurons is not at equilibrium from $P=6000$ on. Up to $P=3000$ it settles at the
+  theory's within 25 iterations. At $P=6000$ and 12000 it starts above the theory's, falls through it and is still
+  falling at the last iteration (12000: from about 90 to 64--70, theory 78). At $P=24000$ it starts at about half the
+  theory's and creeps up (42--47 to 49--57, theory 108); at $P=48000$ it is fixed (54--63, theory 150). In the
+  $\kappa\propto P$ runs: 55 and 60 at theory point $P=24000$, 96 and 114 at theory point $P=12000$. The far $\mathrm{He}_1$
+  group and the 17-neuron group are also the same neurons for the whole run. The inner $h|\mathrm{He}_3$ double well
+  is in equilibrium (its neurons switch sign freely).
+\unclear Read-in kernels from the saved networks are 10--12\% weaker than the theory's at $P=3000$--12000 and 26--38\%
+  weaker at 24000--48000 (\texttt{empirical\_kernel\_test.py}).
+\failed Theory with the outer read-in count held at each run's value (read-in prior tilted by
+  $e^{\mu\,1[|w_0|>\text{barrier}]}$, $\mu$ scanned) (\texttt{theory\_fixed\_count.py}). The count is stiff in the theory:
+  20 nats per neuron moves it by only 15--25\%, the outer well moving out to compensate for fewer neurons. Held at
+  the runs' counts the theory's $L_3$ drops by at most 0.009, so the gaps stay: 0.035--0.08 on the $P$ scan,
+  0.027--0.042 for the $\kappa\propto P$ runs (at theory point $P=24000$: 0.030 and 0.029). The frozen count is not
+  the cause of the gap.
+\failed The hidden layer of the theory held at the runs' counts (\texttt{theory\_fixed\_count\_hidden.py}; $n=49$ at
+  $P=24000$, $n=40$ at $P=48000$, last solves not fully converged). Holding the count low moves the theory away from
+  the sampler: the far $h|\mathrm{He}_1$ wells of the free theory at $P=48000$ disappear, and $h|\mathrm{He}_3$ gets
+  narrower (action at $|h_3|=0.4$: 129 and 174 nats, against 95 free). The frozen count does not produce the
+  sampler's hidden-layer groups.
+\todo Sampler started with the theory's count.
+\end{itemize}
+
+\subsection*{Ruled out}
+\begin{itemize}
+\failed A higher $x_0$ Hermite tower: with the tower at $\mathrm{He}_{11}$, 21, 31 or 41 the perpendicular share of the
+  17 neurons' pull stays 0.48--0.57 (\texttt{outer\_he3\_tower.py}).
+\failed The term the theory drops from the output-dual covariance, $\chi(\sigma_A^2K+\kappa/P)^{-1}$: 0.02--0.18 nats per
+  hidden neuron, flat in $h$ (\texttt{cavity\_decomposition.py}).
+\failed The factor $1/(1-\ell)$ the theory drops from each hidden neuron's readout term, where $1-\ell$ is the posterior variance of that neuron's readout weight over its prior variance ($\ell=0.04$--0.31 from $P=750$ to 48000): raises $L_3$ (away from the sampler) and
+  does not split $h|\mathrm{He}_3$ (\texttt{onsager\_test.py}).
+\failed A $\sigma_B^2$ mismatch: handled identically in theory and sampler.
+\failed Further theory wells in the hidden layer beyond the plotted range: none out to $|h_1|=8$, $|h_3|=3$.
+\worked Fixed along the way, not causes: the theory's local maximum at $P=750$; the theory's hidden-layer marginals
+  (the prior covariance is nearly singular; now computed along prior regression lines, matching the solver's moments
+  to 1--2\%).
+\unclear The theory's read-in barrier height is reproducible only to about 15\%: two solves of the same point
+  ($d=150$, $P=3000$) agree in $L_3$ (0.61682), the wells and the flanks up to $\sim$20 nats to 0.1--0.4 nats, but put
+  the barrier top at 38.9 and 32.6 nats. The barrier holds no mass, and it is set by near-singular directions of the
+  hidden prior covariance. Comparisons of barrier depth with the samplers (which resolve only $\sim$9 nats) are
+  unaffected; quoted theory barrier heights carry this uncertainty.
+\unclear Not testable alone: (E2) fed measured inputs open loop is too sensitive to its input to judge
+  (\texttt{hidden\_equation\_test.py}, \texttt{hidden\_equation\_test2.py}); the hidden-layer solve on the sampler's
+  read-in kernels is not self-consistent at $P=12000$, 24000 (\texttt{empirical\_kernel\_test.py}).
+\end{itemize}
+
+\end{document}

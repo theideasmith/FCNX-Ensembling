@@ -1,0 +1,102 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{graphicx}
+
+\title{What width, data and dimension each fix in the FCN3 theory--sampler comparison}
+\author{}
+\date{2026-11-10}
+
+\begin{document}
+\sloppy
+\maketitle
+
+The three-layer network's theory and the exact posterior (collapsed HMC) differ in $L_3$, in the read-in action and in
+the second hidden layer. Three limits can be approached separately with the runs on disk: more width at fixed theory
+($N_1=N_2=N$ doubled with $\chi$ doubled), more data at fixed theory (the EK limit: $P$ doubled with $\kappa$ doubled, so
+$\kappa/P$ and every parameter of the theory stay the same), and larger input dimension (the $\kappa_0=0.015$ ray, $d=150$,
+300, 600 with $N=1500$, $P=3000(d/150)^2$). This note collects what each one fixes. Each fixes something different, and
+none fixes the number of read-in neurons in the outer well, which each run sets early and then keeps.
+
+Common setting: $\sigma_A^2=8/1500\cdot(150/d)$, $\sigma_B=1.2554$, $\sigma_w^2=0.5$, $\epsilon=-0.3\sqrt6$, runs started from the
+prior unless stated, 1000 iterations with 300 of burn-in. ``Outer count'' is the number of read-in neurons beyond the
+theory's barrier at that point; ``outer-well bottom'' is the most probable $|w_0|$ among them.
+
+\section*{Width: doubling $N$ raises $L_3$}
+
+On the ray at $d=600$, $P=48000$, the runs at $N=1500$ and $N=3000$ ($\chi=2$) use the same dataset.
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& outer count (fraction) & outer-well bottom $|w_0|$ & $L_3$\\
+\midrule
+theory & 1.73\% & 0.898 & 0.720\\
+$N=1500$, started at the theory's count & 26 (1.73\%) & 0.89 & 0.686\\
+$N=1500$, prior and aligned starts & 32, 38 (2.1--2.5\%) & 0.85--0.87 & 0.692, 0.696\\
+$N=3000$, prior and aligned starts & 75, 80 (2.5--2.7\%) & 0.83--0.85 & 0.705, 0.707\\
+\bottomrule
+\end{tabular}
+\end{center}
+Doubling the width raises $L_3$ by about 0.01, half the remaining gap, also between runs with the same outer fraction
+(2.5\%: 0.696 against 0.705). It lowers the test error from 0.10--0.11 to 0.093--0.095 and the perpendicular part of
+the network's output (its mean square after removing the best fit by functions of $x_0$) from 0.015 to 0.011. It
+does not move the outer well towards the theory's position, because the $N=3000$ runs kept even more outer neurons.
+
+In the sampler $L_3$ rises with the outer count (0.686, 0.692, 0.696 at 26, 32, 38 neurons), so comparisons of $L_3$
+across widths need equal counts. At $d=150$, $P=3000$ the only width check showed no change in $L_3$, but those
+$N=3000$ runs stopped at iterations 415 and 355 of 1000; there is no width test yet at strong learnability at $d=150$.
+
+\section*{Data: the EK limit removes the overfitting features}
+
+Theory held at an onset point ($d=150$, $N=1500$, $\kappa=0.015$) while $P$ is doubled twice with $\kappa\propto P$.
+\begin{center}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccc@{}}
+\toprule
+theory point & $P=3000$ (dataset 2) & $P=12000$ (dataset 0) & $P=24000$ (dataset 0)\\
+\midrule
+$L_3$ gap, $P\times1,2,4$ & 0.087, 0.030, 0.017 & 0.068, 0.038, 0.021 & 0.074, 0.039, 0.037\\
+read-in neurons between the wells & 1.3--1.7, 0, 0.02 per network & 0.0009, 0.0001, 0 of all & 0.0001, 0, 0 of all\\
+outer count (theory) & 26--27, 37, 39 (28) & 72, 96, 114 (78) & 47, 55, 60 (108)\\
+far $h|\mathrm{He}_1$ group, per network & -- & 0, 0, 0 & 2.0, 4.6, 0\\
+large-$h_3$ group ($|h_3|>0.25$), per network & -- & 0, 0, 0 & 0, 9, 11\\
+\bottomrule
+\end{tabular}}
+\end{center}
+More data at fixed theory closes the $L_3$ gap at the two lower points and halves it at the third. It empties the
+barrier between the read-in wells: the neurons that sat there have their perpendicular weights pointed along the
+training set's residual direction $\sum_\mu r_\mu x_{\perp,\mu}$ ($|\cos|$ 0.16--0.24 against 0.065 for other inner neurons),
+a direction that is zero in the population, and with more data they settle in one well or the other. It removes the
+far $h|\mathrm{He}_1$ group. It does not bring the outer count to the theory's (it overshoots at the lowest point and
+stays at about half at the highest), and at the highest point a group of hidden neurons with large $h_3$ appears and
+grows, which the theory does not have; holding the theory at the runs' outer count does not produce it either. At theory
+point 12000 the hidden-layer widths drift slightly above the theory as $P$ grows (sd of $h_1$: 0.165, 0.176, 0.182
+against 0.168).
+
+\section*{Dimension: the outer well's position follows the count}
+
+Along the ray the bottom of the sampler's outer read-in well lies 3\%, 6\% and 6\% inside the theory's at $d=150$, 300
+and 600: larger $d$ alone does not close the gap. Runs started with the theory's outer count (27 at $d=300$, 26 at
+$d=600$) put it 3\% and 1\% inside, so at the theory's count the gap does close with $d$. The offset follows the number
+of outer neurons each run keeps: more outer neurons, well further in (the theory held at a lower count moves its own
+well outward, 0.69 to 0.76 at $d=150$, $P=24000$). Along the ray $N$ stays at 1500 while $d$ grows, so $N/d$ falls
+from 10 to 2.5 and the large-$d$ end is also the relatively narrow end.
+
+\section*{What none of them fixes}
+
+The outer count. Up to $P=3000$ on the onset line it settles at the theory's within 25 iterations; from $P=6000$ it
+does not: at 6000 and 12000 it falls through the theory's value and is still falling at the last iteration, at 24000 it
+starts at half the theory's and creeps up, at 48000 it is fixed. A read-in neuron changes well only if its incoming
+weights and its outgoing column change together, so neither HMC's local moves nor Langevin dynamics (started from HMC
+states at $P=3000$: $4\times10^5$ steps, no neuron reached the inner well) relax it. Which count is right cannot be
+read from runs that keep their count; it needs a run started at the theory's count, or the equilibrium distribution
+of the count from a free-energy calculation.
+
+\paragraph{Sources.} \texttt{milestones/fcn3\_collapsed\_hmc}: \texttt{FINDINGS\_onset.md} and \texttt{debugging\_theory.tex};
+plots \texttt{plots/onset/ek\_actions\_d150.png}, \texttt{plots/onset\_checks/theory\_fixed\_count*\_d150.png},
+\texttt{plots/ray/well\_minima\_ray.png}; runs \texttt{runs/*ray\_d600\_P48000*}, \texttt{runs/*ptheory*},
+\texttt{runs/*pscan\_d150*}, \texttt{runs/*onset\_d150*}, \texttt{runs/langevin/}.
+
+\end{document}

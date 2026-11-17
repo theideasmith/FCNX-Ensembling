@@ -32,6 +32,31 @@ def _he3(vx):
 
 
 DATA_DEVICE = "cuda:0"  # the 4090 on zohar-gpu-2, where the Langevin runs drew their data
+REF_GPU = (128, 1536)   # RTX 4090: SMs, max threads per SM (sets the CUDA randn grid)
+
+# How make_data draws X on a machine whose cuda:0 is not a 4090 (env HMC_DATA_RNG):
+#   native (default)  torch.randn on data_device, as before (matches the reference only on a 4090)
+#   remap             bit-exact 4090 stream from this GPU's own curand kernel (needs >= the 4090's thread count)
+#   cpu               cuda_randn_emulator on the CPU (same draws, but float32 Box-Muller rounding differs from the
+#                     GPU's: max |Δx| ~3e-6, fingerprint sum off by ~1e-4 relative)
+DATA_RNG = __import__("os").environ.get("HMC_DATA_RNG", "native")
+
+
+def randn_ref_gpu(n, seed, device, ref=REF_GPU, block=256, unroll=4):
+    """torch.randn(n, device=<ref GPU>) after manual_seed(seed), reproduced bit-exactly on another GPU.
+
+    PyTorch's CUDA normal_ kernel gives thread t (of block*grid) curand subsequence t, and at loop iteration i it
+    writes its 4 normals to i*stride + k*threads + t (k = 0..3). Only the grid depends on the GPU. A GPU with at least
+    as many threads computes every (t, i) of the reference, so draw enough on it and gather the reference layout."""
+    p = torch.cuda.get_device_properties(device)
+    t_dst = p.multi_processor_count * (p.max_threads_per_multi_processor // block) * block
+    t_src = min((n + block - 1) // block, ref[0] * (ref[1] // block)) * block
+    if t_dst < t_src:
+        raise RuntimeError(f"{p.name} has fewer randn threads ({t_dst}) than the reference GPU ({t_src})")
+    n_iter = (n - 1) // (t_src * unroll) + 1
+    torch.manual_seed(seed)
+    R = torch.randn(n_iter * unroll * t_dst, device=device)
+    return R.view(n_iter, unroll, t_dst)[:, :, :t_src].reshape(-1)[:n].clone()
 
 
 def make_data(d, P, eps, he1, seed, device, data_device=DATA_DEVICE):
@@ -39,8 +64,17 @@ def make_data(d, P, eps, he1, seed, device, data_device=DATA_DEVICE):
 
     CUDA randn output depends on the GPU model, so the data are always drawn on
     data_device (the device the Langevin runs used) and then moved to device.
+    See DATA_RNG for other GPU models.
     """
-    if not torch.cuda.is_available():
+    if DATA_RNG == "remap" and torch.cuda.is_available():
+        dev = torch.device(device) if torch.device(device).type == "cuda" else torch.device(data_device)
+        X = randn_ref_gpu(P * d, seed, dev).view(P, d)
+        Xinf = randn_ref_gpu(3000 * d, seed + 1, dev).view(3000, d)
+        torch.cuda.empty_cache()
+        Y = he1 * X[:, 0] + eps * _he3(X[:, 0])
+        Yinf = he1 * Xinf[:, 0] + eps * _he3(Xinf[:, 0])
+        return tuple(t.to(device) for t in (X, Y, Xinf, Yinf))
+    if not torch.cuda.is_available() or DATA_RNG == "cpu":
         # No GPU: reproduce the 4090's CUDA randn stream on the CPU (cuda_randn_emulator; matches the stored
         # data_fingerprint to ~1e-5 relative, i.e. last-bit float32 rounding)
         from cuda_randn_emulator import cuda_randn
